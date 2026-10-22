@@ -22,12 +22,17 @@ import (
 )
 
 // fakeLogin is an httptest Procore login server that counts refresh grants.
-// It accepts only wantRefresh and answers 401 while revoked is set.
+// It accepts only wantRefresh and answers 401 while revoked is set. When
+// omitRefresh is set its response carries no refresh_token. When gate is
+// non-nil each request signals entered and then waits for gate to close.
 type fakeLogin struct {
 	srv         *httptest.Server
 	refreshes   atomic.Int32
 	revoked     atomic.Bool
+	omitRefresh atomic.Bool
 	wantRefresh string
+	gate        chan struct{}
+	entered     chan struct{}
 }
 
 func newFakeLogin(t *testing.T, wantRefresh string) *fakeLogin {
@@ -39,18 +44,26 @@ func newFakeLogin(t *testing.T, wantRefresh string) *fakeLogin {
 			return
 		}
 		f.refreshes.Add(1)
+		if f.gate != nil {
+			f.entered <- struct{}{}
+			<-f.gate
+		}
 		// Widen the window in which concurrent callers overlap.
 		time.Sleep(50 * time.Millisecond)
 		if f.revoked.Load() || r.FormValue("refresh_token") != f.wantRefresh {
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusUnauthorized)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		body := map[string]any{
 			"access_token":  "access-new",
 			"refresh_token": "refresh-new",
 			"expires_in":    7200,
-		})
+		}
+		if f.omitRefresh.Load() {
+			delete(body, "refresh_token")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(body)
 	}))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -91,6 +104,20 @@ func newTokenSourceFixture(t *testing.T) *tokenSourceFixture {
 		clock:  clock,
 		userID: uuid.UUID(u.ID.Bytes),
 	}
+}
+
+// storedRefresh returns the decrypted refresh token stored for the fixture user.
+func (f *tokenSourceFixture) storedRefresh(t *testing.T) string {
+	t.Helper()
+	row, err := f.st.Q.GetProcoreTokens(context.Background(), pgUUID(f.userID))
+	if err != nil {
+		t.Fatalf("GetProcoreTokens: %v", err)
+	}
+	pt, err := f.vault.Decrypt(row.RefreshTokenEnc)
+	if err != nil {
+		t.Fatalf("decrypt stored refresh token: %v", err)
+	}
+	return pt
 }
 
 // seed stores the "old" token pair expiring ttl from the fixture clock.
@@ -228,5 +255,63 @@ func TestTokenSource_NoStoredTokens_ReauthRequired(t *testing.T) {
 	}
 	if n := f.login.refreshes.Load(); n != 0 {
 		t.Fatalf("refresh calls = %d, want 0", n)
+	}
+}
+
+func TestTokenSource_LeaderCancelDoesNotLoseRefresh(t *testing.T) {
+	f := newTokenSourceFixture(t)
+	f.seed(t, 30*time.Second)
+	f.login.gate = make(chan struct{})
+	f.login.entered = make(chan struct{}, 1)
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	defer cancelLeader()
+	var wg sync.WaitGroup
+	wg.Go(func() { _, _ = f.ts.AccessToken(leaderCtx, f.userID) })
+
+	select {
+	case <-f.login.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("leader never reached the login server")
+	}
+
+	var followerTok string
+	var followerErr error
+	wg.Go(func() { followerTok, followerErr = f.ts.AccessToken(context.Background(), f.userID) })
+	time.Sleep(100 * time.Millisecond) // let the follower join the flight
+
+	cancelLeader()
+	time.Sleep(50 * time.Millisecond) // let a ctx-bound request observe the cancel
+	close(f.login.gate)
+	wg.Wait()
+
+	if followerErr != nil {
+		t.Fatalf("follower AccessToken: %v", followerErr)
+	}
+	if followerTok != "access-new" {
+		t.Fatalf("follower got %q, want %q", followerTok, "access-new")
+	}
+	if n := f.login.refreshes.Load(); n != 1 {
+		t.Fatalf("refresh calls = %d, want 1", n)
+	}
+	if got := f.storedRefresh(t); got != "refresh-new" {
+		t.Fatalf("stored refresh token = %q, want %q", got, "refresh-new")
+	}
+}
+
+func TestTokenSource_RefreshWithoutNewRefreshTokenKeepsOld(t *testing.T) {
+	f := newTokenSourceFixture(t)
+	f.seed(t, 30*time.Second)
+	f.login.omitRefresh.Store(true)
+
+	got, err := f.ts.AccessToken(context.Background(), f.userID)
+	if err != nil {
+		t.Fatalf("AccessToken: %v", err)
+	}
+	if got != "access-new" {
+		t.Fatalf("AccessToken = %q, want %q", got, "access-new")
+	}
+	if got := f.storedRefresh(t); got != "refresh-old" {
+		t.Fatalf("stored refresh token = %q, want %q", got, "refresh-old")
 	}
 }

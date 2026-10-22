@@ -20,6 +20,10 @@ import (
 // stale, so a token is never handed out moments before Procore rejects it.
 const refreshSkew = 60 * time.Second
 
+// refreshTimeout bounds a refresh flight. The flight is detached from the
+// caller that started it, so this is its only deadline.
+const refreshTimeout = 30 * time.Second
+
 // ErrReauthRequired means the user has no usable Procore tokens and must sign
 // in again: none are stored, or Procore revoked the refresh token.
 var ErrReauthRequired = errors.New("reauth required")
@@ -77,7 +81,13 @@ func (t *TokenSource) AccessToken(ctx context.Context, userID uuid.UUID) (string
 		return t.decryptAccess(row)
 	}
 	v, err, _ := t.group.Do(userID.String(), func() (any, error) {
-		return t.refresh(ctx, userID)
+		// Procore rotates refresh tokens, so once it answers the new pair
+		// must be stored even if the caller that started the flight has
+		// gone away. Detaching also keeps one caller's cancellation from
+		// failing every other caller waiting on the same flight.
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+		defer cancel()
+		return t.refresh(fctx, userID)
 	})
 	if err != nil {
 		return "", err
@@ -110,6 +120,10 @@ func (t *TokenSource) refresh(ctx context.Context, userID uuid.UUID) (string, er
 	}
 	if err != nil {
 		return "", fmt.Errorf("tokensource: refresh: %w", err)
+	}
+	if tok.RefreshToken == "" {
+		// Procore did not rotate the refresh token; keep the current one.
+		tok.RefreshToken = refreshToken
 	}
 	if err := t.Store(ctx, userID, tok); err != nil {
 		return "", err
