@@ -142,6 +142,22 @@ func (s *Sessions) Verify(accessToken string) (Claims, error) {
 	return Claims{UserID: userID, SessionID: sessionID}, nil
 }
 
+// Lookup confirms sessionID still exists and is unexpired, returning
+// ErrSessionRevoked otherwise. Pair it with Verify to authenticate a request.
+func (s *Sessions) Lookup(ctx context.Context, sessionID uuid.UUID) error {
+	sess, err := s.st.Q.GetSession(ctx, pgUUID(sessionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrSessionRevoked
+	}
+	if err != nil {
+		return fmt.Errorf("sessions: lookup session: %w", err)
+	}
+	if s.expired(sess) {
+		return ErrSessionRevoked
+	}
+	return nil
+}
+
 // Revoke deletes a session. Revoking a missing session is not an error.
 func (s *Sessions) Revoke(ctx context.Context, sessionID uuid.UUID) error {
 	if err := s.st.Q.DeleteSession(ctx, pgUUID(sessionID)); err != nil {

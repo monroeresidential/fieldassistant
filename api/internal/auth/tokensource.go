@@ -131,6 +131,19 @@ func (t *TokenSource) refresh(ctx context.Context, userID uuid.UUID) (string, er
 	return tok.AccessToken, nil
 }
 
+// refreshToken returns userID's stored Procore refresh token, decrypted.
+func (t *TokenSource) refreshToken(ctx context.Context, userID uuid.UUID) (string, error) {
+	row, err := t.load(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	tok, err := t.vault.Decrypt(row.RefreshTokenEnc)
+	if err != nil {
+		return "", fmt.Errorf("tokensource: decrypt refresh token: %w", err)
+	}
+	return tok, nil
+}
+
 // load reads userID's stored tokens. A missing row means the user must sign in.
 func (t *TokenSource) load(ctx context.Context, userID uuid.UUID) (db.ProcoreToken, error) {
 	row, err := t.st.Q.GetProcoreTokens(ctx, pgUUID(userID))

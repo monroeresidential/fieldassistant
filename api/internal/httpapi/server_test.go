@@ -29,31 +29,14 @@ func TestProtectedRouteWithoutBearer401(t *testing.T) {
 }
 
 func TestMissingRequiredHeaderReturnsJSONBadRequest(t *testing.T) {
-	srv := httptest.NewServer(NewRouter(testDeps()))
-	defer srv.Close()
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/v1/projects/1/rfis", nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer x")
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("do: %v", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusBadRequest {
-		t.Fatalf("want 400, got %d", res.StatusCode)
-	}
+	srv, _ := newTestServer(t)
+	pair := signIn(t, srv, "device-1")
+
+	res, b := call(t, srv, http.MethodGet, "/v1/projects/1/rfis", pair.AccessToken, nil)
 	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("content-type %q", ct)
 	}
-	var e Error
-	if err := json.NewDecoder(res.Body).Decode(&e); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if e.Code != "bad_request" {
-		t.Fatalf("code %q", e.Code)
-	}
+	wantError(t, res, b, http.StatusBadRequest, "bad_request")
 }
 
 func TestLogoutWithoutBearer401(t *testing.T) {
@@ -79,12 +62,14 @@ func TestLogoutWithoutBearer401(t *testing.T) {
 func TestPublicAuthRoutesSkipBearerCheck(t *testing.T) {
 	srv := httptest.NewServer(NewRouter(testDeps()))
 	defer srv.Close()
-	res, err := http.Post(srv.URL+"/v1/auth/start", "application/json", strings.NewReader(`{"device_id":"d"}`))
+	// A malformed body is rejected by request decoding, which runs only
+	// after the bearer check let the request through.
+	res, err := http.Post(srv.URL+"/v1/auth/start", "application/json", strings.NewReader(`{`))
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
 	defer res.Body.Close()
-	if res.StatusCode == http.StatusUnauthorized {
-		t.Fatalf("public route /v1/auth/start returned 401")
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("public route /v1/auth/start: want 400 from body decoding, got %d", res.StatusCode)
 	}
 }

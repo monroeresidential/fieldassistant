@@ -7,12 +7,23 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/monroeresidential/fieldassistant/api/internal/auth"
+	"github.com/monroeresidential/fieldassistant/api/internal/config"
+	"github.com/monroeresidential/fieldassistant/api/internal/procore"
+	"github.com/monroeresidential/fieldassistant/api/internal/store"
 )
 
-// Deps holds the dependencies handlers need. It grows in later tasks.
+// Deps holds the dependencies handlers need.
 type Deps struct {
 	// Logger receives request and error logs. Nil means slog.Default().
-	Logger *slog.Logger
+	Logger   *slog.Logger
+	Config   config.Config
+	Store    *store.Store
+	Sessions *auth.Sessions
+	Broker   *auth.Broker
+	Tokens   *auth.TokenSource
+	Procore  *procore.Client
 }
 
 // NewRouter builds the HTTP handler for the API.
@@ -35,7 +46,7 @@ func NewRouter(deps Deps) http.Handler {
 		ResponseErrorHandlerFunc: newStrictErrorHandler(logger),
 	})
 	r.Group(func(v1 chi.Router) {
-		v1.Use(requireBearerStub)
+		v1.Use(requireSession(deps.Sessions, logger))
 		HandlerWithOptions(strict, ChiServerOptions{
 			BaseURL:          "/v1",
 			BaseRouter:       v1,
@@ -51,18 +62,6 @@ var publicPaths = map[string]bool{
 	"/v1/auth/callback": true,
 	"/v1/auth/exchange": true,
 	"/v1/auth/refresh":  true,
-}
-
-// requireBearerStub rejects /v1 requests without an Authorization header,
-// except publicPaths. Real session verification replaces it in a later task.
-func requireBearerStub(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !publicPaths[r.URL.Path] && r.Header.Get("Authorization") == "" {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
