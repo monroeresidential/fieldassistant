@@ -25,18 +25,20 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 	_ = json.NewEncoder(w).Encode(Error{Code: code, Message: msg})
 }
 
-// strictErrorHandler maps handler errors to Error responses.
-func strictErrorHandler(w http.ResponseWriter, r *http.Request, err error) {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		writeError(w, apiErr.Status, apiErr.Code, apiErr.Message)
-		return
+// newStrictErrorHandler maps handler errors to Error responses.
+func newStrictErrorHandler(logger *slog.Logger) func(http.ResponseWriter, *http.Request, error) {
+	return func(w http.ResponseWriter, r *http.Request, err error) {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) {
+			writeError(w, apiErr.Status, apiErr.Code, apiErr.Message)
+			return
+		}
+		logger.Error("handler error", "path", r.URL.Path, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal server error")
 	}
-	slog.Error("handler error", "path", r.URL.Path, "error", err)
-	writeError(w, http.StatusInternalServerError, "internal", "internal server error")
 }
 
-// strictRequestErrorHandler maps request decoding errors to 400 Error responses.
-func strictRequestErrorHandler(w http.ResponseWriter, _ *http.Request, err error) {
+// badRequestErrorHandler maps request body and parameter errors to 400 Error responses.
+func badRequestErrorHandler(w http.ResponseWriter, _ *http.Request, err error) {
 	writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 }
