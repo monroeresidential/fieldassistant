@@ -1,1 +1,9 @@
 .superpowers/
+.env
+api/bin/
+ios/*.xcodeproj
+ios/**/xcuserdata/
+ios/**/.build/
+ios/**/DerivedData/
+ios/fastlane/report.xml
+.DS_Store
