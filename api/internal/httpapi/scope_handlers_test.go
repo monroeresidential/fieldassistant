@@ -74,6 +74,15 @@ func TestCompanies_ListsFromProcore(t *testing.T) {
 	}
 }
 
+func TestCompanies_ProcoreDown_502(t *testing.T) {
+	srv, fp := newTestServer(t)
+	pair := signIn(t, srv, "device-1")
+	fp.Server.Close()
+
+	res, b := call(t, srv, http.MethodGet, "/v1/companies", pair.AccessToken, nil)
+	wantError(t, res, b, http.StatusBadGateway, "procore_unavailable")
+}
+
 func TestProjects_ListsFromProcore(t *testing.T) {
 	srv, fp := newTestServer(t)
 	fp.With(func(f *fakeProcore) {

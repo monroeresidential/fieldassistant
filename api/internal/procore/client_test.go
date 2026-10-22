@@ -410,3 +410,40 @@ func TestClient_ListCompanies_FollowsPagination(t *testing.T) {
 		}
 	}
 }
+
+func TestClient_NetworkError_IsErrUnavailable(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{})
+	c := newTestClient(f, &sleepRecorder{})
+	f.srv.Close()
+
+	_, err := c.ListCompanies(context.Background(), "secret-token")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if strings.Contains(err.Error(), "secret-token") {
+		t.Errorf("error leaks token: %v", err)
+	}
+}
+
+func TestClient_BadJSON_IsErrUnavailable(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/me": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, `{"id":`)
+		},
+	})
+	_, err := newTestClient(f, &sleepRecorder{}).Me(context.Background(), "secret-token")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestClient_CallerCancelled_IsNotErrUnavailable(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := newTestClient(f, &sleepRecorder{}).Me(ctx, "secret-token")
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want context.Canceled and not ErrUnavailable", err)
+	}
+}

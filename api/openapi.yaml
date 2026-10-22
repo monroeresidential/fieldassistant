@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Field Assistant API
-  version: 1.1.0
+  version: 1.2.0
 servers:
   - url: /v1
 security:
@@ -25,6 +25,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/AuthStartResponse'
         '400':
+          $ref: '#/components/responses/Error'
+        default:
           $ref: '#/components/responses/Error'
   /auth/callback:
     get:
@@ -51,6 +53,8 @@ paths:
                 type: string
         '400':
           $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
   /auth/exchange:
     post:
       operationId: authExchange
@@ -69,6 +73,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/TokenPair'
         '400':
+          $ref: '#/components/responses/Error'
+        default:
           $ref: '#/components/responses/Error'
   /auth/refresh:
     post:
@@ -89,6 +95,8 @@ paths:
                 $ref: '#/components/schemas/TokenPair'
         '401':
           $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
   /auth/logout:
     post:
       operationId: authLogout
@@ -96,6 +104,8 @@ paths:
         '204':
           description: Session revoked.
         '401':
+          $ref: '#/components/responses/Error'
+        default:
           $ref: '#/components/responses/Error'
   /me:
     get:
@@ -108,6 +118,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/User'
         '401':
+          $ref: '#/components/responses/Error'
+        default:
           $ref: '#/components/responses/Error'
   /me/selection:
     put:
@@ -125,6 +137,10 @@ paths:
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
   /companies:
     get:
       operationId: listCompanies
@@ -138,6 +154,12 @@ paths:
                 items:
                   $ref: '#/components/schemas/Company'
         '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+        default:
           $ref: '#/components/responses/Error'
   /companies/{companyId}/projects:
     get:
@@ -161,6 +183,10 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+        default:
           $ref: '#/components/responses/Error'
   /projects/{projectId}/rfis:
     get:
@@ -190,6 +216,10 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+        default:
           $ref: '#/components/responses/Error'
 components:
   securitySchemes:

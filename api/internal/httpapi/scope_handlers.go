@@ -37,7 +37,7 @@ func mapProcoreErr(err error) *APIError {
 		return &APIError{Status: http.StatusUnauthorized, Code: "reauth_required", Message: "sign in to Procore again"}
 	case errors.Is(err, procore.ErrPermissionDenied):
 		return &APIError{Status: http.StatusForbidden, Code: "procore_permission_denied", Message: "Procore permission denied"}
-	case errors.As(err, &pcErr):
+	case errors.Is(err, procore.ErrUnavailable), errors.As(err, &pcErr):
 		return &APIError{Status: http.StatusBadGateway, Code: "procore_unavailable", Message: "Procore request failed"}
 	}
 	return nil

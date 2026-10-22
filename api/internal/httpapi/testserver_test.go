@@ -74,6 +74,9 @@ type fakeProcore struct {
 
 	// Clock is the test server's injected clock.
 	Clock *fakeClock
+	// Server is the httptest server serving the fake; close it to make
+	// Procore unreachable.
+	Server *httptest.Server
 
 	issued int
 }
@@ -210,6 +213,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *fakeProcore) {
 	}
 	procoreSrv := httptest.NewServer(fp)
 	t.Cleanup(procoreSrv.Close)
+	fp.Server = procoreSrv
 
 	// The redirect URL must name the API server, so take its address
 	// before building the router.

@@ -631,6 +631,23 @@ func (response AuthCallback400JSONResponse) VisitAuthCallbackResponse(w http.Res
 	return err
 }
 
+type AuthCallbackdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response AuthCallbackdefaultJSONResponse) VisitAuthCallbackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type AuthExchangeRequestObject struct {
 	Body *AuthExchangeJSONRequestBody
 }
@@ -667,6 +684,23 @@ func (response AuthExchange400JSONResponse) VisitAuthExchangeResponse(w http.Res
 	return err
 }
 
+type AuthExchangedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response AuthExchangedefaultJSONResponse) VisitAuthExchangeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type AuthLogoutRequestObject struct {
 }
 
@@ -692,6 +726,23 @@ func (response AuthLogout401JSONResponse) VisitAuthLogoutResponse(w http.Respons
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AuthLogoutdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response AuthLogoutdefaultJSONResponse) VisitAuthLogoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -732,6 +783,23 @@ func (response AuthRefresh401JSONResponse) VisitAuthRefreshResponse(w http.Respo
 	return err
 }
 
+type AuthRefreshdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response AuthRefreshdefaultJSONResponse) VisitAuthRefreshResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type AuthStartRequestObject struct {
 	Body *AuthStartJSONRequestBody
 }
@@ -768,6 +836,23 @@ func (response AuthStart400JSONResponse) VisitAuthStartResponse(w http.ResponseW
 	return err
 }
 
+type AuthStartdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response AuthStartdefaultJSONResponse) VisitAuthStartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListCompaniesRequestObject struct {
 }
 
@@ -799,6 +884,51 @@ func (response ListCompanies401JSONResponse) VisitListCompaniesResponse(w http.R
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCompanies403JSONResponse Error
+
+func (response ListCompanies403JSONResponse) VisitListCompaniesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCompanies502JSONResponse Error
+
+func (response ListCompanies502JSONResponse) VisitListCompaniesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCompaniesdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListCompaniesdefaultJSONResponse) VisitListCompaniesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -853,6 +983,37 @@ func (response ListProjects403JSONResponse) VisitListProjectsResponse(w http.Res
 	return err
 }
 
+type ListProjects502JSONResponse Error
+
+func (response ListProjects502JSONResponse) VisitListProjectsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListProjectsdefaultJSONResponse) VisitListProjectsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetMeRequestObject struct {
 }
 
@@ -884,6 +1045,23 @@ func (response GetMe401JSONResponse) VisitGetMeResponse(w http.ResponseWriter) e
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetMedefaultJSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -928,6 +1106,37 @@ func (response PutMeSelection401JSONResponse) VisitPutMeSelectionResponse(w http
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeSelection403JSONResponse Error
+
+func (response PutMeSelection403JSONResponse) VisitPutMeSelectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMeSelectiondefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response PutMeSelectiondefaultJSONResponse) VisitPutMeSelectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -979,6 +1188,37 @@ func (response ListRFIs403JSONResponse) VisitListRFIsResponse(w http.ResponseWri
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRFIs502JSONResponse Error
+
+func (response ListRFIs502JSONResponse) VisitListRFIsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListRFIsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListRFIsdefaultJSONResponse) VisitListRFIsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1336,28 +1576,29 @@ func (sh *strictHandler) ListRFIs(w http.ResponseWriter, r *http.Request, projec
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"ZFvvtL+r3D9YGhTgosop928AHS5O6fph/e8A",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

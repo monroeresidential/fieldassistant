@@ -18,6 +18,9 @@ var (
 	ErrUnauthorized = errors.New("procore unauthorized")
 	// ErrPermissionDenied means the user lacks access to the resource (HTTP 403).
 	ErrPermissionDenied = errors.New("procore permission denied")
+	// ErrUnavailable means Procore could not be reached or sent a body that
+	// does not decode. A caller's own cancellation is not reported this way.
+	ErrUnavailable = errors.New("procore unavailable")
 )
 
 const (
@@ -127,7 +130,7 @@ func (c *Client) do(ctx context.Context, token string, companyID *int64, method,
 		resp, err := c.hc.Do(req)
 		if err != nil {
 			// url.Error carries only the URL and cause; the token is in a header.
-			return fmt.Errorf("procore: %s %s: %w", method, path, err)
+			return unavailable(ctx, fmt.Errorf("procore: %s %s: %w", method, path, err))
 		}
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRateRetries {
 			wait := c.rateWait(resp.Header.Get("X-Rate-Limit-Reset"))
@@ -139,11 +142,20 @@ func (c *Client) do(ctx context.Context, token string, companyID *int64, method,
 			}
 			continue
 		}
-		return decodeResponse(resp, method, path, out)
+		return decodeResponse(ctx, resp, method, path, out)
 	}
 }
 
-func decodeResponse(resp *http.Response, method, path string, out any) error {
+// unavailable wraps err with ErrUnavailable unless ctx is done, in which
+// case the failure is the caller's cancellation and err is returned as is.
+func unavailable(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrUnavailable, err)
+}
+
+func decodeResponse(ctx context.Context, resp *http.Response, method, path string, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
@@ -157,7 +169,7 @@ func decodeResponse(resp *http.Response, method, path string, out any) error {
 		return apiErr
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("procore: decode %s %s response: %w", method, path, err)
+		return unavailable(ctx, fmt.Errorf("procore: decode %s %s response: %w", method, path, err))
 	}
 	return nil
 }
