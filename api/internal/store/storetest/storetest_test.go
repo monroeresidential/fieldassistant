@@ -22,7 +22,7 @@ func TestStoretest_HoldsAdvisoryLock(t *testing.T) {
 
 	var n int
 	err = other.QueryRow(ctx,
-		"select count(*) from pg_locks where locktype = 'advisory' and objid = $1",
+		"select count(*) from pg_locks where locktype = 'advisory' and classid = 0 and objid = $1 and granted",
 		storetest.LockKey).Scan(&n)
 	if err != nil {
 		t.Fatalf("query pg_locks: %v", err)
