@@ -24,6 +24,8 @@ type Deps struct {
 	Broker   *auth.Broker
 	Tokens   *auth.TokenSource
 	Procore  *procore.Client
+	// Companies caches each user's Procore company list for scope checks.
+	Companies *auth.CompanyCache
 }
 
 // NewRouter builds the HTTP handler for the API.

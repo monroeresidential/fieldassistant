@@ -67,6 +67,7 @@ type fakeProcore struct {
 	RFIs          map[int64][]procore.RFI     // by project id
 	RefreshFails  bool                        // /oauth/token refresh_token grant answers 401
 	Status429Once bool                        // the next REST request answers 429
+	Forbidden     map[string]bool             // REST paths, e.g. "/projects/5/rfis", that answer 403
 
 	Revoked  []string      // tokens posted to /oauth/revoke
 	Requests []fakeRequest // every request, in arrival order
@@ -146,6 +147,10 @@ func (f *fakeProcore) rest(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	firstPage := page <= 1
 	path := strings.TrimPrefix(r.URL.Path, "/rest/v1.0")
+	if f.Forbidden[path] {
+		http.Error(w, `{"errors":"forbidden"}`, http.StatusForbidden)
+		return
+	}
 	switch {
 	case path == "/me":
 		writeJSON(w, me)
@@ -197,10 +202,11 @@ func newTestServer(t *testing.T) (*httptest.Server, *fakeProcore) {
 	clock := &fakeClock{Now: time.Now()}
 
 	fp := &fakeProcore{
-		Users:    map[int64]procore.Me{testProcoreUser.ID: testProcoreUser},
-		Projects: map[int64][]procore.Project{},
-		RFIs:     map[int64][]procore.RFI{},
-		Clock:    clock,
+		Users:     map[int64]procore.Me{testProcoreUser.ID: testProcoreUser},
+		Projects:  map[int64][]procore.Project{},
+		RFIs:      map[int64][]procore.RFI{},
+		Forbidden: map[string]bool{},
+		Clock:     clock,
 	}
 	procoreSrv := httptest.NewServer(fp)
 	t.Cleanup(procoreSrv.Close)
@@ -232,13 +238,14 @@ func newTestServer(t *testing.T) (*httptest.Server, *fakeProcore) {
 	sessions := auth.NewSessions(st, cfg.SessionSecret, clock.now)
 
 	api.Config.Handler = NewRouter(Deps{
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Config:   cfg,
-		Store:    st,
-		Sessions: sessions,
-		Broker:   auth.NewBroker(st, oauth, pc, tokens, sessions, clock.now),
-		Tokens:   tokens,
-		Procore:  pc,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Config:    cfg,
+		Store:     st,
+		Sessions:  sessions,
+		Broker:    auth.NewBroker(st, oauth, pc, tokens, sessions, clock.now),
+		Tokens:    tokens,
+		Procore:   pc,
+		Companies: auth.NewCompanyCache(pc, tokens, 10*time.Minute, clock.now),
 	})
 	api.Start()
 	t.Cleanup(api.Close)

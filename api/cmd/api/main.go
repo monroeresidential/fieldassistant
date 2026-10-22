@@ -20,6 +20,10 @@ import (
 // procoreTimeout bounds every outbound request to Procore.
 const procoreTimeout = 30 * time.Second
 
+// companyCacheTTL is how long a user's Procore company list is trusted for
+// scope checks before it is fetched again.
+const companyCacheTTL = 10 * time.Minute
+
 func main() {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -89,11 +93,12 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	tokens := auth.NewTokenSource(st, vault, oauth, time.Now)
 	sessions := auth.NewSessions(st, cfg.SessionSecret, time.Now)
 	return httpapi.Deps{
-		Config:   cfg,
-		Store:    st,
-		Sessions: sessions,
-		Broker:   auth.NewBroker(st, oauth, pc, tokens, sessions, time.Now),
-		Tokens:   tokens,
-		Procore:  pc,
+		Config:    cfg,
+		Store:     st,
+		Sessions:  sessions,
+		Broker:    auth.NewBroker(st, oauth, pc, tokens, sessions, time.Now),
+		Tokens:    tokens,
+		Procore:   pc,
+		Companies: auth.NewCompanyCache(pc, tokens, companyCacheTTL, time.Now),
 	}, st.Close, nil
 }
