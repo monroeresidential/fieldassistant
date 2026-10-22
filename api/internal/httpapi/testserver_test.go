@@ -3,6 +3,9 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -302,10 +305,24 @@ func wantError(t *testing.T, res *http.Response, b []byte, status int, code stri
 	}
 }
 
-// startAuth runs POST /v1/auth/start for deviceID and returns its state.
-func startAuth(t *testing.T, srv *httptest.Server, deviceID string) string {
+// newVerifier returns a fresh PKCE-style code verifier (32 random bytes,
+// base64url) and its challenge, base64url-nopad(SHA-256(verifier)).
+func newVerifier(t *testing.T) (verifier, challenge string) {
 	t.Helper()
-	res, b := call(t, srv, http.MethodPost, "/v1/auth/start", "", AuthStartRequest{DeviceId: deviceID})
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatalf("random verifier: %v", err)
+	}
+	verifier = base64.RawURLEncoding.EncodeToString(b)
+	sum := sha256.Sum256([]byte(verifier))
+	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// startAuth runs POST /v1/auth/start for deviceID and challenge and returns
+// its state.
+func startAuth(t *testing.T, srv *httptest.Server, deviceID, challenge string) string {
+	t.Helper()
+	res, b := call(t, srv, http.MethodPost, "/v1/auth/start", "", AuthStartRequest{DeviceId: deviceID, CodeChallenge: challenge})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("start: status %d; body %s", res.StatusCode, b)
 	}
@@ -338,8 +355,9 @@ func callbackCode(t *testing.T, srv *httptest.Server, state string) string {
 // signIn runs start, callback and exchange for deviceID and returns the pair.
 func signIn(t *testing.T, srv *httptest.Server, deviceID string) TokenPair {
 	t.Helper()
-	code := callbackCode(t, srv, startAuth(t, srv, deviceID))
-	res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "", AuthExchangeRequest{Code: code, DeviceId: deviceID})
+	verifier, challenge := newVerifier(t)
+	code := callbackCode(t, srv, startAuth(t, srv, deviceID, challenge))
+	res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "", AuthExchangeRequest{Code: code, DeviceId: deviceID, CodeVerifier: verifier})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("exchange: status %d; body %s", res.StatusCode, b)
 	}

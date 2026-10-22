@@ -9,15 +9,17 @@ import (
 )
 
 type AuthCode struct {
-	Code      string
-	SessionID pgtype.UUID
-	ExpiresAt pgtype.Timestamptz
+	Code          string
+	SessionID     pgtype.UUID
+	CodeChallenge string
+	ExpiresAt     pgtype.Timestamptz
 }
 
 type AuthState struct {
-	State     string
-	DeviceID  string
-	ExpiresAt pgtype.Timestamptz
+	State         string
+	DeviceID      string
+	CodeChallenge string
+	ExpiresAt     pgtype.Timestamptz
 }
 
 type ProcoreToken struct {

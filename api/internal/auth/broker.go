@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -24,7 +26,8 @@ const (
 
 var (
 	// ErrBadState means an OAuth state or one-time code is unknown, expired,
-	// already used, or was presented from a different device.
+	// already used, or was presented from a different device or with a code
+	// verifier that does not match its challenge.
 	ErrBadState = errors.New("bad auth state")
 	// ErrProcoreUnavailable wraps a Procore failure during sign-in.
 	ErrProcoreUnavailable = errors.New("procore unavailable")
@@ -48,17 +51,20 @@ func NewBroker(st *store.Store, o *procore.OAuth, pc *procore.Client, ts *TokenS
 	return &Broker{st: st, o: o, pc: pc, ts: ts, ss: ss, now: now}
 }
 
-// Start records a fresh OAuth state for deviceID and returns the Procore
-// consent URL carrying it.
-func (b *Broker) Start(ctx context.Context, deviceID string) (authorizeURL, state string, err error) {
+// Start records a fresh OAuth state for deviceID and codeChallenge and
+// returns the Procore consent URL carrying it. codeChallenge is
+// base64url-nopad(SHA-256(verifier)) for a verifier only the app knows;
+// Exchange demands that verifier.
+func (b *Broker) Start(ctx context.Context, deviceID, codeChallenge string) (authorizeURL, state string, err error) {
 	state, err = randomToken()
 	if err != nil {
 		return "", "", err
 	}
 	err = b.st.Q.CreateAuthState(ctx, db.CreateAuthStateParams{
-		State:     state,
-		DeviceID:  deviceID,
-		ExpiresAt: pgtype.Timestamptz{Time: b.now().Add(stateTTL), Valid: true},
+		State:         state,
+		DeviceID:      deviceID,
+		CodeChallenge: codeChallenge,
+		ExpiresAt:     pgtype.Timestamptz{Time: b.now().Add(stateTTL), Valid: true},
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("broker: store state: %w", err)
@@ -68,11 +74,12 @@ func (b *Broker) Start(ctx context.Context, deviceID string) (authorizeURL, stat
 
 // Callback completes Procore consent: it consumes state, trades code for
 // Procore tokens, records the user and their tokens, starts a session on the
-// state's device and returns a one-time code for that session. An unknown or
+// state's device and returns a one-time code for that session, bound to the
+// state's code challenge. An unknown or
 // expired state returns ErrBadState; a Procore failure wraps
 // ErrProcoreUnavailable.
 func (b *Broker) Callback(ctx context.Context, code, state string) (string, error) {
-	deviceID, err := b.st.Q.ConsumeAuthState(ctx, state)
+	authState, err := b.st.Q.ConsumeAuthState(ctx, state)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrBadState
 	}
@@ -105,7 +112,7 @@ func (b *Broker) Callback(ctx context.Context, code, state string) (string, erro
 	}
 	// The pair is discarded: Exchange reissues one for the session, so no
 	// usable token passes through the browser.
-	sessionID, _, err := b.ss.Create(ctx, userID, deviceID)
+	sessionID, _, err := b.ss.Create(ctx, userID, authState.DeviceID)
 	if err != nil {
 		return "", err
 	}
@@ -115,9 +122,10 @@ func (b *Broker) Callback(ctx context.Context, code, state string) (string, erro
 		return "", err
 	}
 	err = b.st.Q.CreateAuthCode(ctx, db.CreateAuthCodeParams{
-		Code:      oneTimeCode,
-		SessionID: pgUUID(sessionID),
-		ExpiresAt: pgtype.Timestamptz{Time: b.now().Add(codeTTL), Valid: true},
+		Code:          oneTimeCode,
+		SessionID:     pgUUID(sessionID),
+		CodeChallenge: authState.CodeChallenge,
+		ExpiresAt:     pgtype.Timestamptz{Time: b.now().Add(codeTTL), Valid: true},
 	})
 	if err != nil {
 		return "", fmt.Errorf("broker: store code: %w", err)
@@ -126,18 +134,21 @@ func (b *Broker) Callback(ctx context.Context, code, state string) (string, erro
 }
 
 // Exchange consumes oneTimeCode and returns a fresh pair for its session.
-// An unknown, expired or used code, or a deviceID other than the one that
-// started sign-in, returns ErrBadState. A code is spent even when the device
-// does not match.
-func (b *Broker) Exchange(ctx context.Context, oneTimeCode, deviceID string) (TokenPair, error) {
-	sid, err := b.st.Q.ConsumeAuthCode(ctx, oneTimeCode)
+// An unknown, expired or used code, a codeVerifier that does not hash to the
+// challenge given to Start, or a deviceID other than the one that started
+// sign-in returns ErrBadState. A code is spent even when a check fails.
+func (b *Broker) Exchange(ctx context.Context, oneTimeCode, deviceID, codeVerifier string) (TokenPair, error) {
+	row, err := b.st.Q.ConsumeAuthCode(ctx, oneTimeCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TokenPair{}, ErrBadState
 	}
 	if err != nil {
 		return TokenPair{}, fmt.Errorf("broker: consume code: %w", err)
 	}
-	sess, err := b.st.Q.GetSession(ctx, sid)
+	if !verifierMatches(codeVerifier, row.CodeChallenge) {
+		return TokenPair{}, ErrBadState
+	}
+	sess, err := b.st.Q.GetSession(ctx, row.SessionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TokenPair{}, ErrBadState
 	}
@@ -147,7 +158,7 @@ func (b *Broker) Exchange(ctx context.Context, oneTimeCode, deviceID string) (To
 	if sess.DeviceID != deviceID {
 		return TokenPair{}, ErrBadState
 	}
-	return b.ss.Reissue(ctx, uuid.UUID(sid.Bytes))
+	return b.ss.Reissue(ctx, uuid.UUID(row.SessionID.Bytes))
 }
 
 // Logout revokes the Procore refresh token of the session's user, ignoring
@@ -173,6 +184,14 @@ func (b *Broker) revokeProcore(ctx context.Context, userID uuid.UUID) {
 		return
 	}
 	_ = b.o.Revoke(ctx, refresh)
+}
+
+// verifierMatches reports whether base64url-nopad(SHA-256(verifier)) equals
+// challenge, comparing in constant time.
+func verifierMatches(verifier, challenge string) bool {
+	sum := sha256.Sum256([]byte(verifier))
+	got := base64.RawURLEncoding.EncodeToString(sum[:])
+	return subtle.ConstantTimeCompare([]byte(got), []byte(challenge)) == 1
 }
 
 // randomToken returns 32 random bytes as base64url.

@@ -29,10 +29,12 @@ create unique index sessions_refresh_hash_idx on sessions(refresh_hash);
 create table auth_states (
   state text primary key,
   device_id text not null,
+  code_challenge text not null,
   expires_at timestamptz not null
 );
 create table auth_codes (
   code text primary key,
   session_id uuid not null references sessions(id) on delete cascade,
+  code_challenge text not null,
   expires_at timestamptz not null
 );

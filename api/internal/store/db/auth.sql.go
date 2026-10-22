@@ -12,53 +12,75 @@ import (
 )
 
 const consumeAuthCode = `-- name: ConsumeAuthCode :one
-delete from auth_codes where code = $1 and expires_at > now() returning session_id
+delete from auth_codes where code = $1 and expires_at > now() returning session_id, code_challenge
 `
 
-func (q *Queries) ConsumeAuthCode(ctx context.Context, code string) (pgtype.UUID, error) {
+type ConsumeAuthCodeRow struct {
+	SessionID     pgtype.UUID
+	CodeChallenge string
+}
+
+func (q *Queries) ConsumeAuthCode(ctx context.Context, code string) (ConsumeAuthCodeRow, error) {
 	row := q.db.QueryRow(ctx, consumeAuthCode, code)
-	var session_id pgtype.UUID
-	err := row.Scan(&session_id)
-	return session_id, err
+	var i ConsumeAuthCodeRow
+	err := row.Scan(&i.SessionID, &i.CodeChallenge)
+	return i, err
 }
 
 const consumeAuthState = `-- name: ConsumeAuthState :one
-delete from auth_states where state = $1 and expires_at > now() returning device_id
+delete from auth_states where state = $1 and expires_at > now() returning device_id, code_challenge
 `
 
-func (q *Queries) ConsumeAuthState(ctx context.Context, state string) (string, error) {
+type ConsumeAuthStateRow struct {
+	DeviceID      string
+	CodeChallenge string
+}
+
+func (q *Queries) ConsumeAuthState(ctx context.Context, state string) (ConsumeAuthStateRow, error) {
 	row := q.db.QueryRow(ctx, consumeAuthState, state)
-	var device_id string
-	err := row.Scan(&device_id)
-	return device_id, err
+	var i ConsumeAuthStateRow
+	err := row.Scan(&i.DeviceID, &i.CodeChallenge)
+	return i, err
 }
 
 const createAuthCode = `-- name: CreateAuthCode :exec
-insert into auth_codes (code, session_id, expires_at) values ($1, $2, $3)
+insert into auth_codes (code, session_id, code_challenge, expires_at) values ($1, $2, $3, $4)
 `
 
 type CreateAuthCodeParams struct {
-	Code      string
-	SessionID pgtype.UUID
-	ExpiresAt pgtype.Timestamptz
+	Code          string
+	SessionID     pgtype.UUID
+	CodeChallenge string
+	ExpiresAt     pgtype.Timestamptz
 }
 
 func (q *Queries) CreateAuthCode(ctx context.Context, arg CreateAuthCodeParams) error {
-	_, err := q.db.Exec(ctx, createAuthCode, arg.Code, arg.SessionID, arg.ExpiresAt)
+	_, err := q.db.Exec(ctx, createAuthCode,
+		arg.Code,
+		arg.SessionID,
+		arg.CodeChallenge,
+		arg.ExpiresAt,
+	)
 	return err
 }
 
 const createAuthState = `-- name: CreateAuthState :exec
-insert into auth_states (state, device_id, expires_at) values ($1, $2, $3)
+insert into auth_states (state, device_id, code_challenge, expires_at) values ($1, $2, $3, $4)
 `
 
 type CreateAuthStateParams struct {
-	State     string
-	DeviceID  string
-	ExpiresAt pgtype.Timestamptz
+	State         string
+	DeviceID      string
+	CodeChallenge string
+	ExpiresAt     pgtype.Timestamptz
 }
 
 func (q *Queries) CreateAuthState(ctx context.Context, arg CreateAuthStateParams) error {
-	_, err := q.db.Exec(ctx, createAuthState, arg.State, arg.DeviceID, arg.ExpiresAt)
+	_, err := q.db.Exec(ctx, createAuthState,
+		arg.State,
+		arg.DeviceID,
+		arg.CodeChallenge,
+		arg.ExpiresAt,
+	)
 	return err
 }

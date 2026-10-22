@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Field Assistant API
-  version: 1.0.0
+  version: 1.1.0
 servers:
   - url: /v1
 security:
@@ -215,10 +215,15 @@ components:
           type: string
     AuthStartRequest:
       type: object
-      required: [device_id]
+      required: [device_id, code_challenge]
       properties:
         device_id:
           type: string
+        code_challenge:
+          type: string
+          minLength: 43
+          maxLength: 128
+          description: Base64url without padding of the SHA-256 of a client-generated code_verifier.
     AuthStartResponse:
       type: object
       required: [authorize_url, state]
@@ -230,12 +235,17 @@ components:
           type: string
     AuthExchangeRequest:
       type: object
-      required: [code, device_id]
+      required: [code, device_id, code_verifier]
       properties:
         code:
           type: string
         device_id:
           type: string
+        code_verifier:
+          type: string
+          minLength: 43
+          maxLength: 128
+          description: The secret whose SHA-256 was sent as code_challenge to /auth/start.
     AuthRefreshRequest:
       type: object
       required: [refresh_token]

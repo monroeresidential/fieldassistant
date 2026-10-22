@@ -15,11 +15,39 @@ import (
 // appRedirectBase is where the callback sends the browser back to the app.
 const appRedirectBase = "fieldassistant://auth"
 
+// Length bounds for code_challenge and code_verifier, as in RFC 7636.
+const (
+	minPKCELen = 43
+	maxPKCELen = 128
+)
+
+// validChallenge reports whether c is 43-128 characters of [A-Za-z0-9_-].
+func validChallenge(c string) bool {
+	if len(c) < minPKCELen || len(c) > maxPKCELen {
+		return false
+	}
+	for _, r := range c {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func badRequest(msg string) *APIError {
+	return &APIError{Status: http.StatusBadRequest, Code: "bad_request", Message: msg}
+}
+
 func (s *Server) AuthStart(ctx context.Context, req AuthStartRequestObject) (AuthStartResponseObject, error) {
 	if req.Body.DeviceId == "" {
-		return nil, &APIError{Status: http.StatusBadRequest, Code: "bad_request", Message: "device_id is required"}
+		return nil, badRequest("device_id is required")
 	}
-	authorizeURL, state, err := s.deps.Broker.Start(ctx, req.Body.DeviceId)
+	if !validChallenge(req.Body.CodeChallenge) {
+		return nil, badRequest("code_challenge must be 43-128 base64url characters")
+	}
+	authorizeURL, state, err := s.deps.Broker.Start(ctx, req.Body.DeviceId, req.Body.CodeChallenge)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +64,10 @@ func (s *Server) AuthCallback(ctx context.Context, req AuthCallbackRequestObject
 }
 
 func (s *Server) AuthExchange(ctx context.Context, req AuthExchangeRequestObject) (AuthExchangeResponseObject, error) {
-	pair, err := s.deps.Broker.Exchange(ctx, req.Body.Code, req.Body.DeviceId)
+	if n := len(req.Body.CodeVerifier); n < minPKCELen || n > maxPKCELen {
+		return nil, badRequest("code_verifier must be 43-128 characters")
+	}
+	pair, err := s.deps.Broker.Exchange(ctx, req.Body.Code, req.Body.DeviceId, req.Body.CodeVerifier)
 	if err != nil {
 		return nil, authError(err)
 	}

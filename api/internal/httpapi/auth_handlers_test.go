@@ -9,8 +9,9 @@ import (
 
 func TestAuthStart_ReturnsAuthorizeURLWithState(t *testing.T) {
 	srv, _ := newTestServer(t)
+	_, challenge := newVerifier(t)
 
-	res, b := call(t, srv, http.MethodPost, "/v1/auth/start", "", AuthStartRequest{DeviceId: "device-1"})
+	res, b := call(t, srv, http.MethodPost, "/v1/auth/start", "", AuthStartRequest{DeviceId: "device-1", CodeChallenge: challenge})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status %d; body %s", res.StatusCode, b)
 	}
@@ -29,10 +30,11 @@ func TestAuthStart_ReturnsAuthorizeURLWithState(t *testing.T) {
 func TestAuthCallback_FullFlow(t *testing.T) {
 	srv, _ := newTestServer(t)
 
-	state := startAuth(t, srv, "device-1")
+	verifier, challenge := newVerifier(t)
+	state := startAuth(t, srv, "device-1", challenge)
 	code := callbackCode(t, srv, state)
 
-	res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "", AuthExchangeRequest{Code: code, DeviceId: "device-1"})
+	res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "", AuthExchangeRequest{Code: code, DeviceId: "device-1", CodeVerifier: verifier})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("exchange: status %d; body %s", res.StatusCode, b)
 	}
@@ -73,16 +75,18 @@ func TestAuthCallback_BadState_400(t *testing.T) {
 func TestAuthExchange_WrongDevice_400(t *testing.T) {
 	srv, _ := newTestServer(t)
 
-	code := callbackCode(t, srv, startAuth(t, srv, "device-1"))
-	res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "", AuthExchangeRequest{Code: code, DeviceId: "device-2"})
+	verifier, challenge := newVerifier(t)
+	code := callbackCode(t, srv, startAuth(t, srv, "device-1", challenge))
+	res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "", AuthExchangeRequest{Code: code, DeviceId: "device-2", CodeVerifier: verifier})
 	wantError(t, res, b, http.StatusBadRequest, "bad_request")
 }
 
 func TestAuthExchange_CodeSingleUse(t *testing.T) {
 	srv, _ := newTestServer(t)
 
-	code := callbackCode(t, srv, startAuth(t, srv, "device-1"))
-	req := AuthExchangeRequest{Code: code, DeviceId: "device-1"}
+	verifier, challenge := newVerifier(t)
+	code := callbackCode(t, srv, startAuth(t, srv, "device-1", challenge))
+	req := AuthExchangeRequest{Code: code, DeviceId: "device-1", CodeVerifier: verifier}
 	if res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "", req); res.StatusCode != http.StatusOK {
 		t.Fatalf("first exchange: status %d; body %s", res.StatusCode, b)
 	}
@@ -143,10 +147,63 @@ func TestProtectedRoute_NoBearer_401(t *testing.T) {
 
 func TestAuthCallback_ProcoreFailure_502(t *testing.T) {
 	srv, _ := newTestServer(t)
-	state := startAuth(t, srv, "device-1")
+	_, challenge := newVerifier(t)
+	state := startAuth(t, srv, "device-1", challenge)
 
 	// The fake rejects authorization codes for users it does not know.
 	q := url.Values{"code": {"999"}, "state": {state}}
 	res, b := call(t, srv, http.MethodGet, "/v1/auth/callback?"+q.Encode(), "", nil)
 	wantError(t, res, b, http.StatusBadGateway, "procore_unavailable")
+}
+
+func TestAuthExchange_WrongVerifier_400(t *testing.T) {
+	srv, _ := newTestServer(t)
+	verifier, challenge := newVerifier(t)
+	otherVerifier, _ := newVerifier(t)
+	code := callbackCode(t, srv, startAuth(t, srv, "device-1", challenge))
+
+	res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "",
+		AuthExchangeRequest{Code: code, DeviceId: "device-1", CodeVerifier: otherVerifier})
+	wantError(t, res, b, http.StatusBadRequest, "bad_request")
+
+	// The wrong verifier spent the code, so the right one cannot redeem it.
+	res, b = call(t, srv, http.MethodPost, "/v1/auth/exchange", "",
+		AuthExchangeRequest{Code: code, DeviceId: "device-1", CodeVerifier: verifier})
+	wantError(t, res, b, http.StatusBadRequest, "bad_request")
+}
+
+func TestAuthStart_MissingChallenge_400(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, challenge := newVerifier(t)
+
+	for name, c := range map[string]string{
+		"missing":   "",
+		"too short": challenge[:42],
+		"too long":  strings.Repeat("a", 129),
+		"bad chars": challenge[:42] + "=",
+	} {
+		t.Run(name, func(t *testing.T) {
+			res, b := call(t, srv, http.MethodPost, "/v1/auth/start", "", AuthStartRequest{DeviceId: "device-1", CodeChallenge: c})
+			wantError(t, res, b, http.StatusBadRequest, "bad_request")
+		})
+	}
+}
+
+func TestAuthExchange_MissingVerifier_400(t *testing.T) {
+	srv, _ := newTestServer(t)
+	verifier, challenge := newVerifier(t)
+
+	for name, v := range map[string]string{
+		"missing":   "",
+		"too short": verifier[:42],
+		"too long":  strings.Repeat("a", 129),
+	} {
+		t.Run(name, func(t *testing.T) {
+			// A fresh code per case, so only the verifier check can reject it.
+			code := callbackCode(t, srv, startAuth(t, srv, "device-1", challenge))
+			res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "",
+				AuthExchangeRequest{Code: code, DeviceId: "device-1", CodeVerifier: v})
+			wantError(t, res, b, http.StatusBadRequest, "bad_request")
+		})
+	}
 }
