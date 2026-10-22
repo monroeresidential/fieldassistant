@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,7 +22,28 @@ func NewRouter(deps Deps) http.Handler {
 	r.Use(requestLogger)
 
 	r.Get("/healthz", handleHealthz)
+
+	strict := NewStrictHandlerWithOptions(&Server{deps: deps}, nil, StrictHTTPServerOptions{
+		RequestErrorHandlerFunc:  strictRequestErrorHandler,
+		ResponseErrorHandlerFunc: strictErrorHandler,
+	})
+	r.Group(func(v1 chi.Router) {
+		v1.Use(requireBearerStub)
+		HandlerFromMuxWithBaseURL(strict, v1, "/v1")
+	})
 	return r
+}
+
+// requireBearerStub rejects /v1 requests without an Authorization header,
+// except /v1/auth/*. Real session verification replaces it in a later task.
+func requireBearerStub(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1/auth/") && r.Header.Get("Authorization") == "" {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func requestLogger(next http.Handler) http.Handler {

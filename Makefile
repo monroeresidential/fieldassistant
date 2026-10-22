@@ -13,7 +13,7 @@ db-down:
 	docker compose -f api/docker-compose.yml down
 
 generate:
-	@echo "defined in a later task"
+	cd api && go tool oapi-codegen -config oapi-codegen.yaml openapi.yaml
 
 sync-contract:
 	@echo "defined in a later task"
