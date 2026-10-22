@@ -10,17 +10,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/monroeresidential/fieldassistant/api/internal/config"
 	"github.com/monroeresidential/fieldassistant/api/internal/httpapi"
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
 	}
 
 	srv := &http.Server{
-		Addr:              ":" + port,
+		Addr:              ":" + cfg.Port,
 		Handler:           httpapi.NewRouter(httpapi.Deps{}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
