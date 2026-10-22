@@ -14,6 +14,7 @@ db-down:
 
 generate:
 	cd api && go tool oapi-codegen -config oapi-codegen.yaml openapi.yaml
+	cd api && go tool sqlc generate
 
 sync-contract:
 	@echo "defined in a later task"
