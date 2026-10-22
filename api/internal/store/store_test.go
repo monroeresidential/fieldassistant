@@ -58,3 +58,30 @@ func TestConsumeAuthState_ExpiredReturnsNoRows(t *testing.T) {
 		t.Fatalf("ConsumeAuthState err = %v, want pgx.ErrNoRows", err)
 	}
 }
+
+func TestMigrate_TwiceIsIdempotentAndReleasesConnections(t *testing.T) {
+	ctx := context.Background()
+	s := storetest.New(t)
+
+	count := func() int {
+		t.Helper()
+		var n int
+		err := s.Pool.QueryRow(ctx,
+			"select count(*) from pg_stat_activity where datname = current_database()").Scan(&n)
+		if err != nil {
+			t.Fatalf("count connections: %v", err)
+		}
+		return n
+	}
+
+	before := count()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("first Migrate: %v", err)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("second Migrate: %v", err)
+	}
+	if after := count(); after != before {
+		t.Fatalf("connections before = %d, after two Migrate calls = %d; Migrate leaks connections", before, after)
+	}
+}

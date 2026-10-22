@@ -48,29 +48,44 @@ func (s *Store) Close() {
 }
 
 // Migrate applies all pending up migrations. It uses its own short-lived
-// database/sql connection, separate from the query pool.
-func (s *Store) Migrate(ctx context.Context) error {
+// database/sql connection, separate from the query pool, and releases it
+// before returning.
+func (s *Store) Migrate(ctx context.Context) (err error) {
 	sqlDB, err := sql.Open("pgx", s.url)
 	if err != nil {
 		return fmt.Errorf("store: open migration db: %w", err)
 	}
-	defer sqlDB.Close()
 	if err := sqlDB.PingContext(ctx); err != nil {
+		sqlDB.Close()
 		return fmt.Errorf("store: ping migration db: %w", err)
 	}
 
 	src, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
+		sqlDB.Close()
 		return fmt.Errorf("store: migration source: %w", err)
 	}
 	driver, err := migratepgx.WithInstance(sqlDB, &migratepgx.Config{})
 	if err != nil {
+		sqlDB.Close()
 		return fmt.Errorf("store: migration driver: %w", err)
 	}
 	m, err := migrate.NewWithInstance("iofs", src, "pgx", driver)
 	if err != nil {
+		driver.Close() // releases the driver's dedicated conn and sqlDB
 		return fmt.Errorf("store: migrator: %w", err)
 	}
+	// m.Close releases the source and the driver, whose Close releases its
+	// dedicated *sql.Conn and closes sqlDB.
+	defer func() {
+		srcErr, dbErr := m.Close()
+		if err == nil {
+			if cerr := errors.Join(srcErr, dbErr); cerr != nil {
+				err = fmt.Errorf("store: close migrator: %w", cerr)
+			}
+		}
+	}()
+
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("store: migrate up: %w", err)
 	}
