@@ -119,25 +119,28 @@ func (q *Queries) GetSessionByRefreshHash(ctx context.Context, refreshHash []byt
 	return i, err
 }
 
-const rotateSessionRefresh = `-- name: RotateSessionRefresh :exec
+const rotateSessionRefresh = `-- name: RotateSessionRefresh :one
 update sessions
-set refresh_hash = $2, prev_refresh_hash = $3, expires_at = $4
-where id = $1
+set refresh_hash = $2, prev_refresh_hash = refresh_hash, expires_at = $3
+where id = $1 and refresh_hash = $4
+returning id
 `
 
 type RotateSessionRefreshParams struct {
-	ID              pgtype.UUID
-	RefreshHash     []byte
-	PrevRefreshHash []byte
-	ExpiresAt       pgtype.Timestamptz
+	ID            pgtype.UUID
+	RefreshHash   []byte
+	ExpiresAt     pgtype.Timestamptz
+	RefreshHash_2 []byte
 }
 
-func (q *Queries) RotateSessionRefresh(ctx context.Context, arg RotateSessionRefreshParams) error {
-	_, err := q.db.Exec(ctx, rotateSessionRefresh,
+func (q *Queries) RotateSessionRefresh(ctx context.Context, arg RotateSessionRefreshParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, rotateSessionRefresh,
 		arg.ID,
 		arg.RefreshHash,
-		arg.PrevRefreshHash,
 		arg.ExpiresAt,
+		arg.RefreshHash_2,
 	)
-	return err
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }

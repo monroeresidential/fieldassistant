@@ -12,10 +12,11 @@ select * from sessions where refresh_hash = $1;
 -- name: GetSessionByPrevRefreshHash :one
 select * from sessions where prev_refresh_hash = $1;
 
--- name: RotateSessionRefresh :exec
+-- name: RotateSessionRefresh :one
 update sessions
-set refresh_hash = $2, prev_refresh_hash = $3, expires_at = $4
-where id = $1;
+set refresh_hash = $2, prev_refresh_hash = refresh_hash, expires_at = $3
+where id = $1 and refresh_hash = $4
+returning id;
 
 -- name: DeleteSession :exec
 delete from sessions where id = $1;
