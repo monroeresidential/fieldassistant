@@ -2,6 +2,7 @@
 # Nightly Postgres dump, uploaded to a DigitalOcean Spaces bucket via s3cmd.
 # Run from cron on the droplet. Requires a one-time `s3cmd --configure`.
 set -euo pipefail
+umask 077
 
 cd "$(dirname "$0")"
 
@@ -13,9 +14,14 @@ if [ -z "${SPACES_BUCKET}" ]; then
 fi
 
 mkdir -p backups
+chmod 700 backups
 FILE="backups/fa-$(date +%F).sql.gz"
+TMP="${FILE}.tmp"
+trap 'rm -f "${TMP}"' EXIT
 
-docker compose exec -T postgres pg_dump -U fa fieldassistant | gzip > "${FILE}"
+# Dump to a temp file and move into place only on success.
+docker compose exec -T postgres pg_dump -U fa fieldassistant | gzip > "${TMP}"
+mv "${TMP}" "${FILE}"
 s3cmd put "${FILE}" "s3://${SPACES_BUCKET}/$(basename "${FILE}")"
 
 # Keep 30 days of local dumps.

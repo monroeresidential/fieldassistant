@@ -4,11 +4,16 @@ on:
   push:
     paths:
       - 'api/**'
+      - 'Makefile'
       - '.github/workflows/api.yml'
   pull_request:
     paths:
       - 'api/**'
+      - 'Makefile'
       - '.github/workflows/api.yml'
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -30,15 +35,15 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://fa:fa@localhost:5432/fieldassistant_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: api/go.mod
           cache-dependency-path: api/go.sum
       - name: Generate code
         run: make generate
       - name: Fail if generated code is stale
-        run: git diff --exit-code -- api/internal
+        run: test -z "$(git status --porcelain -- api/internal)" || (git status --porcelain -- api/internal; exit 1)
       - name: Vet
         working-directory: api
         run: go vet ./...
