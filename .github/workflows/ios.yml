@@ -32,15 +32,16 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate Xcode project
-        working-directory: ios
-        run: xcodegen generate
+      - name: Generate Xcode project with pinned packages
+        run: make ios-project
 
       - name: Test
         working-directory: ios
-        run: >
-          xcodebuild test
-          -scheme FieldAssistant
-          -destination 'platform=iOS Simulator,name=iPhone 16'
-          -skipPackagePluginValidation
-          -quiet
+        run: |
+          # -skipPackagePluginValidation trusts the Apple-owned OpenAPIGenerator plugin at the version pinned in ios/Package.resolved.
+          xcodebuild test \
+            -scheme FieldAssistant \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipPackagePluginValidation \
+            -quiet

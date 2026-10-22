@@ -1,4 +1,4 @@
-.PHONY: run test db-up db-down generate sync-contract check-contract
+.PHONY: run test db-up db-down generate sync-contract check-contract ios-project
 
 run:
 	cd api && go run ./cmd/api
@@ -24,3 +24,15 @@ sync-contract:
 check-contract:
 	@cmp -s api/openapi.yaml $(IOS_CONTRACT) || { echo "iOS contract copy is out of date with api/openapi.yaml; run: make sync-contract"; exit 1; }
 	@echo "contract in sync"
+
+# ios/Package.resolved is the source of truth for Swift package versions. The
+# .xcodeproj is generated and gitignored, so this target regenerates it and
+# installs the pinned resolution where xcodebuild reads it. To update pins:
+# run `make ios-project`, update packages in Xcode (File > Packages > Update),
+# then copy $(IOS_RESOLVED_DIR)/Package.resolved back to ios/Package.resolved.
+IOS_RESOLVED_DIR := ios/FieldAssistant.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+
+ios-project:
+	cd ios && xcodegen generate
+	mkdir -p $(IOS_RESOLVED_DIR)
+	cp ios/Package.resolved $(IOS_RESOLVED_DIR)/Package.resolved

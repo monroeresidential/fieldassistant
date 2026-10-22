@@ -5,5 +5,6 @@ ios/*.xcodeproj
 ios/**/xcuserdata/
 ios/**/.build/
 ios/**/DerivedData/
+ios/**/.swiftpm/
 ios/fastlane/report.xml
 .DS_Store
