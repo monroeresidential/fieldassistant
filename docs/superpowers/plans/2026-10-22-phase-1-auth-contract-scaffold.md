@@ -23,6 +23,7 @@
 - Procore base URLs come from config: `PROCORE_LOGIN_URL` (`https://login-sandbox.procore.com` in dev, `https://login.procore.com` in prod) and `PROCORE_API_URL` (`https://sandbox.procore.com` / `https://api.procore.com`).
 - Error responses are always `{"code": string, "message": string}` with codes from: `bad_request`, `unauthorized`, `reauth_required`, `forbidden_scope`, `procore_permission_denied`, `not_found`, `procore_unavailable`, `internal`.
 - Deep link scheme is `fieldassistant`; callback target is `fieldassistant://auth?code=<one-time code>`.
+- Sign-in is PKCE-bound: the client sends `code_challenge` to `/auth/start` and `code_verifier` to `/auth/exchange`; the backend rejects a mismatch. (Added during execution after a security review.)
 - Bundle identifier `com.monroeresidential.fieldassistant` (placeholder until the spec's open question is answered; it is set in exactly one place, `ios/project.yml`).
 - Commit after every task with the message given in the task.
 
@@ -118,9 +119,9 @@ git add -A && git commit -m "chore: scaffold repo, Go API module, health endpoin
 
 | Path | Method | operationId | Request | Response |
 | --- | --- | --- | --- | --- |
-| `/auth/start` | POST | `authStart` | `AuthStartRequest {device_id: string}` | 200 `AuthStartResponse {authorize_url: string, state: string}` |
+| `/auth/start` | POST | `authStart` | `AuthStartRequest {device_id: string, code_challenge: string}` (challenge = base64url-nopad SHA-256 of a per-attempt client verifier, 43–128 chars) | 200 `AuthStartResponse {authorize_url: string, state: string}` |
 | `/auth/callback` | GET | `authCallback` | query `code`, `state` | 302 `Location: fieldassistant://auth?code=…`; 400 `Error` |
-| `/auth/exchange` | POST | `authExchange` | `AuthExchangeRequest {code: string, device_id: string}` | 200 `TokenPair {access_token, refresh_token: string, expires_in: int}`; 400 |
+| `/auth/exchange` | POST | `authExchange` | `AuthExchangeRequest {code: string, device_id: string, code_verifier: string}` | 200 `TokenPair {access_token, refresh_token: string, expires_in: int}`; 400 |
 | `/auth/refresh` | POST | `authRefresh` | `AuthRefreshRequest {refresh_token: string}` | 200 `TokenPair`; 401 |
 | `/auth/logout` | POST | `authLogout` | bearer | 204 |
 | `/me` | GET | `getMe` | bearer | 200 `User {id: uuid, procore_user_id: int64, email, name: string, reauth_required: bool, last_company_id?: int64, last_project_id?: int64}` |
@@ -802,14 +803,14 @@ git add -A && git commit -m "feat(ios): keychain session store and auth middlewa
 - Consumes: Task 14 types; generated `Client` operations `authStart`, `authExchange`, `authRefresh`, `authLogout`, `getMe`.
 - Produces:
   - `protocol WebAuthPresenter: Sendable { func authenticate(url: URL, callbackScheme: String) async throws -> URL }` with `ASWebAuthenticationSessionPresenter` as the real one (uses `prefersEphemeralWebBrowserSession = false`).
-  - `actor AuthService { init(client: Client, store: SessionStore, presenter: WebAuthPresenter, deviceID: String); func signIn() async throws; func refresh(_ refreshToken: String) async throws -> Session; func signOut() async }`. `signIn`: `authStart(device_id)` → present `authorize_url` → parse `code` from the callback URL → `authExchange(code, device_id)` → save `Session` (expiry = now + `expires_in`).
+  - `actor AuthService { init(client: Client, store: SessionStore, presenter: WebAuthPresenter, deviceID: String); func signIn() async throws; func refresh(_ refreshToken: String) async throws -> Session; func signOut() async }`. `signIn`: generate a per-attempt PKCE verifier (32 random bytes, base64url without padding) and its challenge (base64url-nopad SHA-256 of the verifier, via CryptoKit) → `authStart(device_id, code_challenge)` → present `authorize_url` → parse `code` from the callback URL → `authExchange(code, device_id, code_verifier)` → save `Session` (expiry = now + `expires_in`). The verifier lives only in memory for the duration of one sign-in.
   - `@Observable @MainActor final class AppState { enum Phase { case loading, signedOut, signedIn(User) }; var phase: Phase; var selectedCompanyID: Int64?; var selectedProjectID: Int64?; func bootstrap() async; func signIn() async; func signOut() async }`. Selection persists in `UserDefaults` keys `selectedCompanyID`, `selectedProjectID`; on sign-in, `getMe` fills them from `last_company_id`/`last_project_id` when local values are nil.
   - `deviceID` is a UUID generated once and kept in `UserDefaults` key `deviceID`.
 
 - [ ] **Step 1: Write the failing tests** (fake presenter returns `fieldassistant://auth?code=abc`; `StubTransport` scripts `authStart`, `authExchange`, `getMe` responses):
 
 ```swift
-func testSignInStoresSession()                      // store.load()?.accessToken == "acc1"; exchange request body had code "abc" and the deviceID
+func testSignInStoresSession()                      // store.load()?.accessToken == "acc1"; start body had a 43+ char code_challenge; exchange body had code "abc", the deviceID, and a code_verifier whose SHA-256 (base64url) equals that challenge
 func testSignInWhenUserCancelsLeavesNoSession()     // presenter throws ASWebAuthenticationSessionError.canceledLogin → store empty, error is AuthError.cancelled
 func testBootstrapWithSessionLoadsMe()              // phase == .signedIn(user with procore_user_id 42)
 func testBootstrapWithoutSessionIsSignedOut()
