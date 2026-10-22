@@ -372,3 +372,41 @@ func TestClient_OtherStatus_IsAPIErrorWithTruncatedBody(t *testing.T) {
 		t.Errorf("500 mapped to a sentinel: %v", err)
 	}
 }
+
+func TestClient_ListCompanies_FollowsPagination(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/companies": func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Query().Get("page") {
+			case "1":
+				writeJSON(w, 200, itemsJSON(1, 100))
+			case "2":
+				writeJSON(w, 200, itemsJSON(101, 2))
+			default:
+				t.Errorf("unexpected page %q", r.URL.Query().Get("page"))
+				writeJSON(w, 200, `[]`)
+			}
+		},
+	})
+	got, err := newTestClient(f, &sleepRecorder{}).ListCompanies(context.Background(), "tok")
+	if err != nil {
+		t.Fatalf("ListCompanies: %v", err)
+	}
+	if len(got) != 102 {
+		t.Fatalf("len = %d, want 102", len(got))
+	}
+	if got[101] != (Company{ID: 102, Name: "P102"}) {
+		t.Errorf("last company = %+v", got[101])
+	}
+	reqs := f.recorded()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	for i, r := range reqs {
+		if got := r.Header.Get("Procore-Company-Id"); got != "" {
+			t.Errorf("request %d sent Procore-Company-Id = %q", i, got)
+		}
+		if r.Query["per_page"] != "100" || r.Query["page"] != strconv.Itoa(i+1) {
+			t.Errorf("request %d query = %v", i, r.Query)
+		}
+	}
+}

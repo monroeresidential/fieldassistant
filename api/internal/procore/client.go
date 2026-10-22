@@ -71,33 +71,32 @@ func (c *Client) Me(ctx context.Context, accessToken string) (Me, error) {
 	return me, err
 }
 
-// ListCompanies returns the companies the user can access.
+// ListCompanies returns every company the user can access, following pagination.
 func (c *Client) ListCompanies(ctx context.Context, accessToken string) ([]Company, error) {
-	var out []Company
-	err := c.do(ctx, accessToken, nil, http.MethodGet, "/rest/v1.0/companies", nil, &out)
-	return out, err
+	return listAll[Company](ctx, c, accessToken, nil, "/rest/v1.0/companies", url.Values{})
 }
 
 // ListProjects returns every project in companyID, following pagination.
 func (c *Client) ListProjects(ctx context.Context, accessToken string, companyID int64) ([]Project, error) {
 	q := url.Values{"company_id": {strconv.FormatInt(companyID, 10)}}
-	return listAll[Project](ctx, c, accessToken, companyID, "/rest/v1.0/projects", q)
+	return listAll[Project](ctx, c, accessToken, &companyID, "/rest/v1.0/projects", q)
 }
 
 // ListRFIs returns every RFI in projectID, following pagination.
 func (c *Client) ListRFIs(ctx context.Context, accessToken string, companyID, projectID int64) ([]RFI, error) {
 	path := "/rest/v1.0/projects/" + strconv.FormatInt(projectID, 10) + "/rfis"
-	return listAll[RFI](ctx, c, accessToken, companyID, path, url.Values{})
+	return listAll[RFI](ctx, c, accessToken, &companyID, path, url.Values{})
 }
 
-// listAll requests successive pages of perPage items until a short page.
-func listAll[T any](ctx context.Context, c *Client, token string, companyID int64, path string, q url.Values) ([]T, error) {
+// listAll requests successive pages of perPage items until a short page. A
+// nil companyID omits the Procore-Company-Id header.
+func listAll[T any](ctx context.Context, c *Client, token string, companyID *int64, path string, q url.Values) ([]T, error) {
 	q.Set("per_page", strconv.Itoa(perPage))
 	var all []T
 	for page := 1; page <= maxPages; page++ {
 		q.Set("page", strconv.Itoa(page))
 		var items []T
-		if err := c.do(ctx, token, &companyID, http.MethodGet, path, q, &items); err != nil {
+		if err := c.do(ctx, token, companyID, http.MethodGet, path, q, &items); err != nil {
 			return nil, err
 		}
 		all = append(all, items...)
