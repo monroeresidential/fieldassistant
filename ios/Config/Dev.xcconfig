@@ -1,0 +1,2 @@
+// Dev configuration. `/$()/` keeps xcconfig from treating `//` as a comment.
+API_BASE_URL = http:/$()/localhost:8080/v1

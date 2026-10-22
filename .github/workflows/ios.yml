@@ -1,0 +1,46 @@
+name: ios
+
+on:
+  push:
+    paths:
+      - 'ios/**'
+      - 'api/openapi.yaml'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'api/openapi.yaml'
+      - '.github/workflows/ios.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Select Xcode 16
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app || true
+          xcodebuild -version
+
+      - name: Check contract copy
+        run: make check-contract
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Test
+        working-directory: ios
+        run: >
+          xcodebuild test
+          -scheme FieldAssistant
+          -destination 'platform=iOS Simulator,name=iPhone 16'
+          -skipPackagePluginValidation
+          -quiet

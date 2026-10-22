@@ -1,4 +1,4 @@
-.PHONY: run test db-up db-down generate sync-contract
+.PHONY: run test db-up db-down generate sync-contract check-contract
 
 run:
 	cd api && go run ./cmd/api
@@ -16,5 +16,11 @@ generate:
 	cd api && go tool oapi-codegen -config oapi-codegen.yaml openapi.yaml
 	cd api && go tool sqlc generate
 
+IOS_CONTRACT := ios/Packages/FieldAssistantAPI/Sources/FieldAssistantAPI/openapi.yaml
+
 sync-contract:
-	@echo "defined in a later task"
+	cp api/openapi.yaml $(IOS_CONTRACT)
+
+check-contract:
+	@cmp -s api/openapi.yaml $(IOS_CONTRACT) || { echo "iOS contract copy is out of date with api/openapi.yaml; run: make sync-contract"; exit 1; }
+	@echo "contract in sync"

@@ -1,0 +1,3 @@
+// Prod configuration. `/$()/` keeps xcconfig from treating `//` as a comment.
+// TODO: replace api.example.com with the production API domain.
+API_BASE_URL = https:/$()/api.example.com/v1

@@ -1,0 +1,79 @@
+name: FieldAssistant
+options:
+  bundleIdPrefix: com.monroeresidential
+  deploymentTarget:
+    iOS: "17.0"
+configs:
+  Dev: debug
+  Prod: release
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+packages:
+  FieldAssistantAPI:
+    path: Packages/FieldAssistantAPI
+targets:
+  FieldAssistant:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: FieldAssistant
+    configFiles:
+      Dev: Config/Dev.xcconfig
+      Prod: Config/Prod.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.monroeresidential.fieldassistant
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+    info:
+      path: FieldAssistant/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Field Assistant
+        CFBundleURLTypes:
+          - CFBundleURLName: com.monroeresidential.fieldassistant
+            CFBundleURLSchemes:
+              - fieldassistant
+        NSMicrophoneUsageDescription: Field Assistant uses the microphone to record voice notes.
+        NSCameraUsageDescription: Field Assistant uses the camera to capture site photos.
+        NSPhotoLibraryUsageDescription: Field Assistant accesses your photo library to attach photos.
+        NSLocationWhenInUseUsageDescription: Field Assistant uses your location to tag site observations.
+        UILaunchScreen: {}
+        API_BASE_URL: $(API_BASE_URL)
+    dependencies:
+      - package: FieldAssistantAPI
+        product: FieldAssistantAPI
+  FieldAssistantTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: FieldAssistantTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.monroeresidential.fieldassistant.tests
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: FieldAssistant
+schemes:
+  FieldAssistant:
+    build:
+      targets:
+        FieldAssistant: all
+        FieldAssistantTests: [test]
+    run:
+      config: Dev
+    test:
+      config: Dev
+      targets:
+        - FieldAssistantTests
+    profile:
+      config: Prod
+    analyze:
+      config: Dev
+    archive:
+      config: Prod
