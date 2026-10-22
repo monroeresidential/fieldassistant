@@ -3,7 +3,6 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -46,11 +45,19 @@ func NewRouter(deps Deps) http.Handler {
 	return r
 }
 
+// publicPaths are the /v1 routes that need no bearer token.
+var publicPaths = map[string]bool{
+	"/v1/auth/start":    true,
+	"/v1/auth/callback": true,
+	"/v1/auth/exchange": true,
+	"/v1/auth/refresh":  true,
+}
+
 // requireBearerStub rejects /v1 requests without an Authorization header,
-// except /v1/auth/*. Real session verification replaces it in a later task.
+// except publicPaths. Real session verification replaces it in a later task.
 func requireBearerStub(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/v1/auth/") && r.Header.Get("Authorization") == "" {
+		if !publicPaths[r.URL.Path] && r.Header.Get("Authorization") == "" {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 			return
 		}
