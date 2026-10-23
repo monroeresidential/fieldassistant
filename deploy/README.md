@@ -33,14 +33,14 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
      mkdir -p /home/deploy-$e/.ssh && chmod 700 /home/deploy-$e/.ssh
    done
    ```
-   Put each public key in that user's `authorized_keys`, locked to the forced
-   command, then fix ownership (`chmod 600` the file). The key can run nothing else:
+   Write each public key to that user's `authorized_keys`, locked to the forced
+   command, so the key can run nothing else. Replace `ssh-ed25519 AAAA...` with
+   that environment's public key:
    ```
-   # /home/deploy-dev/.ssh/authorized_keys
-   command="/opt/fieldassistant/deploy/deploy-env.sh dev",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...
-   # /home/deploy-prod/.ssh/authorized_keys
-   command="/opt/fieldassistant/deploy/deploy-env.sh prod",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...
+   install -m 600 -o deploy-dev -g deploy-dev /dev/stdin /home/deploy-dev/.ssh/authorized_keys <<< 'command="/opt/fieldassistant/deploy/deploy-env.sh dev",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...'
+   install -m 600 -o deploy-prod -g deploy-prod /dev/stdin /home/deploy-prod/.ssh/authorized_keys <<< 'command="/opt/fieldassistant/deploy/deploy-env.sh prod",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...'
    ```
+   Then fix ownership and permissions:
    ```
    for e in dev prod; do
      chmod 600 /home/deploy-$e/.ssh/authorized_keys
@@ -55,8 +55,12 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    dev and prod. The boundary is the forced-command SSH key: a leaked dev key can
    only run the dev deploy script. If real isolation is ever required, move dev
    to its own droplet.
-4. Copy this `deploy/` directory to `/opt/fieldassistant/deploy`
-   (for example `git clone` the repo to `/opt/fieldassistant` or `scp -r deploy`).
+4. Create the parent directory, then copy this `deploy/` directory to
+   `/opt/fieldassistant/deploy` (for example `git clone` the repo to
+   `/opt/fieldassistant`, or from your machine `scp -r deploy root@<droplet>:/opt/fieldassistant/`):
+   ```
+   mkdir -p /opt/fieldassistant
+   ```
 5. Write three env files in `/opt/fieldassistant/deploy`, starting from the
    `*.example` files. Use plain `KEY=value` lines: no quotes around values and
    Unix line endings (no CRLF), or the values reach the server with stray
@@ -102,9 +106,14 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    private keys go in **environment** secrets named `DROPLET_SSH_KEY`: the
    `development` environment holds the deploy-dev key and the `production`
    environment holds the deploy-prod key.
-9. Start everything. If the image is private, run `docker login ghcr.io` as each
-   of `deploy-dev` and `deploy-prod` first (`sudo -H -u deploy-dev docker login ghcr.io`),
-   since Docker credentials are per user.
+9. Start everything. If the image is private, first run `docker login ghcr.io`
+   as root and as each deploy user, since Docker credentials are per user. Root
+   pulls the images now; the deploy users pull them on every release:
+   ```
+   docker login ghcr.io
+   sudo -H -u deploy-dev docker login ghcr.io
+   sudo -H -u deploy-prod docker login ghcr.io
+   ```
    ```
    cd /opt/fieldassistant/deploy && docker compose up -d
    ```
