@@ -44,8 +44,14 @@ func mapProcoreErr(err error) *APIError {
 }
 
 // procoreFailure is mapProcoreErr for handler returns: the mapped API error
-// when there is one, otherwise err itself.
-func procoreFailure(err error) error {
+// when there is one, otherwise err itself. Procore API errors are logged at
+// Warn with the status and a short body excerpt (never tokens) so permission
+// and configuration problems can be diagnosed from the server log.
+func (s *Server) procoreFailure(op string, err error) error {
+	var pcErr *procore.APIError
+	if errors.As(err, &pcErr) {
+		s.logger().Warn("procore request failed", "op", op, "status", pcErr.Status, "body", pcErr.Body)
+	}
 	if apiErr := mapProcoreErr(err); apiErr != nil {
 		return apiErr
 	}
@@ -57,7 +63,7 @@ func procoreFailure(err error) error {
 func (s *Server) requireVisible(ctx context.Context, userID uuid.UUID, companyID int64) error {
 	visible, err := s.deps.Companies.Visible(ctx, userID, companyID)
 	if err != nil {
-		return procoreFailure(err)
+		return s.procoreFailure("companies", err)
 	}
 	if !visible {
 		return errForbiddenScope
@@ -90,7 +96,7 @@ func (s *Server) PutMeSelection(ctx context.Context, req PutMeSelectionRequestOb
 func (s *Server) ListCompanies(ctx context.Context, _ ListCompaniesRequestObject) (ListCompaniesResponseObject, error) {
 	companies, err := s.deps.Companies.Companies(ctx, claimsFrom(ctx).UserID)
 	if err != nil {
-		return nil, procoreFailure(err)
+		return nil, s.procoreFailure("companies", err)
 	}
 	out := make(ListCompanies200JSONResponse, 0, len(companies))
 	for _, c := range companies {
@@ -107,11 +113,11 @@ func (s *Server) ListProjects(ctx context.Context, req ListProjectsRequestObject
 	}
 	token, err := s.deps.Tokens.AccessToken(ctx, userID)
 	if err != nil {
-		return nil, procoreFailure(err)
+		return nil, s.procoreFailure("projects", err)
 	}
 	projects, err := s.deps.Procore.ListProjects(ctx, token, req.CompanyId)
 	if err != nil {
-		return nil, procoreFailure(err)
+		return nil, s.procoreFailure("projects", err)
 	}
 	out := make(ListProjects200JSONResponse, 0, len(projects))
 	for _, p := range projects {
@@ -129,10 +135,14 @@ func (s *Server) ListRFIs(ctx context.Context, req ListRFIsRequestObject) (ListR
 	}
 	token, err := s.deps.Tokens.AccessToken(ctx, userID)
 	if err != nil {
-		return nil, procoreFailure(err)
+		return nil, s.procoreFailure("rfis", err)
 	}
 	rfis, err := s.deps.Procore.ListRFIs(ctx, token, companyID, req.ProjectId)
 	if err != nil {
+		var pcErr *procore.APIError
+		if errors.As(err, &pcErr) {
+			s.logger().Warn("procore request failed", "op", "rfis", "status", pcErr.Status, "body", pcErr.Body)
+		}
 		apiErr := mapProcoreErr(err)
 		if apiErr == nil {
 			return nil, err
