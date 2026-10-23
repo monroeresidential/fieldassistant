@@ -13,8 +13,8 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             RFIListView(client: appState.client, companyID: companyID, projectID: projectID)
-                // A new identity reloads the list when the project changes or the app comes back online.
-                .id(ListIdentity(projectID: projectID, isOffline: appState.phase == .offline))
+                // A fresh list model per project; reloads within a project follow `sessionGeneration`.
+                .id(projectID)
                 .navigationTitle(project.map(Self.title) ?? "RFIs")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbar }
@@ -22,7 +22,7 @@ struct HomeView: View {
                     if appState.phase == .offline { offlineBanner }
                 }
         }
-        .task(id: projectID) { await loadProject() }
+        .task(id: TitleKey(projectID: projectID, sessionGeneration: appState.sessionGeneration)) { await loadProject() }
     }
 
     @ToolbarContentBuilder
@@ -78,13 +78,13 @@ struct HomeView: View {
 
     /// Fetches the project for its title; the screen still works with a generic title if this fails.
     private func loadProject() async {
-        let projects = try? await ScopeService(client: appState.client).projects(companyID: companyID)
-        project = projects?.first { $0.id == projectID }
+        guard let projects = try? await ScopeService(client: appState.client).projects(companyID: companyID) else { return }
+        project = projects.first { $0.id == projectID }
     }
 
-    private struct ListIdentity: Hashable {
+    private struct TitleKey: Equatable {
         let projectID: Int64
-        let isOffline: Bool
+        let sessionGeneration: Int
     }
 
     static func title(_ project: Project) -> String {

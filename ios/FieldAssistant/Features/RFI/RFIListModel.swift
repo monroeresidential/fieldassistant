@@ -16,6 +16,8 @@ final class RFIListModel {
     }
 
     private(set) var state: State = .idle
+    /// The most recent successful result, kept so a refresh can show it while `state` is `.loading`.
+    private(set) var lastLoaded: [RFISummary]?
 
     @ObservationIgnored private let client: Client
 
@@ -24,12 +26,19 @@ final class RFIListModel {
     }
 
     func load(companyID: Int64, projectID: Int64) async {
+        let previous = state
         state = .loading
         do {
-            state = .loaded(try await fetch(companyID: companyID, projectID: projectID))
+            let items = try await fetch(companyID: companyID, projectID: projectID)
+            lastLoaded = items
+            state = .loaded(items)
         } catch {
-            // A superseded load (project changed, view gone) must not overwrite newer state with an error.
-            if Task.isCancelled { return }
+            // A cancelled load (refresh interrupted, view gone) puts back what was showing
+            // instead of reporting an error or leaving the list stuck in `.loading`.
+            if Task.isCancelled {
+                if state == .loading { state = previous == .loading ? .idle : previous }
+                return
+            }
             state = .failed(APIFailure(error))
         }
     }

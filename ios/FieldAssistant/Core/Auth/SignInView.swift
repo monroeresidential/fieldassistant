@@ -37,9 +37,14 @@ struct SignInView: View {
         .padding(24)
     }
 
-    private var errorMessage: String? {
-        switch error {
-        case .none, .cancelled:
+    private var errorMessage: String? { error?.userMessage }
+}
+
+extension AuthError {
+    /// What to tell the user about a failed sign-in; `nil` when they closed the sheet themselves.
+    var userMessage: String? {
+        switch self {
+        case .cancelled:
             nil
         case .invalidCallback:
             "Sign-in did not complete. Please try again."

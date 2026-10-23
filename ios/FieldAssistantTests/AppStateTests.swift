@@ -241,6 +241,31 @@ final class AppStateTests: XCTestCase {
 
     // MARK: - Helpers
 
+    @MainActor
+    func testSessionGenerationAdvancesOnBootstrapAndSignIn() async throws {
+        let signedOut = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        await signedOut.bootstrap()
+        XCTAssertEqual(signedOut.sessionGeneration, 0, "no session, nothing to reload")
+
+        await signedOut.signIn() // presenter cancels
+        XCTAssertEqual(signedOut.sessionGeneration, 0, "a failed sign-in does not advance the generation")
+
+        let transport = StubTransport([
+            APIStub.me(),
+            APIStub.authStartOK(),
+            APIStub.tokenPair(access: "acc2", refresh: "ref2"),
+            APIStub.me(),
+        ])
+        let presenter = FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth?code=abc")!)
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport, presenter: presenter)
+
+        await state.bootstrap()
+        XCTAssertEqual(state.sessionGeneration, 1)
+
+        await state.signIn()
+        XCTAssertEqual(state.sessionGeneration, 2, "re-sign-in tells screens to reload")
+    }
+
     private func validSession() -> Session {
         Session(accessToken: "acc1", refreshToken: "ref1", accessExpiresAt: Date().addingTimeInterval(3600))
     }

@@ -14,6 +14,12 @@ struct ProjectPickerView: View {
         case failed(APIFailure)
     }
 
+    /// Reload projects when the company changes or the session is re-established.
+    private struct ProjectsKey: Equatable {
+        let companyID: Int64
+        let sessionGeneration: Int
+    }
+
     @Environment(AppState.self) private var appState
     @State private var step: Step?
     @State private var companies: Load<[Company]> = .loading
@@ -88,7 +94,7 @@ struct ProjectPickerView: View {
             }
         }
         .navigationTitle("Choose a company")
-        .task { await loadCompanies() }
+        .task(id: appState.sessionGeneration) { await loadCompanies() }
     }
 
     private func loadCompanies() async {
@@ -148,7 +154,9 @@ struct ProjectPickerView: View {
                 .accessibilityLabel("Back to companies")
             }
         }
-        .task(id: companyID) { await loadProjects(companyID: companyID) }
+        .task(id: ProjectsKey(companyID: companyID, sessionGeneration: appState.sessionGeneration)) {
+            await loadProjects(companyID: companyID)
+        }
     }
 
     private func filtered(_ list: [Project]) -> [Project] {

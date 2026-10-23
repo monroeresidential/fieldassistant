@@ -8,8 +8,6 @@ struct RFIListView: View {
 
     @Environment(AppState.self) private var appState
     @State private var model: RFIListModel
-    /// The last loaded list, kept on screen while a refresh is in flight.
-    @State private var lastLoaded: [RFISummary]?
 
     init(client: Client, companyID: Int64, projectID: Int64) {
         self.companyID = companyID
@@ -17,47 +15,45 @@ struct RFIListView: View {
         _model = State(initialValue: RFIListModel(client: client))
     }
 
+    /// Reload when the project changes or the session is re-established (re-sign-in, offline retry).
+    private struct LoadKey: Equatable {
+        let projectID: Int64
+        let sessionGeneration: Int
+    }
+
     var body: some View {
-        content
-            .task(id: projectID) {
-                lastLoaded = nil
-                await reload()
-            }
-            .onChange(of: model.state) { _, state in
-                if case .loaded(let items) = state { lastLoaded = items }
-            }
+        // One List for every state, so its identity (and a running pull-to-refresh) survives `.loading`.
+        List(model.lastLoaded ?? [], id: \.id) { rfi in
+            RFIRow(rfi: rfi)
+        }
+        .listStyle(.plain)
+        .overlay { overlay }
+        .refreshable { await reload() }
+        .task(id: LoadKey(projectID: projectID, sessionGeneration: appState.sessionGeneration)) {
+            await reload()
+        }
     }
 
     @ViewBuilder
-    private var content: some View {
+    private var overlay: some View {
         switch model.state {
-        case .loaded(let items):
-            list(items)
         case .idle, .loading:
-            if let lastLoaded {
-                list(lastLoaded)
-            } else {
+            if model.lastLoaded == nil {
                 ProgressView("Loading RFIs")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemBackground))
+            }
+        case .loaded(let items):
+            if items.isEmpty {
+                ContentUnavailableView("No RFIs", systemImage: "tray", description: Text("This project has no RFIs yet."))
             }
         case .failed(let failure):
             APIFailureView(failure: failure, subject: "RFIs") {
                 Task { await reload() }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.systemBackground))
         }
-    }
-
-    private func list(_ items: [RFISummary]) -> some View {
-        List(items, id: \.id) { rfi in
-            RFIRow(rfi: rfi)
-        }
-        .listStyle(.plain)
-        .overlay {
-            if items.isEmpty {
-                ContentUnavailableView("No RFIs", systemImage: "tray", description: Text("This project has no RFIs yet."))
-            }
-        }
-        .refreshable { await reload() }
     }
 
     private func reload() async {
@@ -129,8 +125,21 @@ struct APIFailureView: View {
                 Label("Session expired", systemImage: "person.crop.circle.badge.exclamationmark")
             } description: {
                 Text("Sign in again to keep working.")
+                if let message = appState.signInError?.userMessage {
+                    Text(message).foregroundStyle(.red)
+                }
             } actions: {
-                actionButton("Sign in again") { Task { await appState.signIn() } }
+                Button {
+                    Task { await appState.signIn() }
+                } label: {
+                    Group {
+                        if appState.isSigningIn { ProgressView() } else { Text("Sign in again").font(.headline) }
+                    }
+                    .frame(minWidth: 160, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(appState.isSigningIn)
+                .accessibilityLabel("Sign in again")
             }
         case .offline:
             ContentUnavailableView {

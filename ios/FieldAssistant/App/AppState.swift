@@ -26,6 +26,9 @@ final class AppState {
     private(set) var isSigningIn = false
     /// Why the last sign-in attempt failed, or `nil`. `.cancelled` means the user closed the sheet.
     private(set) var signInError: AuthError?
+    /// Advances each time a session is (re)established, after `/me` has loaded. Screens key their
+    /// load tasks on it so they reload after "Sign in again" or a successful offline retry.
+    private(set) var sessionGeneration = 0
 
     var selectedCompanyID: Int64? {
         didSet { Self.persist(selectedCompanyID, forKey: Keys.selectedCompanyID, in: defaults) }
@@ -89,6 +92,7 @@ final class AppState {
             return
         }
         await loadMe()
+        advanceSessionGeneration()
     }
 
     func signIn() async {
@@ -106,6 +110,7 @@ final class AppState {
             return
         }
         await loadMe()
+        advanceSessionGeneration()
     }
 
     func signOut() async {
@@ -149,6 +154,10 @@ final class AppState {
         case .default:
             phase = .offline
         }
+    }
+
+    private func advanceSessionGeneration() {
+        if phase != .signedOut { sessionGeneration += 1 }
     }
 
     private func handleSignedOut() {
