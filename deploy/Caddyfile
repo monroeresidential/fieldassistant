@@ -1,3 +1,7 @@
+api-dev.{$DOMAIN} {
+	reverse_proxy api-dev:8080
+}
+
 api.{$DOMAIN} {
-	reverse_proxy api:8080
+	reverse_proxy api-prod:8080
 }

@@ -1,22 +1,46 @@
+# Two stacks on one droplet: dev (api-dev + postgres-dev) and prod (api-prod +
+# postgres-prod), fronted by one Caddy. Each stack has its own database volume.
 services:
-  api:
-    # Replace OWNER with the GitHub owner (user or org) that publishes the image.
-    image: ghcr.io/OWNER/fieldassistant-api:latest
-    env_file: .env
+  api-dev:
+    image: ${API_DEV_IMAGE:-ghcr.io/monroeresidential/fieldassistant-api:develop}
+    env_file: .env.dev
     restart: unless-stopped
     depends_on:
-      postgres:
+      postgres-dev:
         condition: service_healthy
 
-  postgres:
+  api-prod:
+    image: ${API_PROD_IMAGE:-ghcr.io/monroeresidential/fieldassistant-api:main}
+    env_file: .env.prod
+    restart: unless-stopped
+    depends_on:
+      postgres-prod:
+        condition: service_healthy
+
+  postgres-dev:
     image: postgres:16
     restart: unless-stopped
     environment:
       POSTGRES_USER: fa
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_DEV_PASSWORD}
       POSTGRES_DB: fieldassistant
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fa -d fieldassistant"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-prod:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fa
+      POSTGRES_PASSWORD: ${POSTGRES_PROD_PASSWORD}
+      POSTGRES_DB: fieldassistant
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fa -d fieldassistant"]
       interval: 5s
@@ -36,9 +60,11 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - api
+      - api-dev
+      - api-prod
 
 volumes:
-  pgdata:
+  pgdata_dev:
+  pgdata_prod:
   caddy_data:
   caddy_config:
