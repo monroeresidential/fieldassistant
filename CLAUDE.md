@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented on branch `phase-1`: Go backend plus iOS sign-in, company/project picker and RFI list. Next: Phase 1 sandbox verification, then milestone 2 (RFI extraction) per `docs/superpowers/plans/2026-10-22-roadmap.md`.
+Phase 1 is implemented (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Next: Phase 1 sandbox verification, then milestone 2 (RFI extraction) per `docs/superpowers/plans/2026-10-22-roadmap.md`.
 
 Governing documents:
 
@@ -75,7 +75,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 - Migration `000001` may be edited until the first deploy. After editing, recreate local DBs: `docker compose -f api/docker-compose.yml down -v && make db-up`.
 - DB tests serialize through an advisory lock in `storetest`; do not bypass it.
 - The iOS `.xcodeproj` is generated and never committed. Swift package pins live in `ios/Package.resolved`.
-- Error bodies are `{code,message}` with a fixed code set: `bad_request`, `unauthorized`, `reauth_required`, `forbidden_scope`, `procore_permission_denied`, `procore_unavailable`, `internal`.
+- Error bodies are `{code,message}` with a fixed code set: `bad_request`, `unauthorized`, `reauth_required`, `forbidden_scope`, `procore_permission_denied`, `not_found`, `procore_unavailable`, `internal` (`not_found` is reserved; nothing emits it yet).
 - On iOS only `AuthRefreshError.rejected` signs the user out; other refresh failures keep the session.
 
 ## Repository layout
