@@ -206,6 +206,12 @@ const testProcoreCode = "42"
 // dependencies over a fresh test database. It skips without TEST_DATABASE_URL.
 func newTestServer(t *testing.T) (*httptest.Server, *fakeProcore) {
 	t.Helper()
+	return newTestServerWithScheme(t, "fieldassistant")
+}
+
+// newTestServerWithScheme is newTestServer with the app redirect scheme set.
+func newTestServerWithScheme(t *testing.T, scheme string) (*httptest.Server, *fakeProcore) {
+	t.Helper()
 	st := storetest.New(t)
 	clock := &fakeClock{Now: time.Now()}
 
@@ -226,7 +232,8 @@ func newTestServer(t *testing.T) (*httptest.Server, *fakeProcore) {
 	apiURL := "http://" + api.Listener.Addr().String()
 
 	cfg := config.Config{
-		PublicBaseURL: apiURL,
+		PublicBaseURL:     apiURL,
+		AppRedirectScheme: scheme,
 		Procore: config.ProcoreConfig{
 			ClientID:     "client-id",
 			ClientSecret: "client-secret",

@@ -12,9 +12,6 @@ import (
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 )
 
-// appRedirectBase is where the callback sends the browser back to the app.
-const appRedirectBase = "fieldassistant://auth"
-
 // Length bounds for code_challenge and code_verifier, as in RFC 7636.
 const (
 	minPKCELen = 43
@@ -73,11 +70,11 @@ func (s *Server) AuthCallback(ctx context.Context, req AuthCallbackRequestObject
 			log.WarnContext(ctx, "auth callback: abandon state", "error", err)
 		}
 		log.WarnContext(ctx, "auth callback: procore reported an error", "procore_error", *req.Params.Error)
-		return callbackRedirect("error", callbackAccessDenied), nil
+		return s.callbackRedirect("error", callbackAccessDenied), nil
 	}
 	if req.Params.Code == nil || *req.Params.Code == "" {
 		log.WarnContext(ctx, "auth callback: missing code")
-		return callbackRedirect("error", callbackBadRequest), nil
+		return s.callbackRedirect("error", callbackBadRequest), nil
 	}
 	code, err := s.deps.Broker.Callback(ctx, *req.Params.Code, req.Params.State)
 	if err != nil {
@@ -89,14 +86,15 @@ func (s *Server) AuthCallback(ctx context.Context, req AuthCallbackRequestObject
 			reason = callbackProcoreUnavailable
 		}
 		log.WarnContext(ctx, "auth callback failed", "reason", reason, "error", err)
-		return callbackRedirect("error", reason), nil
+		return s.callbackRedirect("error", reason), nil
 	}
-	return callbackRedirect("code", code), nil
+	return s.callbackRedirect("code", code), nil
 }
 
-// callbackRedirect sends the browser to the app with one query parameter.
-func callbackRedirect(key, value string) AuthCallback302Response {
-	loc := appRedirectBase + "?" + url.Values{key: {value}}.Encode()
+// callbackRedirect sends the browser back to the app, at the configured
+// scheme, with one query parameter.
+func (s *Server) callbackRedirect(key, value string) AuthCallback302Response {
+	loc := s.deps.Config.AppRedirectScheme + "://auth?" + url.Values{key: {value}}.Encode()
 	return AuthCallback302Response{Headers: AuthCallback302ResponseHeaders{Location: loc}}
 }
 
