@@ -70,6 +70,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 
 ## Conventions
 
+- Branches: work on `develop` (or a feature branch merged into it); `main` changes only via pull request from `develop`. Pushes to `develop` deploy dev (`api-dev.fieldassistant.tools`); merges to `main` deploy prod.
 - Contract changes bump `info.version` in `api/openapi.yaml` and require `make generate` and `make sync-contract` in the same commit.
 - Generated code is committed.
 - Migration `000001` may be edited until the first deploy. After editing, recreate local DBs: `docker compose -f api/docker-compose.yml down -v && make db-up`.

@@ -2,8 +2,7 @@ name: deploy-api
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [develop, main]
 
 permissions:
   contents: read
@@ -44,15 +43,17 @@ jobs:
         working-directory: api
         run: go test ./...
 
-  deploy:
+  build:
     needs: test
     runs-on: ubuntu-latest
-    environment: production
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -65,8 +66,27 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/fieldassistant-api:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/fieldassistant-api:latest
+            ghcr.io/${{ github.repository_owner }}/fieldassistant-api:sha-${{ steps.sha.outputs.short }}
+
+  deploy-dev:
+    needs: build
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      - name: Check droplet configured
+        id: check
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          if [ -z "$HOST" ]; then
+            echo "::notice::no droplet configured, skipping deploy"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
+        if: steps.check.outputs.configured == 'true'
         with:
           host: ${{ secrets.DROPLET_HOST }}
           username: deploy
@@ -74,5 +94,34 @@ jobs:
           script_stop: true
           script: |
             cd /opt/fieldassistant/deploy
-            docker compose pull api
-            docker compose up -d api
+            docker compose pull api-dev
+            docker compose up -d api-dev
+
+  deploy-prod:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check droplet configured
+        id: check
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+        run: |
+          if [ -z "$HOST" ]; then
+            echo "::notice::no droplet configured, skipping deploy"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
+        if: steps.check.outputs.configured == 'true'
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: deploy
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          script_stop: true
+          script: |
+            cd /opt/fieldassistant/deploy
+            docker compose pull api-prod
+            docker compose up -d api-prod

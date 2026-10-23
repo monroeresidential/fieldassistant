@@ -65,13 +65,18 @@ To pin a different image for a stack, set `API_DEV_IMAGE` or `API_PROD_IMAGE` in
 
 GitHub secrets required: `DROPLET_HOST`, `DROPLET_SSH_KEY`.
 
-The deploy workflow (`.github/workflows/deploy-api.yml`) is updated separately to
-match this layout: the `develop` image goes to `api-dev` and the `main` image goes
-to `api-prod`. On the droplet each update is
-`docker compose pull <service> && docker compose up -d <service>`, with
-`<service>` being `api-dev` or `api-prod`. Create the `production` GitHub
-environment in repository settings (optionally with required reviewers) for the
-prod deploy. Deploys run only after the test job passes.
+The deploy workflow (`.github/workflows/deploy-api.yml`) runs on every push to
+`develop` and `main`. It runs the API tests, then builds the image and pushes it
+to `ghcr.io/monroeresidential/fieldassistant-api` tagged with the branch name
+(`develop` or `main`) and `sha-<7 chars>`. A push to `develop` then updates
+`api-dev` and a push to `main` updates `api-prod`. On the droplet each update is
+`docker compose pull <service> && docker compose up -d <service>`. Tags do not
+trigger deploys.
+
+Create the `development` and `production` GitHub environments in repository
+settings (optionally with required reviewers on `production`). If the
+`DROPLET_HOST` secret is empty the deploy job prints a notice and skips the SSH
+step, so the run stays green before the droplet exists.
 
 ## Backups
 
