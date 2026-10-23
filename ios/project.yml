@@ -28,6 +28,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.monroeresidential.fieldassistant
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
+        # DEVELOPMENT_TEAM: # TODO: Apple Team ID (needed for fastlane beta)
     info:
       path: FieldAssistant/Resources/Info.plist
       properties:

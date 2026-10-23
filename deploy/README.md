@@ -28,6 +28,16 @@ Caddy serves `https://api.fieldassistant.tools` and proxies to the API on port 8
    `api/.env.example` plus the deploy-only ones below. `DATABASE_URL` must point
    at the compose service, for example
    `postgres://fa:<POSTGRES_PASSWORD>@postgres:5432/fieldassistant?sslmode=disable`.
+   If the password has special characters (`@ : / ? # %` and the like), URL-encode
+   it in `DATABASE_URL` (for example `@` becomes `%40`); `POSTGRES_PASSWORD` stays raw.
+   In production set:
+   - `PROCORE_REDIRECT_URL=https://api.fieldassistant.tools/v1/auth/callback`
+     (it must match the redirect URI registered with the Procore app exactly).
+   - `PUBLIC_BASE_URL=https://api.fieldassistant.tools` (reserved: required by
+     config, not yet read by the server).
+
+   Write plain `KEY=value` lines: no quotes around values and Unix
+   line endings (no CRLF), or the values reach the server with stray characters.
 
    ```
    DOMAIN=fieldassistant.tools

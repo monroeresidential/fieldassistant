@@ -33,7 +33,7 @@ cd api && TEST_DATABASE_URL='postgres://fa:fa@localhost:5432/fieldassistant_test
 
 Single Go test: `cd api && go test ./internal/<pkg>/ -run <Name>`
 
-iOS tests (run `make ios-project` first; CI uses `iPhone 16`). Do not add `-quiet` if you want the `** TEST SUCCEEDED **` line; the exit code is the pass signal either way:
+iOS tests (run `make ios-project` first; CI uses Xcode 26.6 on `macos-26` with `iPhone 17`). Do not add `-quiet` if you want the `** TEST SUCCEEDED **` line; the exit code is the pass signal either way:
 
 ```
 cd ios && xcodebuild test -scheme FieldAssistant -destination 'platform=iOS Simulator,name=iPhone 17' -skipPackagePluginValidation -onlyUsePackageVersionsFromResolvedFile
@@ -44,7 +44,7 @@ Single iOS test class: add `-only-testing:FieldAssistantTests/<Class>`.
 Fastlane (from `ios/`, via `gem install fastlane`, `brew install fastlane` or `bundle exec`):
 
 - `fastlane test`: regenerates the project and runs the unit tests on iPhone 17.
-- `fastlane beta`: builds the Prod configuration and uploads to TestFlight. Needs `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 App Store Connect key) in the environment, and the Team ID set in `ios/project.yml`.
+- `fastlane beta`: builds the Prod configuration and uploads to TestFlight. Needs `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 App Store Connect key) in the environment, and an Apple Team ID, which is not set yet: add `DEVELOPMENT_TEAM` to the app target in `ios/project.yml` (a commented-out placeholder marks the spot).
 
 Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/workflows/deploy-api.yml`.
 

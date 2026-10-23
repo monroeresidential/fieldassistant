@@ -52,7 +52,7 @@ struct HomeView: View {
 
     private var offlineBanner: some View {
         HStack {
-            Label("Offline, showing last known data", systemImage: "wifi.slash")
+            Label("Offline. Some data may not load.", systemImage: "wifi.slash")
                 .font(.footnote.weight(.medium))
             Spacer()
             Button {
