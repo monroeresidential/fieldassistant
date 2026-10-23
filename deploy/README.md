@@ -18,17 +18,40 @@ but the droplet and Caddy: separate databases, separate passwords, separate secr
    `curl -fsSL https://get.docker.com | sh`
 3. Install `s3cmd` and run `s3cmd --configure` once with the Spaces access key,
    secret key and endpoint (for example `nyc3.digitaloceanspaces.com`).
-4. Create the non-root deploy user the workflow SSHes in as:
+4. Create one SSH user per environment, so a push to `develop` cannot run
+   anything on the production stack. Both users are in the `docker` group and
+   each has its own keypair (`ssh-keygen -t ed25519`, one per environment):
    ```
-   adduser --disabled-password --gecos "" deploy
-   usermod -aG docker deploy
-   mkdir -p /home/deploy/.ssh && chmod 700 /home/deploy/.ssh
-   # put the deploy public key in /home/deploy/.ssh/authorized_keys
-   chmod 600 /home/deploy/.ssh/authorized_keys
-   chown -R deploy:deploy /home/deploy/.ssh
-   mkdir -p /opt/fieldassistant && chown -R deploy /opt/fieldassistant
+   groupadd fa-deploy
+   for e in dev prod; do
+     adduser --disabled-password --gecos "" deploy-$e
+     usermod -aG docker,fa-deploy deploy-$e
+     mkdir -p /home/deploy-$e/.ssh && chmod 700 /home/deploy-$e/.ssh
+   done
+   chown -R deploy-dev:deploy-dev /home/deploy-dev/.ssh
+   chown -R deploy-prod:deploy-prod /home/deploy-prod/.ssh
+   mkdir -p /opt/fieldassistant && chown root:fa-deploy /opt/fieldassistant && chmod 750 /opt/fieldassistant
    ```
-   Run the remaining steps as `deploy`. The private key goes in the `DROPLET_SSH_KEY` secret.
+   Put each public key in that user's `authorized_keys`, locked to the forced
+   command (`chmod 600` the file). The key can run nothing else:
+   ```
+   # /home/deploy-dev/.ssh/authorized_keys
+   command="/opt/fieldassistant/deploy/deploy-env.sh dev",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...
+   # /home/deploy-prod/.ssh/authorized_keys
+   command="/opt/fieldassistant/deploy/deploy-env.sh prod",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...
+   ```
+   Run the remaining steps as root. After step 6, set ownership so `deploy/` is
+   owned by root and readable by both users, and each API env file only by its own user:
+   ```
+   cd /opt/fieldassistant/deploy
+   chown -R root:fa-deploy . && chmod 750 . && chmod 750 deploy-env.sh backup.sh
+   chown root:fa-deploy .env && chmod 640 .env
+   chown root:deploy-dev .env.dev && chmod 640 .env.dev
+   chown root:deploy-prod .env.prod && chmod 640 .env.prod
+   ```
+   The private keys go in GitHub **environment** secrets named `DROPLET_SSH_KEY`:
+   the `development` environment holds the deploy-dev key and the `production`
+   environment holds the deploy-prod key. `DROPLET_HOST` is a repository-level secret.
 5. Copy this `deploy/` directory to `/opt/fieldassistant/deploy`
    (for example `git clone` the repo to `/opt/fieldassistant` or `scp -r deploy`).
 6. Write three env files in `/opt/fieldassistant/deploy`, starting from the
@@ -63,7 +86,8 @@ To pin a different image for a stack, set `API_DEV_IMAGE` or `API_PROD_IMAGE` in
 
 ## Releases
 
-GitHub secrets required: `DROPLET_HOST`, `DROPLET_SSH_KEY`.
+GitHub secrets required: `DROPLET_HOST` (repository) and `DROPLET_SSH_KEY` (one
+per environment, see setup step 4). Deploys to the same ref are serialized.
 
 The deploy workflow (`.github/workflows/deploy-api.yml`) runs on every push to
 `develop` and `main`. It runs the API tests, then builds the image and pushes it
@@ -84,7 +108,7 @@ step, so the run stays green before the droplet exists.
 container (no argument backs up both), gzips it to `backups/<env>/fa-YYYY-MM-DD.sql.gz`,
 uploads it to `s3://$SPACES_BUCKET/<env>/` and deletes local dumps older than
 30 days per environment. `--dry-run` prints the commands without running them.
-Add this crontab line (`crontab -e`):
+Add this crontab line as `deploy-prod` (`sudo -u deploy-prod crontab -e`):
 
 ```
 0 3 * * * /opt/fieldassistant/deploy/backup.sh >> /var/log/fa-backup.log 2>&1
