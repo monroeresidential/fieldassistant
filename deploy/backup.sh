@@ -4,7 +4,7 @@
 # `s3cmd --configure`.
 #
 # Usage: backup.sh [dev|prod] [--dry-run]
-#   No environment argument backs up both. --dry-run prints the commands only.
+#   No environment argument backs up both, prod first, each independently. --dry-run prints the commands only.
 set -euo pipefail
 umask 077
 
@@ -16,16 +16,19 @@ usage() {
 }
 
 DRY_RUN=0
-ENVS=()
+WANT_DEV=0
+WANT_PROD=0
 for arg in "$@"; do
   case "${arg}" in
     --dry-run) DRY_RUN=1 ;;
-    dev|prod) ENVS+=("${arg}") ;;
+    dev) WANT_DEV=1 ;;
+    prod) WANT_PROD=1 ;;
     *) usage ;;
   esac
 done
-if [ "${#ENVS[@]}" -eq 0 ]; then
-  ENVS=(dev prod)
+if [ "${WANT_DEV}" -eq 0 ] && [ "${WANT_PROD}" -eq 0 ]; then
+  WANT_DEV=1
+  WANT_PROD=1
 fi
 
 # Load SPACES_BUCKET from .env without executing the file.
@@ -59,20 +62,29 @@ backup_env() {
     return
   fi
 
-  mkdir -p "${dir}"
-  chmod 700 backups "${dir}"
+  mkdir -p "${dir}" || return 1
+  chmod 700 backups "${dir}" || return 1
   TMP="${file}.tmp"
 
   # Dump to a temp file and move into place only on success.
-  docker compose exec -T "postgres-${env}" pg_dump -U fa fieldassistant | gzip > "${TMP}"
-  mv "${TMP}" "${file}"
+  docker compose exec -T "postgres-${env}" pg_dump -U fa fieldassistant | gzip > "${TMP}" || return 1
+  mv "${TMP}" "${file}" || return 1
   TMP=""
-  s3cmd put "${file}" "s3://${SPACES_BUCKET}/${env}/$(basename "${file}")"
+  s3cmd put "${file}" "s3://${SPACES_BUCKET}/${env}/$(basename "${file}")" || return 1
 
   # Keep 30 days of local dumps per environment.
-  find "${dir}" -name 'fa-*.sql.gz' -mtime +30 -delete
+  find "${dir}" -name 'fa-*.sql.gz' -mtime +30 -delete || return 1
 }
 
-for env in "${ENVS[@]}"; do
-  backup_env "${env}"
-done
+# Each environment is independent: prod runs first, and a failure in one must
+# not stop the other. Exit non-zero at the end so cron still reports failure.
+rc=0
+if [ "${WANT_PROD}" -eq 1 ]; then
+  backup_env prod || { echo "backup failed: prod" >&2; rc=1; }
+  rm -f "${TMP:-}"; TMP=""
+fi
+if [ "${WANT_DEV}" -eq 1 ]; then
+  backup_env dev || { echo "backup failed: dev" >&2; rc=1; }
+  rm -f "${TMP:-}"; TMP=""
+fi
+exit "${rc}"
