@@ -79,12 +79,11 @@ final class AuthMiddlewareTests: XCTestCase {
     }
 
     func testRefreshFailureClearsSessionOnce() async throws {
-        struct RefreshRejected: Error {}
         let store = InMemorySessionStore(session(access: "a1", refresh: "r1", expiresIn: 3600))
         let refreshes = Counter()
         let signOuts = Counter()
         let middleware = makeMiddleware(store: store, refreshes: refreshes, signOuts: signOuts) { _ in
-            throw RefreshRejected()
+            throw AuthRefreshError.rejected
         }
         let transport = StubTransport(statuses: [.unauthorized, .unauthorized])
 
@@ -92,7 +91,7 @@ final class AuthMiddlewareTests: XCTestCase {
             _ = try await Self.send(through: middleware, transport: transport)
             XCTFail("expected the refresh error to propagate")
         } catch {
-            XCTAssertTrue(error is RefreshRejected, "unexpected error: \(error)")
+            XCTAssertEqual(error as? AuthRefreshError, .rejected, "unexpected error: \(error)")
         }
         XCTAssertNil(store.current)
         XCTAssertEqual(store.clearCount, 1)
@@ -111,6 +110,61 @@ final class AuthMiddlewareTests: XCTestCase {
         XCTAssertEqual(refreshCount, 1)
         signOutCount = await signOuts.value
         XCTAssertEqual(signOutCount, 1)
+    }
+
+    func testRefreshNetworkErrorKeepsSession() async throws {
+        let store = InMemorySessionStore(session(access: "a1", refresh: "r1", expiresIn: 3600))
+        let refreshes = Counter()
+        let signOuts = Counter()
+        let middleware = makeMiddleware(store: store, refreshes: refreshes, signOuts: signOuts) { _ in
+            throw URLError(.notConnectedToInternet)
+        }
+        let transport = StubTransport(statuses: [.unauthorized, .unauthorized])
+
+        for attempt in 1...2 {
+            do {
+                _ = try await Self.send(through: middleware, transport: transport)
+                XCTFail("expected the network error to propagate on attempt \(attempt)")
+            } catch {
+                XCTAssertEqual((error as? URLError)?.code, .notConnectedToInternet, "unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertEqual(store.current?.accessToken, "a1")
+        XCTAssertEqual(store.clearCount, 0)
+        let signOutCount = await signOuts.value
+        XCTAssertEqual(signOutCount, 0)
+        let refreshCount = await refreshes.value
+        XCTAssertEqual(refreshCount, 2, "a failed refresh must not stay in flight; the next request tries again")
+        XCTAssertEqual(transport.requests.map { $0.request.headerFields[.authorization] }, ["Bearer a1", "Bearer a1"])
+    }
+
+    func testLate401AfterSignOutDoesNotRefresh() async throws {
+        let store = InMemorySessionStore(session(access: "t1", refresh: "r1", expiresIn: 3600))
+        let refreshes = Counter()
+        let signOuts = Counter()
+        let middleware = makeMiddleware(store: store, refreshes: refreshes, signOuts: signOuts)
+        let transport = StubTransport(statuses: [.unauthorized])
+        let request = HTTPRequest(method: .get, scheme: nil, authority: nil, path: "/me")
+
+        // The session is cleared (sign-out elsewhere) while this request is in flight; its 401 arrives afterwards.
+        let (response, _) = try await middleware.intercept(
+            request,
+            body: nil,
+            baseURL: Self.baseURL,
+            operationID: "getMe"
+        ) { request, body, baseURL in
+            try store.clear()
+            return try await transport.send(request, body: body, baseURL: baseURL, operationID: "getMe")
+        }
+
+        XCTAssertEqual(response.status, .unauthorized)
+        XCTAssertEqual(transport.requests.count, 1, "the request must not be retried")
+        XCTAssertNil(store.current, "no session may be resurrected")
+        let refreshCount = await refreshes.value
+        XCTAssertEqual(refreshCount, 0)
+        let signOutCount = await signOuts.value
+        XCTAssertEqual(signOutCount, 0)
     }
 
     func testConcurrentRequestsShareOneRefresh() async throws {

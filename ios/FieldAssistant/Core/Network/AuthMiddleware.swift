@@ -7,7 +7,9 @@ import OpenAPIRuntime
 /// - Refreshes before sending when the access token expires within 30 seconds.
 /// - On a 401, refreshes once and retries the request once.
 /// - Concurrent callers share a single in-flight refresh.
-/// - If a refresh fails, clears the store, calls `onSignedOut` once per sign-out and rethrows.
+/// - If the refresh is rejected (`AuthRefreshError.rejected`), clears the store, calls `onSignedOut` once per
+///   sign-out and rethrows. Any other refresh error is rethrown and the session is kept.
+/// - A 401 that arrives after the session was cleared is returned as is, never refreshed.
 actor AuthMiddleware: ClientMiddleware {
     /// Operations that are public (`security: []` in the contract) and must not carry a bearer.
     static let publicOperationIDs: Set<String> = ["authStart", "authExchange", "authRefresh"]
@@ -59,8 +61,10 @@ actor AuthMiddleware: ClientMiddleware {
             return (response, responseBody)
         }
 
-        session = try await refreshedSession(replacing: session)
-        return try await next(authorized(request, with: session), replay.retryAttempt, baseURL)
+        guard let retrySession = try await sessionForRetry(replacing: session) else {
+            return (response, responseBody)
+        }
+        return try await next(authorized(request, with: retrySession), replay.retryAttempt, baseURL)
     }
 
     // MARK: - Session
@@ -69,6 +73,16 @@ actor AuthMiddleware: ClientMiddleware {
         let session = try store.load()
         if session != nil { hasSignaledSignOut = false }
         return session
+    }
+
+    /// Session to retry a 401 with, or `nil` when the user was signed out while the request was in flight.
+    /// The old refresh token must not be spent then: it would revive a session after `onSignedOut` fired.
+    private func sessionForRetry(replacing stale: Session) async throws -> Session? {
+        if let inFlightRefresh {
+            return try await inFlightRefresh.value
+        }
+        guard try store.load() != nil else { return nil }
+        return try await refreshedSession(replacing: stale)
     }
 
     /// Returns a session newer than `stale`, joining an in-flight refresh or starting one.
@@ -95,12 +109,15 @@ actor AuthMiddleware: ClientMiddleware {
             try store.save(session)
             hasSignaledSignOut = false
             return session
-        case .failure(let error):
+        case .failure(let error as AuthRefreshError):
             try? store.clear()
             if !hasSignaledSignOut {
                 hasSignaledSignOut = true
                 await onSignedOut()
             }
+            throw error
+        case .failure(let error):
+            // Transient failure (network, server error): keep the session so a later request can retry.
             throw error
         }
     }

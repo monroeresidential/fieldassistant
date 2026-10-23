@@ -13,3 +13,9 @@ protocol SessionStore: Sendable {
     func save(_ s: Session) throws
     func clear() throws
 }
+
+/// Thrown by the refresh closure when the server definitively rejects the refresh token.
+/// Only this error signs the user out; any other refresh failure (e.g. a network error) keeps the session.
+public enum AuthRefreshError: Error, Sendable {
+    case rejected
+}
