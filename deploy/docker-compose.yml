@@ -1,5 +1,10 @@
 # Two stacks on one droplet: dev (api-dev + postgres-dev) and prod (api-prod +
 # postgres-prod), fronted by one Caddy. Each stack has its own database volume.
+# deploy-env.sh pins API_DEV_IMAGE / API_PROD_IMAGE in .env to the deployed
+# digest; the tag defaults below apply only before the first deploy.
+# Fixed project name so volume names do not depend on the directory name.
+name: fieldassistant
+
 services:
   api-dev:
     image: ${API_DEV_IMAGE:-ghcr.io/monroeresidential/fieldassistant-api:develop}

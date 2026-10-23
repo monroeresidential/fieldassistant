@@ -71,7 +71,8 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 
 ## Conventions
 
-- Branches: work on `develop` (or a feature branch merged into it); `main` changes only via pull request from `develop`. Pushes to `develop` deploy dev (`api-dev.fieldassistant.tools`); merges to `main` deploy prod.
+- Branches: work on `develop` (or a feature branch merged into it); `main` changes only via pull request from `develop`. Pushes to `develop` deploy dev (`api-dev.fieldassistant.tools`); merges to `main` deploy prod, and each prod deploy pauses at the `production` environment until Drew approves it in the Actions UI.
+- After each `develop` → `main` merge, bring `develop` up to date (`git checkout develop && git merge main && git push`, or the PR's Update branch button); otherwise the next promotion PR shows as out of date because `main` requires branches to be current.
 - Contract changes bump `info.version` in `api/openapi.yaml` and require `make generate` and `make sync-contract` in the same commit.
 - Generated code is committed.
 - Migration `000001` may be edited until the first deploy. After editing, recreate local DBs: `docker compose -f api/docker-compose.yml down -v && make db-up`.

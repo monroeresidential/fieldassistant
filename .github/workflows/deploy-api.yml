@@ -53,6 +53,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Compute short SHA
@@ -64,7 +66,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: api
           push: true
@@ -92,7 +95,9 @@ jobs:
       # DROPLET_SSH_KEY is an ENVIRONMENT secret with a different key per environment:
       # `development` holds the deploy-dev key, `production` the deploy-prod key.
       # DROPLET_HOST is a repository-level secret. Each key is locked to
-      # deploy/deploy-env.sh on the droplet, which ignores `script`.
+      # deploy/deploy-env.sh on the droplet. The forced command ignores the
+      # client command but receives it in SSH_ORIGINAL_COMMAND, so `script` is
+      # the image digest this run built; the droplet pins exactly that image.
       - uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         if: steps.check.outputs.configured == 'true'
         with:
@@ -100,10 +105,7 @@ jobs:
           username: deploy-dev
           key: ${{ secrets.DROPLET_SSH_KEY }}
           script_stop: true
-          script: |
-            cd /opt/fieldassistant/deploy
-            docker compose pull api-dev
-            docker compose up -d api-dev
+          script: ${{ needs.build.outputs.digest }}
 
   deploy-prod:
     needs: build
@@ -125,7 +127,9 @@ jobs:
       # DROPLET_SSH_KEY is an ENVIRONMENT secret with a different key per environment:
       # `development` holds the deploy-dev key, `production` the deploy-prod key.
       # DROPLET_HOST is a repository-level secret. Each key is locked to
-      # deploy/deploy-env.sh on the droplet, which ignores `script`.
+      # deploy/deploy-env.sh on the droplet. The forced command ignores the
+      # client command but receives it in SSH_ORIGINAL_COMMAND, so `script` is
+      # the image digest this run built; the droplet pins exactly that image.
       - uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         if: steps.check.outputs.configured == 'true'
         with:
@@ -133,7 +137,4 @@ jobs:
           username: deploy-prod
           key: ${{ secrets.DROPLET_SSH_KEY }}
           script_stop: true
-          script: |
-            cd /opt/fieldassistant/deploy
-            docker compose pull api-prod
-            docker compose up -d api-prod
+          script: ${{ needs.build.outputs.digest }}

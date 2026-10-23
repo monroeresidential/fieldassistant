@@ -2,7 +2,7 @@
 
 One droplet runs two stacks through Docker Compose, behind a single Caddy:
 
-| Stack | Host | API image tag | Postgres | Procore credentials |
+| Stack | Host | Branch | Postgres | Procore credentials |
 | --- | --- | --- | --- | --- |
 | dev | `https://api-dev.fieldassistant.tools` | `develop` | `postgres-dev`, volume `pgdata_dev` | sandbox |
 | prod | `https://api.fieldassistant.tools` | `main` | `postgres-prod`, volume `pgdata_prod` | production |
@@ -37,8 +37,8 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    command, so the key can run nothing else. Replace `ssh-ed25519 AAAA...` with
    that environment's public key:
    ```
-   install -m 600 -o deploy-dev -g deploy-dev /dev/stdin /home/deploy-dev/.ssh/authorized_keys <<< 'command="/opt/fieldassistant/deploy/deploy-env.sh dev",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...'
-   install -m 600 -o deploy-prod -g deploy-prod /dev/stdin /home/deploy-prod/.ssh/authorized_keys <<< 'command="/opt/fieldassistant/deploy/deploy-env.sh prod",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...'
+   install -m 600 -o deploy-dev -g deploy-dev /dev/stdin /home/deploy-dev/.ssh/authorized_keys <<< 'command="/opt/fieldassistant/deploy/deploy-env.sh dev",restrict ssh-ed25519 AAAA...'
+   install -m 600 -o deploy-prod -g deploy-prod /dev/stdin /home/deploy-prod/.ssh/authorized_keys <<< 'command="/opt/fieldassistant/deploy/deploy-env.sh prod",restrict ssh-ed25519 AAAA...'
    ```
    Then fix ownership and permissions:
    ```
@@ -47,8 +47,10 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
      chown -R deploy-$e:deploy-$e /home/deploy-$e/.ssh
    done
    ```
-   The forced command ignores the workflow's `script:` block; the key can only
-   run `deploy-env.sh` with its own argument.
+   `restrict` turns off port, agent and X11 forwarding, the PTY and `~/.ssh/rc`.
+   The forced command never runs what the client sends; the key can only run
+   `deploy-env.sh` with its own argument. The workflow sends the image digest as
+   the command, and the script reads it from `SSH_ORIGINAL_COMMAND`.
 
    On a single droplet the two deploy users are both in the docker group, which
    is root-equivalent, so file permissions are not a security boundary between
@@ -84,8 +86,9 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    becomes `%40`); the password in `.env` stays raw.
 6. Set ownership and permissions. The directory is owned by root and readable by
    both deploy users. Compose reads every service's `env_file`, so both users
-   need all three env files. `backups/` belongs to `deploy-prod`, which runs the
-   backup cron:
+   need all three env files. `.env` is group-writable because `deploy-env.sh`
+   records the deployed image digest in it. `backups/` belongs to `deploy-prod`,
+   which runs the backup cron (`backup.sh` keeps it at mode 700):
    ```
    chown root:fa-deploy /opt/fieldassistant
    chmod 750 /opt/fieldassistant
@@ -93,10 +96,11 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    chown -R root:fa-deploy .
    chmod 750 . deploy-env.sh backup.sh
    chown root:fa-deploy .env .env.dev .env.prod
-   chmod 640 .env .env.dev .env.prod
+   chmod 660 .env
+   chmod 640 .env.dev .env.prod
    mkdir -p backups
    chown deploy-prod:fa-deploy backups
-   chmod 750 backups
+   chmod 700 backups
    ```
 7. Configure `s3cmd` as `deploy-prod`, with the Spaces access key, secret key
    and endpoint (for example `nyc3.digitaloceanspaces.com`), so the config lands
@@ -107,7 +111,9 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    `development` environment holds the deploy-dev key and the `production`
    environment holds the deploy-prod key.
 9. Start everything. If the image is private, first run `docker login ghcr.io`
-   as root and as each deploy user, since Docker credentials are per user. Root
+   as root and as each deploy user, since Docker credentials are per user. Log in
+   with your GitHub username and a personal access token (classic) that has only
+   the `read:packages` scope. Root
    pulls the images now; the deploy users pull them on every release:
    ```
    docker login ghcr.io
@@ -123,7 +129,16 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
 
 The API applies database migrations itself on startup, in each stack's own database.
 
-To pin a different image for a stack, set `API_DEV_IMAGE` or `API_PROD_IMAGE` in `.env`.
+Before the first deploy each stack runs its branch tag (`:develop` or `:main`).
+After that it runs the digest pinned in `.env`; see Releases and Rollback below.
+
+### Updating the deploy files
+
+Deploys only change the image. After changing `docker-compose.yml`, the
+`Caddyfile` or the scripts, update `/opt/fieldassistant/deploy` as root (`git pull`
+in `/opt/fieldassistant`, or copy the files again), reapply the step 6
+permissions to any new files, and run `docker compose up -d`. A Caddyfile change
+also needs `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`.
 
 ## Releases
 
@@ -134,14 +149,36 @@ The deploy workflow (`.github/workflows/deploy-api.yml`) runs on every push to
 `develop` and `main`. It runs the API tests, then builds the image and pushes it
 to `ghcr.io/monroeresidential/fieldassistant-api` tagged with the branch name
 (`develop` or `main`) and `sha-<7 chars>`. A push to `develop` then updates
-`api-dev` and a push to `main` updates `api-prod`. On the droplet each update is
-`docker compose pull <service> && docker compose up -d <service>`. Tags do not
-trigger deploys.
+`api-dev` and a push to `main` updates `api-prod`. Tags do not trigger deploys.
 
-Create the `development` and `production` GitHub environments in repository
-settings (optionally with required reviewers on `production`). If the
-`DROPLET_HOST` secret is empty the deploy job prints a notice and skips the SSH
-step, so the run stays green before the droplet exists.
+Deploys pin the exact image the run built, not the branch tag, so an image
+pushed under `:main` by some other workflow never reaches production. The
+workflow sends the image digest (`sha256:...`) over SSH. `deploy-env.sh` checks
+its format, writes `API_DEV_IMAGE` or `API_PROD_IMAGE` in `.env` as
+`ghcr.io/monroeresidential/fieldassistant-api@sha256:...`, runs
+`docker compose pull` and `docker compose up -d` for that one service, and fails
+the deploy if the running container is not that digest.
+
+Both GitHub environments exist. `production` requires the owner's approval, so
+every merge to `main` waits in the Actions UI until it is approved.
+Deployment-branch policies limit `production` to protected branches (`main`) and
+`development` to `develop`. If the `DROPLET_HOST` secret is empty the deploy job
+prints a notice and skips the SSH step, so the run stays green before the
+droplet exists.
+
+### Rollback
+
+As root in `/opt/fieldassistant/deploy`, set the stack's image line in `.env` to
+an earlier build, then restart that service:
+```
+API_PROD_IMAGE=ghcr.io/monroeresidential/fieldassistant-api:sha-<7 chars>
+```
+```
+docker compose up -d api-prod
+```
+`@sha256:<digest>` works in place of `:sha-<7 chars>`. For dev, set
+`API_DEV_IMAGE` and run `docker compose up -d api-dev`. The next deploy to that
+stack replaces the line again.
 
 ## Backups
 
