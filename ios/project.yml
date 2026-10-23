@@ -60,18 +60,34 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: FieldAssistant
+  FieldAssistantUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: FieldAssistantUITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.monroeresidential.fieldassistant.uitests
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: FieldAssistant
+    dependencies:
+      - target: FieldAssistant
 schemes:
   FieldAssistant:
     build:
       targets:
         FieldAssistant: all
         FieldAssistantTests: [test]
+        FieldAssistantUITests: [test]
     run:
       config: Dev
     test:
       config: Dev
       targets:
         - FieldAssistantTests
+        - FieldAssistantUITests
     profile:
       config: Prod
     analyze:

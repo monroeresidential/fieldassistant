@@ -1,7 +1,7 @@
 .PHONY: run test db-up db-down generate sync-contract check-contract ios-project
 
-run:
-	cd api && go run ./cmd/api
+run: ## loads api/.env if present
+	cd api && set -a && [ -f .env ] && . ./.env; set +a && go run ./cmd/api
 
 test:
 	cd api && go test ./...
