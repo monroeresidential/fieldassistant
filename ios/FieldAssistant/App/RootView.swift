@@ -12,8 +12,12 @@ struct RootView: View {
                 Task { await appState.signIn() }
             }
         case .signedIn, .offline:
-            // Replaced by the company/project picker in Task 16.
-            Text("Signed in")
+            // Offline keeps the user in the app with their last selection; HomeView shows a banner.
+            if let companyID = appState.selectedCompanyID, let projectID = appState.selectedProjectID {
+                HomeView(companyID: companyID, projectID: projectID)
+            } else {
+                ProjectPickerView()
+            }
         }
     }
 }

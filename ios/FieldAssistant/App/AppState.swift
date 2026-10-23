@@ -36,7 +36,8 @@ final class AppState {
 
     @ObservationIgnored private let store: SessionStore
     @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private var client: Client!
+    /// The authenticated API client every feature service uses.
+    @ObservationIgnored private(set) var client: Client!
     @ObservationIgnored private var authService: AuthService!
 
     init(
