@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Next: Phase 1 sandbox verification, then milestone 2 (RFI extraction) per `docs/superpowers/plans/2026-10-22-roadmap.md`.
+Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Next: Phase 1 sandbox verification, then milestone 2 (RFI extraction) per `docs/superpowers/plans/2026-10-22-roadmap.md`.
 
 Governing documents:
 

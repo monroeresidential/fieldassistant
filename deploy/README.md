@@ -67,3 +67,11 @@ Add this crontab line (`crontab -e`):
 ```
 0 3 * * * /opt/fieldassistant/deploy/backup.sh >> /var/log/fa-backup.log 2>&1
 ```
+
+## Connecting the app to a Procore company
+
+Procore returns `403 {"errors":["App is not connected to this company."]}` until a
+company admin installs the app in that company. In Procore: Company Tools → Admin →
+App Management → Install App → Install Custom App, and paste the App Version Key from
+the Developer Portal (Manage Manifests → the promoted version). Do this once per company,
+with the sandbox key for the sandbox company and the production key for production.
