@@ -183,6 +183,47 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testSignOutClearsSelection() async throws {
+        let transport = StubTransport([APIStub.me()])
+        transport.enqueue(.noContent)
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        state.selectedCompanyID = 7
+        state.selectedProjectID = 99
+
+        await state.signOut()
+
+        XCTAssertNil(state.selectedCompanyID)
+        XCTAssertNil(state.selectedProjectID)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        XCTAssertNil(defaults.object(forKey: "selectedCompanyID"))
+        XCTAssertNil(defaults.object(forKey: "selectedProjectID"))
+        let next = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        XCTAssertNil(next.selectedCompanyID)
+        XCTAssertNil(next.selectedProjectID)
+    }
+
+    @MainActor
+    func testReauthRequiredClearsSelection() async throws {
+        let first = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        first.selectedCompanyID = 7
+        first.selectedProjectID = 99
+
+        let state = makeState(
+            store: InMemorySessionStore(validSession()),
+            transport: StubTransport([APIStub.me(reauthRequired: true, lastCompanyID: 3, lastProjectID: 30)])
+        )
+        await state.bootstrap()
+
+        XCTAssertEqual(state.phase, .signedOut)
+        XCTAssertNil(state.selectedCompanyID)
+        XCTAssertNil(state.selectedProjectID)
+        let next = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        XCTAssertNil(next.selectedCompanyID)
+        XCTAssertNil(next.selectedProjectID)
+    }
+
+    @MainActor
     func testRejectedRefreshSignsOut() async throws {
         let store = InMemorySessionStore(
             Session(accessToken: "acc1", refreshToken: "ref1", accessExpiresAt: Date().addingTimeInterval(5))

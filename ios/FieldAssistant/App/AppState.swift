@@ -109,7 +109,7 @@ final class AppState {
 
     func signOut() async {
         await authService.signOut()
-        phase = .signedOut
+        endSession()
     }
 
     // MARK: - Private
@@ -120,7 +120,7 @@ final class AppState {
             output = try await client.getMe()
         } catch where Self.isRefreshRejection(error) {
             // The middleware already cleared the store and reported the sign-out.
-            phase = .signedOut
+            endSession()
             return
         } catch {
             // Offline or transport failure: a field user must not be logged out for that.
@@ -136,7 +136,7 @@ final class AppState {
             }
             if user.reauth_required {
                 try? store.clear()
-                phase = .signedOut
+                endSession()
                 return
             }
             if selectedCompanyID == nil, let id = user.last_company_id { selectedCompanyID = id }
@@ -144,13 +144,21 @@ final class AppState {
             phase = .signedIn(user)
         case .unauthorized:
             try? store.clear()
-            phase = .signedOut
+            endSession()
         case .default:
             phase = .offline
         }
     }
 
     private func handleSignedOut() {
+        endSession()
+    }
+
+    /// The selection belongs to the signed-in user, so it is dropped whenever the session ends.
+    /// Setting the IDs to nil also removes their `UserDefaults` keys.
+    private func endSession() {
+        selectedCompanyID = nil
+        selectedProjectID = nil
         phase = .signedOut
     }
 
