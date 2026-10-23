@@ -128,3 +128,5 @@
 - Covered: every row of the decisions table (branches, hosts, Procore creds per env, triggers), GitHub environments and protection, iOS configurations with coexistence, backups for both DBs, docs.
 - Deviation from the Phase 1 plan: tag-based production deploy replaced by merge-to-main; tags remain available as release markers but no longer trigger anything.
 - Out of scope: creating the droplet, DNS records, GitHub secrets, App Store Connect records for the `.dev` bundle id (manual, documented in the README and CLAUDE.md).
+
+- Verification PR: 2026-10-23
