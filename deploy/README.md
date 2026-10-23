@@ -1,11 +1,11 @@
 # Droplet deploy
 
 The droplet runs `api`, `postgres` and `caddy` through Docker Compose.
-Caddy serves `https://api.<DOMAIN>` and proxies to the API on port 8080.
+Caddy serves `https://api.fieldassistant.tools` and proxies to the API on port 8080.
 
 ## One-time setup
 
-1. Create the droplet and point a DNS A record for `api.<DOMAIN>` at it.
+1. Create the droplet and point a DNS A record for `api.fieldassistant.tools` at it.
 2. Install Docker and the Compose plugin:
    `curl -fsSL https://get.docker.com | sh`
 3. Install `s3cmd` and run `s3cmd --configure` once with the Spaces access key,
@@ -30,13 +30,13 @@ Caddy serves `https://api.<DOMAIN>` and proxies to the API on port 8080.
    `postgres://fa:<POSTGRES_PASSWORD>@postgres:5432/fieldassistant?sslmode=disable`.
 
    ```
-   DOMAIN=example.com
+   DOMAIN=fieldassistant.tools
    POSTGRES_PASSWORD=<strong password>
    SPACES_BUCKET=<bucket name>
    ```
 8. If the image is private, log in once: `docker login ghcr.io`.
 9. Start everything: `cd /opt/fieldassistant/deploy && docker compose up -d`
-10. Check `https://api.<DOMAIN>/healthz`.
+10. Check `https://api.fieldassistant.tools/healthz`.
 
 The API applies database migrations itself on startup.
 

@@ -68,3 +68,7 @@ a second client while the contract is still moving doubles sync work.
 - App name and bundle identifier.
 - Who pilots the first TestFlight build and on which project.
 - "Dictate and fire" for trusted users (deferred past v1).
+
+## Domain (decided 2026-10-23)
+
+`fieldassistant.tools`. Backend at `api.fieldassistant.tools` (Caddy on the droplet, `DOMAIN` in the deploy `.env`); web app, when it ships, at `app.fieldassistant.tools` on Cloudflare Pages. Production `PROCORE_REDIRECT_URL` and `PUBLIC_BASE_URL` use `https://api.fieldassistant.tools`.
