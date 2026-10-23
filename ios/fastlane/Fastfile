@@ -13,8 +13,22 @@ platform :ios do
     )
   end
 
+  desc "Build the Dev configuration (api-dev, DEV badge, .dev bundle id) and upload it to TestFlight"
+  lane :beta_dev do
+    build_and_upload(configuration: "Dev", app_identifier: "com.monroeresidential.fieldassistant.dev")
+  end
+
   desc "Build the Prod configuration and upload it to TestFlight"
-  lane :beta do
+  lane :beta_prod do
+    build_and_upload(configuration: "Prod", app_identifier: "com.monroeresidential.fieldassistant")
+  end
+
+  # Builds `configuration` and uploads it to the App Store Connect app `app_identifier`.
+  # The bundle id itself comes from ios/Config/<configuration>.xcconfig; the two must match.
+  private_lane :build_and_upload do |options|
+    configuration = options.fetch(:configuration)
+    app_identifier = options.fetch(:app_identifier)
+
     # Regenerates the Xcode project with the pinned Swift packages.
     sh("make", "-C", "..", "ios-project")
 
@@ -27,11 +41,11 @@ platform :ios do
 
     build_app(
       scheme: "FieldAssistant",
-      configuration: "Prod",
+      configuration: configuration,
       export_method: "app-store",
       xcargs: SPM_FLAGS
     )
 
-    upload_to_testflight(skip_waiting_for_build_processing: true)
+    upload_to_testflight(app_identifier: app_identifier, skip_waiting_for_build_processing: true)
   end
 end

@@ -117,6 +117,35 @@ final class AuthServiceTests: XCTestCase {
         }
     }
 
+    func testSignInRejectsCallbackWithWrongScheme() async throws {
+        let store = InMemorySessionStore()
+        let transport = StubTransport([APIStub.authStartOK(), APIStub.tokenPair(access: "acc1", refresh: "ref1")])
+        let presenter = FakeWebAuthPresenter(callback: URL(string: "other://auth?code=abc")!)
+        let service = makeService(transport: transport, store: store, presenter: presenter)
+
+        do {
+            try await service.signIn()
+            XCTFail("expected invalidCallback")
+        } catch {
+            XCTAssertEqual(error as? AuthError, .invalidCallback, "unexpected error: \(error)")
+        }
+        XCTAssertNil(try store.load())
+        XCTAssertEqual(transport.requests.map(\.request.path), ["/auth/start"], "no exchange for a foreign-scheme callback")
+    }
+
+    func testSignInUsesConfiguredCallbackScheme() async throws {
+        let store = InMemorySessionStore()
+        let transport = StubTransport([APIStub.authStartOK(), APIStub.tokenPair(access: "acc1", refresh: "ref1")])
+        let presenter = FakeWebAuthPresenter(callback: URL(string: "fieldassistant-dev://auth?code=abc")!)
+        let service = makeService(transport: transport, store: store, presenter: presenter, callbackScheme: "fieldassistant-dev")
+
+        try await service.signIn()
+
+        XCTAssertEqual(presenter.callbackSchemes, ["fieldassistant-dev"])
+        XCTAssertEqual(transport.requests.map(\.request.path), ["/auth/start", "/auth/exchange"])
+        XCTAssertEqual(try store.load()?.accessToken, "acc1")
+    }
+
     func testSignInExchangeErrorIsServerError() async throws {
         let store = InMemorySessionStore()
         let transport = StubTransport([APIStub.authStartOK(), APIStub.error(.badRequest, code: "invalid_code", message: "Code expired")])
@@ -209,7 +238,8 @@ final class AuthServiceTests: XCTestCase {
     private func makeService(
         transport: StubTransport,
         store: InMemorySessionStore = InMemorySessionStore(),
-        presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError())
+        presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError()),
+        callbackScheme: String? = nil
     ) -> AuthService {
         let middleware = AuthMiddleware(
             store: store,
@@ -217,6 +247,9 @@ final class AuthServiceTests: XCTestCase {
             onSignedOut: {}
         )
         let client = Client(serverURL: APIStub.baseURL, transport: transport, middlewares: [middleware])
-        return AuthService(client: client, store: store, presenter: presenter, deviceID: deviceID)
+        guard let callbackScheme else {
+            return AuthService(client: client, store: store, presenter: presenter, deviceID: deviceID)
+        }
+        return AuthService(client: client, store: store, presenter: presenter, deviceID: deviceID, callbackScheme: callbackScheme)
     }
 }

@@ -13,7 +13,7 @@ protocol WebAuthPresenter: Sendable {
 enum AuthError: Error, Equatable {
     /// The user closed the login sheet.
     case cancelled
-    /// The callback URL carried neither a one-time `code` nor an `error`.
+    /// The callback URL had the wrong scheme or carried neither a one-time `code` nor an `error`.
     case invalidCallback
     /// The API answered with an error (or an unusable response).
     case server(code: String, message: String)
@@ -21,18 +21,25 @@ enum AuthError: Error, Equatable {
 
 /// Runs the PKCE sign-in against the Field Assistant API, refreshes tokens and signs out.
 actor AuthService {
-    static let callbackScheme = "fieldassistant"
-
     private let client: Client
     private let store: SessionStore
     private let presenter: WebAuthPresenter
     private let deviceID: String
+    private let callbackScheme: String
 
-    init(client: Client, store: SessionStore, presenter: WebAuthPresenter, deviceID: String) {
+    /// `callbackScheme` is the URL scheme the API redirects sign-in to; it differs per configuration.
+    init(
+        client: Client,
+        store: SessionStore,
+        presenter: WebAuthPresenter,
+        deviceID: String,
+        callbackScheme: String = AppConfig.urlScheme
+    ) {
         self.client = client
         self.store = store
         self.presenter = presenter
         self.deviceID = deviceID
+        self.callbackScheme = callbackScheme.lowercased()
     }
 
     /// Signs in through the browser and stores the resulting session.
@@ -58,9 +65,12 @@ actor AuthService {
 
         let callback: URL
         do {
-            callback = try await presenter.authenticate(url: authorizeURL, callbackScheme: Self.callbackScheme)
+            callback = try await presenter.authenticate(url: authorizeURL, callbackScheme: callbackScheme)
         } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
             throw AuthError.cancelled
+        }
+        guard callback.scheme?.lowercased() == callbackScheme else {
+            throw AuthError.invalidCallback
         }
         let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
         if let errorCode = items.first(where: { $0.name == "error" })?.value {

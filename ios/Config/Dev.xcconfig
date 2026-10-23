@@ -1,2 +1,7 @@
-// Dev configuration. `/$()/` keeps xcconfig from treating `//` as a comment.
-API_BASE_URL = http:/$()/localhost:8080/v1
+// Dev configuration: the dev droplet, installable beside Prod. `/$()/` keeps xcconfig from treating `//` as a comment.
+// The dev API redirects sign-in to fieldassistant-dev://auth (APP_REDIRECT_SCHEME).
+API_BASE_URL = https:/$()/api-dev.fieldassistant.tools/v1
+API_ENV = dev
+PRODUCT_BUNDLE_IDENTIFIER = com.monroeresidential.fieldassistant.dev
+APP_URL_SCHEME = fieldassistant-dev
+APP_DISPLAY_NAME = Field Assistant Dev

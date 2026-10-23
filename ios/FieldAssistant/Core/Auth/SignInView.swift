@@ -9,6 +9,15 @@ struct SignInView: View {
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
+            if AppConfig.isDev {
+                Text("DEV")
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(.orange))
+                    .accessibilityLabel("Development build")
+            }
             Text("Field Assistant")
                 .font(.largeTitle.bold())
             Spacer()
