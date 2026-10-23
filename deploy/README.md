@@ -1,68 +1,156 @@
 # Droplet deploy
 
-The droplet runs `api`, `postgres` and `caddy` through Docker Compose.
-Caddy serves `https://api.fieldassistant.tools` and proxies to the API on port 8080.
+One droplet runs two stacks through Docker Compose, behind a single Caddy:
+
+| Stack | Host | API image tag | Postgres | Procore credentials |
+| --- | --- | --- | --- | --- |
+| dev | `https://api-dev.fieldassistant.tools` | `develop` | `postgres-dev`, volume `pgdata_dev` | sandbox |
+| prod | `https://api.fieldassistant.tools` | `main` | `postgres-prod`, volume `pgdata_prod` | production |
+
+Caddy proxies each host to its own API on port 8080. The two stacks share nothing
+but the droplet and Caddy: separate databases, separate passwords, separate secrets.
 
 ## One-time setup
 
-1. Create the droplet and point a DNS A record for `api.fieldassistant.tools` at it.
-2. Install Docker and the Compose plugin:
-   `curl -fsSL https://get.docker.com | sh`
-3. Install `s3cmd` and run `s3cmd --configure` once with the Spaces access key,
-   secret key and endpoint (for example `nyc3.digitaloceanspaces.com`).
-4. Create the non-root deploy user the workflow SSHes in as:
-   ```
-   adduser --disabled-password --gecos "" deploy
-   usermod -aG docker deploy
-   mkdir -p /home/deploy/.ssh && chmod 700 /home/deploy/.ssh
-   # put the deploy public key in /home/deploy/.ssh/authorized_keys
-   chmod 600 /home/deploy/.ssh/authorized_keys
-   chown -R deploy:deploy /home/deploy/.ssh
-   mkdir -p /opt/fieldassistant && chown -R deploy /opt/fieldassistant
-   ```
-   Run the remaining steps as `deploy`. The private key goes in the `DROPLET_SSH_KEY` secret.
-5. Copy this `deploy/` directory to `/opt/fieldassistant/deploy`
-   (for example `git clone` the repo to `/opt/fieldassistant` or `scp -r deploy`).
-6. In `docker-compose.yml`, replace `OWNER` in the image name with the GitHub owner.
-7. Write `/opt/fieldassistant/deploy/.env` with the API variables from
-   `api/.env.example` plus the deploy-only ones below. `DATABASE_URL` must point
-   at the compose service, for example
-   `postgres://fa:<POSTGRES_PASSWORD>@postgres:5432/fieldassistant?sslmode=disable`.
-   If the password has special characters (`@ : / ? # %` and the like), URL-encode
-   it in `DATABASE_URL` (for example `@` becomes `%40`); `POSTGRES_PASSWORD` stays raw.
-   In production set:
-   - `PROCORE_REDIRECT_URL=https://api.fieldassistant.tools/v1/auth/callback`
-     (it must match the redirect URI registered with the Procore app exactly).
-   - `PUBLIC_BASE_URL=https://api.fieldassistant.tools` (reserved: required by
-     config, not yet read by the server).
+Do the steps in order. Run them as root on the droplet, except step 8, which is in GitHub.
 
-   Write plain `KEY=value` lines: no quotes around values and Unix
-   line endings (no CRLF), or the values reach the server with stray characters.
-
+1. Create the droplet and point two DNS A records at it:
+   `api-dev.fieldassistant.tools` and `api.fieldassistant.tools`.
+2. Install Docker, the Compose plugin and `s3cmd`:
    ```
-   DOMAIN=fieldassistant.tools
-   POSTGRES_PASSWORD=<strong password>
-   SPACES_BUCKET=<bucket name>
+   curl -fsSL https://get.docker.com | sh
+   apt install -y s3cmd
    ```
-8. If the image is private, log in once: `docker login ghcr.io`.
-9. Start everything: `cd /opt/fieldassistant/deploy && docker compose up -d`
-10. Check `https://api.fieldassistant.tools/healthz`.
+3. Create one SSH user per environment, so a push to `develop` cannot run
+   anything on the production stack. Both users are in the `docker` group and in
+   a shared `fa-deploy` group, and each has its own keypair
+   (`ssh-keygen -t ed25519`, one per environment):
+   ```
+   groupadd fa-deploy
+   for e in dev prod; do
+     adduser --disabled-password --gecos "" deploy-$e
+     usermod -aG docker,fa-deploy deploy-$e
+     mkdir -p /home/deploy-$e/.ssh && chmod 700 /home/deploy-$e/.ssh
+   done
+   ```
+   Write each public key to that user's `authorized_keys`, locked to the forced
+   command, so the key can run nothing else. Replace `ssh-ed25519 AAAA...` with
+   that environment's public key:
+   ```
+   install -m 600 -o deploy-dev -g deploy-dev /dev/stdin /home/deploy-dev/.ssh/authorized_keys <<< 'command="/opt/fieldassistant/deploy/deploy-env.sh dev",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...'
+   install -m 600 -o deploy-prod -g deploy-prod /dev/stdin /home/deploy-prod/.ssh/authorized_keys <<< 'command="/opt/fieldassistant/deploy/deploy-env.sh prod",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...'
+   ```
+   Then fix ownership and permissions:
+   ```
+   for e in dev prod; do
+     chmod 600 /home/deploy-$e/.ssh/authorized_keys
+     chown -R deploy-$e:deploy-$e /home/deploy-$e/.ssh
+   done
+   ```
+   The forced command ignores the workflow's `script:` block; the key can only
+   run `deploy-env.sh` with its own argument.
 
-The API applies database migrations itself on startup.
+   On a single droplet the two deploy users are both in the docker group, which
+   is root-equivalent, so file permissions are not a security boundary between
+   dev and prod. The boundary is the forced-command SSH key: a leaked dev key can
+   only run the dev deploy script. If real isolation is ever required, move dev
+   to its own droplet.
+4. Create the parent directory, then copy this `deploy/` directory to
+   `/opt/fieldassistant/deploy` (for example `git clone` the repo to
+   `/opt/fieldassistant`, or from your machine `scp -r deploy root@<droplet>:/opt/fieldassistant/`):
+   ```
+   mkdir -p /opt/fieldassistant
+   ```
+5. Write three env files in `/opt/fieldassistant/deploy`, starting from the
+   `*.example` files. Use plain `KEY=value` lines: no quotes around values and
+   Unix line endings (no CRLF), or the values reach the server with stray
+   characters. None of these files is committed.
+   - `.env` (from `.env.example`): read by Compose only, not by the API. Holds
+     `DOMAIN` (`fieldassistant.tools`), `POSTGRES_DEV_PASSWORD`,
+     `POSTGRES_PROD_PASSWORD` and `SPACES_BUCKET`. Use two different passwords.
+   - `.env.dev` (from `.env.dev.example`): the dev API. Put the **sandbox**
+     Procore client id and secret here. `DATABASE_URL` points at `postgres-dev`
+     and uses `POSTGRES_DEV_PASSWORD`. The redirect URL and `PUBLIC_BASE_URL` use
+     `api-dev.fieldassistant.tools`, and `APP_REDIRECT_SCHEME` is `fieldassistant-dev`.
+   - `.env.prod` (from `.env.prod.example`): the prod API. Put the **production**
+     Procore client id and secret here. `DATABASE_URL` points at `postgres-prod`
+     and uses `POSTGRES_PROD_PASSWORD`. The redirect URL and `PUBLIC_BASE_URL` use
+     `api.fieldassistant.tools`, and `APP_REDIRECT_SCHEME` is `fieldassistant`.
+
+   Each `PROCORE_REDIRECT_URL` must match the redirect URI registered with the
+   matching Procore app exactly. Generate `TOKEN_VAULT_KEY` and `SESSION_SECRET`
+   separately for each environment. If a database password has special characters
+   (`@ : / ? # %` and the like), URL-encode it in `DATABASE_URL` (for example `@`
+   becomes `%40`); the password in `.env` stays raw.
+6. Set ownership and permissions. The directory is owned by root and readable by
+   both deploy users. Compose reads every service's `env_file`, so both users
+   need all three env files. `backups/` belongs to `deploy-prod`, which runs the
+   backup cron:
+   ```
+   chown root:fa-deploy /opt/fieldassistant
+   chmod 750 /opt/fieldassistant
+   cd /opt/fieldassistant/deploy
+   chown -R root:fa-deploy .
+   chmod 750 . deploy-env.sh backup.sh
+   chown root:fa-deploy .env .env.dev .env.prod
+   chmod 640 .env .env.dev .env.prod
+   mkdir -p backups
+   chown deploy-prod:fa-deploy backups
+   chmod 750 backups
+   ```
+7. Configure `s3cmd` as `deploy-prod`, with the Spaces access key, secret key
+   and endpoint (for example `nyc3.digitaloceanspaces.com`), so the config lands
+   in that user's home where the backup cron can read it:
+   `sudo -H -u deploy-prod s3cmd --configure`
+8. In GitHub, add the secrets. `DROPLET_HOST` is a repository-level secret. The
+   private keys go in **environment** secrets named `DROPLET_SSH_KEY`: the
+   `development` environment holds the deploy-dev key and the `production`
+   environment holds the deploy-prod key.
+9. Start everything. If the image is private, first run `docker login ghcr.io`
+   as root and as each deploy user, since Docker credentials are per user. Root
+   pulls the images now; the deploy users pull them on every release:
+   ```
+   docker login ghcr.io
+   sudo -H -u deploy-dev docker login ghcr.io
+   sudo -H -u deploy-prod docker login ghcr.io
+   ```
+   ```
+   cd /opt/fieldassistant/deploy && docker compose up -d
+   ```
+10. Check `https://api-dev.fieldassistant.tools/healthz` and
+    `https://api.fieldassistant.tools/healthz`.
+11. Install the backup cron as `deploy-prod`; see Backups below.
+
+The API applies database migrations itself on startup, in each stack's own database.
+
+To pin a different image for a stack, set `API_DEV_IMAGE` or `API_PROD_IMAGE` in `.env`.
 
 ## Releases
 
-Pushing a tag like `v0.1.0` runs `.github/workflows/deploy-api.yml`. It builds
-and pushes the image to GHCR, then SSHes to the droplet and runs
-`docker compose pull api && docker compose up -d api`.
+GitHub secrets required: `DROPLET_HOST` (repository) and `DROPLET_SSH_KEY` (one
+per environment, see setup step 8). Deploys to the same ref are serialized.
 
-GitHub secrets required: `DROPLET_HOST`, `DROPLET_SSH_KEY`. The deploy job uses the `production` environment, so create it in repository settings (optionally with required reviewers). Deploys run only after the test job passes.
+The deploy workflow (`.github/workflows/deploy-api.yml`) runs on every push to
+`develop` and `main`. It runs the API tests, then builds the image and pushes it
+to `ghcr.io/monroeresidential/fieldassistant-api` tagged with the branch name
+(`develop` or `main`) and `sha-<7 chars>`. A push to `develop` then updates
+`api-dev` and a push to `main` updates `api-prod`. On the droplet each update is
+`docker compose pull <service> && docker compose up -d <service>`. Tags do not
+trigger deploys.
+
+Create the `development` and `production` GitHub environments in repository
+settings (optionally with required reviewers on `production`). If the
+`DROPLET_HOST` secret is empty the deploy job prints a notice and skips the SSH
+step, so the run stays green before the droplet exists.
 
 ## Backups
 
-`backup.sh` dumps the database, gzips it to `backups/fa-YYYY-MM-DD.sql.gz`,
-uploads it to the Spaces bucket and deletes local dumps older than 30 days.
-Add this crontab line (`crontab -e`):
+`backup.sh [dev|prod] [--dry-run]` dumps each selected database from its own
+container (no argument backs up both), gzips it to `backups/<env>/fa-YYYY-MM-DD.sql.gz`,
+uploads it to `s3://$SPACES_BUCKET/<env>/` and deletes local dumps older than
+30 days per environment. `--dry-run` prints the commands without running them.
+Install this crontab line as `deploy-prod` (`sudo -H -u deploy-prod crontab -e`).
+First create its log file: `touch /var/log/fa-backup.log && chown deploy-prod /var/log/fa-backup.log`.
 
 ```
 0 3 * * * /opt/fieldassistant/deploy/backup.sh >> /var/log/fa-backup.log 2>&1

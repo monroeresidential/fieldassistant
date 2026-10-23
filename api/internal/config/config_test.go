@@ -97,3 +97,31 @@ func TestLoad_PortOverride(t *testing.T) {
 		t.Errorf("Port = %q, want 9090", cfg.Port)
 	}
 }
+
+func TestLoad_AppRedirectSchemeDefault(t *testing.T) {
+	cfg, err := Load(getter(validEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AppRedirectScheme != "fieldassistant" {
+		t.Errorf("AppRedirectScheme = %q, want fieldassistant", cfg.AppRedirectScheme)
+	}
+	env := validEnv()
+	env["APP_REDIRECT_SCHEME"] = "fieldassistant-dev"
+	cfg, err = Load(getter(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AppRedirectScheme != "fieldassistant-dev" {
+		t.Errorf("AppRedirectScheme = %q, want fieldassistant-dev", cfg.AppRedirectScheme)
+	}
+}
+
+func TestLoad_AppRedirectSchemeInvalid(t *testing.T) {
+	env := validEnv()
+	env["APP_REDIRECT_SCHEME"] = "Bad Scheme"
+	_, err := Load(getter(env))
+	if err == nil || !strings.Contains(err.Error(), "APP_REDIRECT_SCHEME") {
+		t.Fatalf("err = %v, want error naming APP_REDIRECT_SCHEME", err)
+	}
+}

@@ -44,7 +44,8 @@ Single iOS test class: add `-only-testing:FieldAssistantTests/<Class>`.
 Fastlane (from `ios/`, via `gem install fastlane`, `brew install fastlane` or `bundle exec`):
 
 - `fastlane test`: regenerates the project and runs the unit tests on iPhone 17.
-- `fastlane beta`: builds the Prod configuration and uploads to TestFlight. Needs `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 App Store Connect key) in the environment, and an Apple Team ID, which is not set yet: add `DEVELOPMENT_TEAM` to the app target in `ios/project.yml` (a commented-out placeholder marks the spot).
+- `fastlane beta_dev` / `fastlane beta_prod`: build the Dev or Prod configuration and upload to TestFlight. Need `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 App Store Connect key) in the environment, and an Apple Team ID, which is not set yet: add `DEVELOPMENT_TEAM` to the app target in `ios/project.yml` (a commented-out placeholder marks the spot).
+- iOS configurations (`ios/Config/*.xcconfig`): `Local` talks to `localhost:8080` and is what the scheme runs and tests; `Dev` talks to `api-dev.fieldassistant.tools`, shows a DEV badge, and uses the `.dev` bundle id and `fieldassistant-dev` URL scheme so it installs beside Prod; `Prod` talks to `api.fieldassistant.tools`.
 
 Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/workflows/deploy-api.yml`.
 
@@ -70,6 +71,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 
 ## Conventions
 
+- Branches: work on `develop` (or a feature branch merged into it); `main` changes only via pull request from `develop`. Pushes to `develop` deploy dev (`api-dev.fieldassistant.tools`); merges to `main` deploy prod.
 - Contract changes bump `info.version` in `api/openapi.yaml` and require `make generate` and `make sync-contract` in the same commit.
 - Generated code is committed.
 - Migration `000001` may be edited until the first deploy. After editing, recreate local DBs: `docker compose -f api/docker-compose.yml down -v && make db-up`.

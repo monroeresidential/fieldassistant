@@ -4,6 +4,7 @@ options:
   deploymentTarget:
     iOS: "17.0"
 configs:
+  Local: debug
   Dev: debug
   Prod: release
 settings:
@@ -20,29 +21,31 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: FieldAssistant
+    # Bundle id, URL scheme, display name and API host come from these, one per configuration.
     configFiles:
+      Local: Config/Local.xcconfig
       Dev: Config/Dev.xcconfig
       Prod: Config/Prod.xcconfig
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.monroeresidential.fieldassistant
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         # DEVELOPMENT_TEAM: # TODO: Apple Team ID (needed for fastlane beta)
     info:
       path: FieldAssistant/Resources/Info.plist
       properties:
-        CFBundleDisplayName: Field Assistant
+        CFBundleDisplayName: $(APP_DISPLAY_NAME)
         CFBundleURLTypes:
-          - CFBundleURLName: com.monroeresidential.fieldassistant
+          - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
             CFBundleURLSchemes:
-              - fieldassistant
+              - $(APP_URL_SCHEME)
         NSMicrophoneUsageDescription: Field Assistant uses the microphone to record voice notes.
         NSCameraUsageDescription: Field Assistant uses the camera to capture site photos.
         NSPhotoLibraryUsageDescription: Field Assistant accesses your photo library to attach photos.
         NSLocationWhenInUseUsageDescription: Field Assistant uses your location to tag site observations.
         UILaunchScreen: {}
         API_BASE_URL: $(API_BASE_URL)
+        API_ENV: $(API_ENV)
     dependencies:
       - package: FieldAssistantAPI
         product: FieldAssistantAPI
@@ -82,15 +85,15 @@ schemes:
         FieldAssistantTests: [test]
         FieldAssistantUITests: [test]
     run:
-      config: Dev
+      config: Local
     test:
-      config: Dev
+      config: Local
       targets:
         - FieldAssistantTests
         - FieldAssistantUITests
     profile:
       config: Prod
     analyze:
-      config: Dev
+      config: Local
     archive:
       config: Prod

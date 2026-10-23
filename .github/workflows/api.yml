@@ -7,16 +7,12 @@ on:
       - 'Makefile'
       - '.github/workflows/api.yml'
   pull_request:
-    paths:
-      - 'api/**'
-      - 'Makefile'
-      - '.github/workflows/api.yml'
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  api-test:
     runs-on: ubuntu-latest
     services:
       postgres:

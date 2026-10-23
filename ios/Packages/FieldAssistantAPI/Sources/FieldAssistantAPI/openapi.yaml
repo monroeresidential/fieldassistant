@@ -35,8 +35,10 @@ paths:
       description: >-
         Procore redirects here after the user consents or declines. The
         response is always a 302 back to the app: `Location` is either
-        `fieldassistant://auth?code=<one-time code>` on success or
-        `fieldassistant://auth?error=<code>` on failure, where `<code>` is
+        `<app scheme>://auth?code=<one-time code>` on success or
+        `<app scheme>://auth?error=<code>` on failure, where `<app scheme>`
+        is `fieldassistant` in production and `fieldassistant-dev` in the dev
+        environment, and `<code>` is
         one of `access_denied` (the user declined in Procore), `bad_request`
         (missing code, or unknown or expired state), `procore_unavailable`
         (the Procore token exchange or user lookup failed) or `internal`.

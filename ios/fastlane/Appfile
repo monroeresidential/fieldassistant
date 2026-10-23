@@ -1,3 +1,2 @@
-# Placeholder bundle identifier; still an open decision. Keep in sync with ios/project.yml.
-app_identifier "com.monroeresidential.fieldassistant"
+# No app_identifier here: each lane sets its own (Fastfile beta_dev / beta_prod), matching ios/Config/*.xcconfig.
 # No apple_id or team_id: uploads authenticate with an App Store Connect API key.

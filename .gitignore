@@ -8,3 +8,8 @@ ios/**/DerivedData/
 ios/**/.swiftpm/
 ios/fastlane/report.xml
 .DS_Store
+
+deploy/.env
+deploy/.env.dev
+deploy/.env.prod
+deploy/backups/

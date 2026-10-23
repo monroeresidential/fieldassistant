@@ -248,3 +248,18 @@ func TestAuthExchange_MissingVerifier_400(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthCallback_UsesConfiguredScheme(t *testing.T) {
+	srv, _ := newTestServerWithScheme(t, "fieldassistant-dev")
+	_, challenge := newVerifier(t)
+	state := startAuth(t, srv, "device-1", challenge)
+
+	q := url.Values{"code": {testProcoreCode}, "state": {state}}
+	res, b := call(t, srv, http.MethodGet, "/v1/auth/callback?"+q.Encode(), "", nil)
+	if res.StatusCode != http.StatusFound {
+		t.Fatalf("callback: status %d; body %s", res.StatusCode, b)
+	}
+	if loc := res.Header.Get("Location"); !strings.HasPrefix(loc, "fieldassistant-dev://auth?code=") {
+		t.Fatalf("Location %q, want prefix fieldassistant-dev://auth?code=", loc)
+	}
+}

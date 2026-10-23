@@ -4,6 +4,7 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -11,7 +12,12 @@ const (
 	vaultKeyLen      = 32
 	sessionSecretMin = 32
 	defaultPort      = "8080"
+
+	defaultAppRedirectScheme = "fieldassistant"
 )
+
+// schemePattern is the lowercase subset of an RFC 3986 URI scheme.
+var schemePattern = regexp.MustCompile(`^[a-z][a-z0-9+.-]*$`)
 
 // ProcoreConfig holds the Procore OAuth and API settings.
 type ProcoreConfig struct {
@@ -23,9 +29,11 @@ type Config struct {
 	Port          string
 	DatabaseURL   string
 	PublicBaseURL string
-	Procore       ProcoreConfig
-	TokenVaultKey []byte
-	SessionSecret []byte
+	// AppRedirectScheme is the URL scheme the auth callback redirects to.
+	AppRedirectScheme string
+	Procore           ProcoreConfig
+	TokenVaultKey     []byte
+	SessionSecret     []byte
 }
 
 // Load reads configuration through getenv and validates it.
@@ -40,9 +48,10 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	cfg := Config{
-		Port:          getenv("PORT"),
-		DatabaseURL:   req("DATABASE_URL"),
-		PublicBaseURL: req("PUBLIC_BASE_URL"),
+		Port:              getenv("PORT"),
+		DatabaseURL:       req("DATABASE_URL"),
+		PublicBaseURL:     req("PUBLIC_BASE_URL"),
+		AppRedirectScheme: getenv("APP_REDIRECT_SCHEME"),
 		Procore: ProcoreConfig{
 			ClientID:     req("PROCORE_CLIENT_ID"),
 			ClientSecret: req("PROCORE_CLIENT_SECRET"),
@@ -59,6 +68,12 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.Port == "" {
 		cfg.Port = defaultPort
+	}
+	if cfg.AppRedirectScheme == "" {
+		cfg.AppRedirectScheme = defaultAppRedirectScheme
+	}
+	if !schemePattern.MatchString(cfg.AppRedirectScheme) {
+		return Config{}, fmt.Errorf("APP_REDIRECT_SCHEME %q is not a valid URL scheme (want lowercase letters, digits, +, . or -, starting with a letter)", cfg.AppRedirectScheme)
 	}
 
 	var err error

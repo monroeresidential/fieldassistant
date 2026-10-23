@@ -1,3 +1,7 @@
 // Prod configuration. `/$()/` keeps xcconfig from treating `//` as a comment.
 // Production API host (domain decided 2026-10-23: fieldassistant.tools).
 API_BASE_URL = https:/$()/api.fieldassistant.tools/v1
+API_ENV = prod
+PRODUCT_BUNDLE_IDENTIFIER = com.monroeresidential.fieldassistant
+APP_URL_SCHEME = fieldassistant
+APP_DISPLAY_NAME = Field Assistant
