@@ -26,6 +26,7 @@ create table sessions (
 );
 create index sessions_user_id_idx on sessions(user_id);
 create unique index sessions_refresh_hash_idx on sessions(refresh_hash);
+create index sessions_prev_refresh_hash_idx on sessions(prev_refresh_hash);
 create table auth_states (
   state text primary key,
   device_id text not null,
