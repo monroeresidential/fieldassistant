@@ -72,3 +72,18 @@ a second client while the contract is still moving doubles sync work.
 ## Domain (decided 2026-10-23)
 
 `fieldassistant.tools`. Backend at `api.fieldassistant.tools` (Caddy on the droplet, `DOMAIN` in the deploy `.env`); web app, when it ships, at `app.fieldassistant.tools` on Cloudflare Pages. Production `PROCORE_REDIRECT_URL` and `PUBLIC_BASE_URL` use `https://api.fieldassistant.tools`.
+
+## Environments (decided 2026-10-23)
+
+Two deployed environments on one droplet, as two Compose stacks with separate databases and `.env` files, routed by Caddy on hostname:
+
+| | Branch | Host | Procore | Deploy trigger |
+| --- | --- | --- | --- | --- |
+| Development | `develop` | `api-dev.fieldassistant.tools` | sandbox credentials | every push to `develop` (GitHub environment `development`) |
+| Production | `main` | `api.fieldassistant.tools` | production credentials | merge to `main` via pull request from `develop` (GitHub environment `production`, required reviewer) |
+
+`main` is protected: pull request required, API and iOS checks required, no direct pushes. Local development keeps using Docker Postgres and the sandbox at `localhost:8080`.
+
+iOS gets three build configurations: `Local` (localhost backend), `Dev` (`api-dev`, with a visible DEV badge; the TestFlight build the site team tests against sandbox data), `Prod`.
+
+Supersedes the earlier "dev (local) and prod only" line. Move dev to its own droplet only if it ever interferes with production.
