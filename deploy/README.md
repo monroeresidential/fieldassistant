@@ -16,8 +16,8 @@ but the droplet and Caddy: separate databases, separate passwords, separate secr
    `api-dev.fieldassistant.tools` and `api.fieldassistant.tools`.
 2. Install Docker and the Compose plugin:
    `curl -fsSL https://get.docker.com | sh`
-3. Install `s3cmd` and run `s3cmd --configure` once with the Spaces access key,
-   secret key and endpoint (for example `nyc3.digitaloceanspaces.com`).
+3. Install `s3cmd` (`apt install s3cmd`). It is configured in step 4, after the
+   `deploy-prod` user exists.
 4. Create one SSH user per environment, so a push to `develop` cannot run
    anything on the production stack. Both users are in the `docker` group and
    each has its own keypair (`ssh-keygen -t ed25519`, one per environment):
@@ -47,12 +47,20 @@ but the droplet and Caddy: separate databases, separate passwords, separate secr
    chown -R root:fa-deploy . && chmod 750 . && chmod 750 deploy-env.sh backup.sh
    chown root:fa-deploy .env .env.dev .env.prod
    chmod 640 .env .env.dev .env.prod
+   mkdir -p backups && chown deploy-prod:fa-deploy backups && chmod 750 backups
+   sudo -u deploy-prod s3cmd --configure
    ```
+   Create `backups/` before installing the backup cron. Run `s3cmd --configure`
+   as `deploy-prod` with the Spaces access key, secret key and endpoint (for
+   example `nyc3.digitaloceanspaces.com`), so the config lands in that user's
+   home and the cron job can read it.
    On a single droplet the two deploy users are both in the docker group, which
    is root-equivalent, so file permissions are not a security boundary between
    dev and prod. The boundary is the forced-command SSH key: a leaked dev key can
    only run the dev deploy script. If real isolation is ever required, move dev
    to its own droplet.
+   The forced command ignores the workflow's `script:` block; the key can only
+   run `deploy-env.sh` with its own argument.
    The private keys go in GitHub **environment** secrets named `DROPLET_SSH_KEY`:
    the `development` environment holds the deploy-dev key and the `production`
    environment holds the deploy-prod key. `DROPLET_HOST` is a repository-level secret.
