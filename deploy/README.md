@@ -41,14 +41,18 @@ but the droplet and Caddy: separate databases, separate passwords, separate secr
    command="/opt/fieldassistant/deploy/deploy-env.sh prod",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA...
    ```
    Run the remaining steps as root. After step 6, set ownership so `deploy/` is
-   owned by root and readable by both users, and each API env file only by its own user:
+   owned by root and readable by both users, along with the three env files (Compose reads every service's `env_file`, so both users need all of them):
    ```
    cd /opt/fieldassistant/deploy
    chown -R root:fa-deploy . && chmod 750 . && chmod 750 deploy-env.sh backup.sh
-   chown root:fa-deploy .env && chmod 640 .env
-   chown root:deploy-dev .env.dev && chmod 640 .env.dev
-   chown root:deploy-prod .env.prod && chmod 640 .env.prod
+   chown root:fa-deploy .env .env.dev .env.prod
+   chmod 640 .env .env.dev .env.prod
    ```
+   On a single droplet the two deploy users are both in the docker group, which
+   is root-equivalent, so file permissions are not a security boundary between
+   dev and prod. The boundary is the forced-command SSH key: a leaked dev key can
+   only run the dev deploy script. If real isolation is ever required, move dev
+   to its own droplet.
    The private keys go in GitHub **environment** secrets named `DROPLET_SSH_KEY`:
    the `development` environment holds the deploy-dev key and the `production`
    environment holds the deploy-prod key. `DROPLET_HOST` is a repository-level secret.
