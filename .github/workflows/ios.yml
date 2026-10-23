@@ -5,11 +5,13 @@ on:
     paths:
       - 'ios/**'
       - 'api/openapi.yaml'
+      - 'Makefile'
       - '.github/workflows/ios.yml'
   pull_request:
     paths:
       - 'ios/**'
       - 'api/openapi.yaml'
+      - 'Makefile'
       - '.github/workflows/ios.yml'
 
 permissions:
@@ -17,13 +19,14 @@ permissions:
 
 jobs:
   test:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Select Xcode 16
+      # The pinned swift-openapi-generator and runtime need Swift tools 6.2 (Xcode 26+).
+      - name: Select Xcode 26
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.4.app || true
+          sudo xcode-select -s /Applications/Xcode_26.6.app
           xcodebuild -version
 
       - name: Check contract copy
@@ -41,7 +44,7 @@ jobs:
           # -skipPackagePluginValidation trusts the Apple-owned OpenAPIGenerator plugin at the version pinned in ios/Package.resolved.
           xcodebuild test \
             -scheme FieldAssistant \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackagePluginValidation \
             -quiet
