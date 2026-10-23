@@ -119,7 +119,9 @@ func (t *TokenSource) refresh(ctx context.Context, userID uuid.UUID) (string, er
 		return "", fmt.Errorf("tokensource: refresh revoked: %w", ErrReauthRequired)
 	}
 	if err != nil {
-		return "", fmt.Errorf("tokensource: refresh: %w", err)
+		// Anything but a revocation (a 5xx, a transport error) is Procore
+		// being unavailable, not a reason to sign the user out.
+		return "", fmt.Errorf("tokensource: procore refresh: %w: %w", procore.ErrUnavailable, err)
 	}
 	if tok.RefreshToken == "" {
 		// Procore did not rotate the refresh token; keep the current one.

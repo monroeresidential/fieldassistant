@@ -224,6 +224,35 @@ func TestRFIs_ProcoreForbidden_MapsToPermissionDenied(t *testing.T) {
 	}
 }
 
+func TestCompanies_ProcoreRefresh500_502(t *testing.T) {
+	srv, fp := newTestServer(t)
+	fp.With(func(f *fakeProcore) { f.Companies = []procore.Company{{ID: 7, Name: "Monroe Residential"}} })
+	pair := signIn(t, srv, "device-1")
+
+	// After three hours the stored Procore token is expired, and Procore's
+	// token endpoint answers 500 to the refresh grant.
+	fp.With(func(f *fakeProcore) {
+		f.RefreshErrors = true
+		f.Clock.Advance(3 * time.Hour)
+	})
+	res, b := call(t, srv, http.MethodPost, "/v1/auth/refresh", "", AuthRefreshRequest{RefreshToken: pair.RefreshToken})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("app refresh: status %d; body %s", res.StatusCode, b)
+	}
+	bearer := decode[TokenPair](t, b).AccessToken
+
+	res, b = call(t, srv, http.MethodGet, "/v1/companies", bearer, nil)
+	wantError(t, res, b, http.StatusBadGateway, "procore_unavailable")
+
+	res, b = call(t, srv, http.MethodGet, "/v1/me", bearer, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("me: status %d; body %s", res.StatusCode, b)
+	}
+	if me := decode[User](t, b); me.ReauthRequired {
+		t.Fatalf("me %+v, want reauth_required false after a Procore 500", me)
+	}
+}
+
 func TestMe_AfterProcoreRevocation_401Reauth(t *testing.T) {
 	srv, fp := newTestServer(t)
 	fp.With(func(f *fakeProcore) { f.Companies = []procore.Company{{ID: 7, Name: "Monroe Residential"}} })

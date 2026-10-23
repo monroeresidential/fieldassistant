@@ -66,6 +66,7 @@ type fakeProcore struct {
 	Projects      map[int64][]procore.Project // by company id
 	RFIs          map[int64][]procore.RFI     // by project id
 	RefreshFails  bool                        // /oauth/token refresh_token grant answers 401
+	RefreshErrors bool                        // /oauth/token refresh_token grant answers 500
 	Status429Once bool                        // the next REST request answers 429
 	Forbidden     map[string]bool             // REST paths, e.g. "/projects/5/rfis", that answer 403
 
@@ -114,6 +115,10 @@ func (f *fakeProcore) token(w http.ResponseWriter, r *http.Request) {
 	case "refresh_token":
 		if f.RefreshFails {
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusUnauthorized)
+			return
+		}
+		if f.RefreshErrors {
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		userID = tokenUserID(r.FormValue("refresh_token"))

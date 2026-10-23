@@ -23,12 +23,14 @@ import (
 
 // fakeLogin is an httptest Procore login server that counts refresh grants.
 // It accepts only wantRefresh and answers 401 while revoked is set. When
-// omitRefresh is set its response carries no refresh_token. When gate is
+// omitRefresh is set its response carries no refresh_token. While
+// serverError is set it answers 500. When gate is
 // non-nil each request signals entered and then waits for gate to close.
 type fakeLogin struct {
 	srv         *httptest.Server
 	refreshes   atomic.Int32
 	revoked     atomic.Bool
+	serverError atomic.Bool
 	omitRefresh atomic.Bool
 	wantRefresh string
 	gate        chan struct{}
@@ -50,6 +52,10 @@ func newFakeLogin(t *testing.T, wantRefresh string) *fakeLogin {
 		}
 		// Widen the window in which concurrent callers overlap.
 		time.Sleep(50 * time.Millisecond)
+		if f.serverError.Load() {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		if f.revoked.Load() || r.FormValue("refresh_token") != f.wantRefresh {
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusUnauthorized)
 			return
@@ -243,6 +249,28 @@ func TestTokenSource_RefreshRevoked_MarksReauth(t *testing.T) {
 	// The stored tokens are kept; the next sign-in overwrites them.
 	if _, err := f.st.Q.GetProcoreTokens(ctx, pgUUID(f.userID)); err != nil {
 		t.Fatalf("GetProcoreTokens after revoke: %v", err)
+	}
+}
+
+func TestTokenSource_RefreshServerError_IsUnavailable(t *testing.T) {
+	f := newTokenSourceFixture(t)
+	f.seed(t, 30*time.Second)
+	f.login.serverError.Store(true)
+	ctx := context.Background()
+
+	_, err := f.ts.AccessToken(ctx, f.userID)
+	if !errors.Is(err, procore.ErrUnavailable) {
+		t.Fatalf("AccessToken err = %v, want procore.ErrUnavailable", err)
+	}
+	if errors.Is(err, ErrReauthRequired) {
+		t.Fatalf("AccessToken err = %v also wraps ErrReauthRequired", err)
+	}
+	u, err := f.st.Q.GetUser(ctx, pgUUID(f.userID))
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if u.ReauthRequired {
+		t.Fatal("users.reauth_required = true after a Procore 500, want false")
 	}
 }
 
