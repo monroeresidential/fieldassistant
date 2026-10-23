@@ -72,6 +72,17 @@ func (b *Broker) Start(ctx context.Context, deviceID, codeChallenge string) (aut
 	return b.o.AuthorizeURL(state), state, nil
 }
 
+// Abandon spends state without signing anyone in, for a callback where
+// Procore reported an error such as a declined consent. An unknown or
+// expired state is not an error: there is nothing left to spend.
+func (b *Broker) Abandon(ctx context.Context, state string) error {
+	_, err := b.st.Q.ConsumeAuthState(ctx, state)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("broker: consume state: %w", err)
+	}
+	return nil
+}
+
 // Callback completes Procore consent: it consumes state, trades code for
 // Procore tokens, records the user and their tokens, starts a session on the
 // state's device and returns a one-time code for that session, bound to the

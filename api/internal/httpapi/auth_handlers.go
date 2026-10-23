@@ -54,13 +54,50 @@ func (s *Server) AuthStart(ctx context.Context, req AuthStartRequestObject) (Aut
 	return AuthStart200JSONResponse{AuthorizeUrl: authorizeURL, State: state}, nil
 }
 
+// Callback error codes sent back to the app in the redirect's error parameter.
+const (
+	callbackAccessDenied       = "access_denied"
+	callbackBadRequest         = "bad_request"
+	callbackProcoreUnavailable = "procore_unavailable"
+	callbackInternal           = "internal"
+)
+
+// AuthCallback always redirects to the app, because it runs in the sign-in
+// browser sheet where an error body would be a dead end. Failures carry an
+// error code instead of a one-time code.
 func (s *Server) AuthCallback(ctx context.Context, req AuthCallbackRequestObject) (AuthCallbackResponseObject, error) {
-	code, err := s.deps.Broker.Callback(ctx, req.Params.Code, req.Params.State)
-	if err != nil {
-		return nil, authError(err)
+	log := s.logger()
+	if req.Params.Error != nil {
+		// Any Procore OAuth error ends this sign-in attempt; spend the state.
+		if err := s.deps.Broker.Abandon(ctx, req.Params.State); err != nil {
+			log.WarnContext(ctx, "auth callback: abandon state", "error", err)
+		}
+		log.WarnContext(ctx, "auth callback: procore reported an error", "procore_error", *req.Params.Error)
+		return callbackRedirect("error", callbackAccessDenied), nil
 	}
-	loc := appRedirectBase + "?" + url.Values{"code": {code}}.Encode()
-	return AuthCallback302Response{Headers: AuthCallback302ResponseHeaders{Location: loc}}, nil
+	if req.Params.Code == nil || *req.Params.Code == "" {
+		log.WarnContext(ctx, "auth callback: missing code")
+		return callbackRedirect("error", callbackBadRequest), nil
+	}
+	code, err := s.deps.Broker.Callback(ctx, *req.Params.Code, req.Params.State)
+	if err != nil {
+		reason := callbackInternal
+		switch {
+		case errors.Is(err, auth.ErrBadState):
+			reason = callbackBadRequest
+		case errors.Is(err, auth.ErrProcoreUnavailable):
+			reason = callbackProcoreUnavailable
+		}
+		log.WarnContext(ctx, "auth callback failed", "reason", reason, "error", err)
+		return callbackRedirect("error", reason), nil
+	}
+	return callbackRedirect("code", code), nil
+}
+
+// callbackRedirect sends the browser to the app with one query parameter.
+func callbackRedirect(key, value string) AuthCallback302Response {
+	loc := appRedirectBase + "?" + url.Values{key: {value}}.Encode()
+	return AuthCallback302Response{Headers: AuthCallback302ResponseHeaders{Location: loc}}
 }
 
 func (s *Server) AuthExchange(ctx context.Context, req AuthExchangeRequestObject) (AuthExchangeResponseObject, error) {

@@ -80,7 +80,7 @@ final class AuthServiceTests: XCTestCase {
     func testSignInCallbackWithoutCodeIsInvalidCallback() async throws {
         let store = InMemorySessionStore()
         let transport = StubTransport([APIStub.authStartOK()])
-        let presenter = FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth?error=access_denied")!)
+        let presenter = FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth")!)
         let service = makeService(transport: transport, store: store, presenter: presenter)
 
         do {
@@ -91,6 +91,30 @@ final class AuthServiceTests: XCTestCase {
         }
         XCTAssertNil(try store.load())
         XCTAssertEqual(transport.requests.count, 1)
+    }
+
+    func testSignInCallbackErrorThrowsServerError() async throws {
+        let cases: [(code: String, message: String)] = [
+            ("access_denied", "Procore sign-in was declined."),
+            ("procore_unavailable", "Procore could not be reached. Try again."),
+            ("bad_request", "Sign-in failed. Try again."),
+            ("internal", "Sign-in failed. Try again."),
+        ]
+        for (code, message) in cases {
+            let store = InMemorySessionStore()
+            let transport = StubTransport([APIStub.authStartOK()])
+            let presenter = FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth?error=\(code)")!)
+            let service = makeService(transport: transport, store: store, presenter: presenter)
+
+            do {
+                try await service.signIn()
+                XCTFail("expected server error for \(code)")
+            } catch {
+                XCTAssertEqual(error as? AuthError, .server(code: code, message: message), "unexpected error: \(error)")
+            }
+            XCTAssertNil(try store.load())
+            XCTAssertEqual(transport.requests.map(\.request.path), ["/auth/start"], "no exchange after callback error \(code)")
+        }
     }
 
     func testSignInExchangeErrorIsServerError() async throws {

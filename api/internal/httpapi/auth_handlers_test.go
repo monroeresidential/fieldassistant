@@ -59,17 +59,58 @@ func TestAuthCallback_FullFlow(t *testing.T) {
 	}
 }
 
-func TestAuthCallback_BadState_400(t *testing.T) {
+func TestAuthCallback_BadState_RedirectsWithError(t *testing.T) {
 	srv, fp := newTestServer(t)
 
 	q := url.Values{"code": {testProcoreCode}, "state": {"unknown-state"}}
 	res, b := call(t, srv, http.MethodGet, "/v1/auth/callback?"+q.Encode(), "", nil)
-	wantError(t, res, b, http.StatusBadRequest, "bad_request")
+	wantCallbackRedirect(t, res, b, "fieldassistant://auth?error=bad_request")
 	fp.With(func(f *fakeProcore) {
 		if len(f.Requests) != 0 {
 			t.Fatalf("bad state still reached Procore: %+v", f.Requests)
 		}
 	})
+}
+
+func TestAuthCallback_MissingCode_RedirectsBadRequest(t *testing.T) {
+	srv, _ := newTestServer(t)
+	_, challenge := newVerifier(t)
+	state := startAuth(t, srv, "device-1", challenge)
+
+	q := url.Values{"state": {state}}
+	res, b := call(t, srv, http.MethodGet, "/v1/auth/callback?"+q.Encode(), "", nil)
+	wantCallbackRedirect(t, res, b, "fieldassistant://auth?error=bad_request")
+}
+
+func TestAuthCallback_ConsentDenied_RedirectsAccessDenied(t *testing.T) {
+	srv, fp := newTestServer(t)
+	_, challenge := newVerifier(t)
+	state := startAuth(t, srv, "device-1", challenge)
+
+	q := url.Values{"error": {"access_denied"}, "state": {state}}
+	res, b := call(t, srv, http.MethodGet, "/v1/auth/callback?"+q.Encode(), "", nil)
+	wantCallbackRedirect(t, res, b, "fieldassistant://auth?error=access_denied")
+	fp.With(func(f *fakeProcore) {
+		if len(f.Requests) != 0 {
+			t.Fatalf("denied consent still reached Procore: %+v", f.Requests)
+		}
+	})
+
+	// The denial spent the state, so it cannot complete a sign-in later.
+	q = url.Values{"code": {testProcoreCode}, "state": {state}}
+	res, b = call(t, srv, http.MethodGet, "/v1/auth/callback?"+q.Encode(), "", nil)
+	wantCallbackRedirect(t, res, b, "fieldassistant://auth?error=bad_request")
+}
+
+// wantCallbackRedirect fails unless res is a 302 to exactly location.
+func wantCallbackRedirect(t *testing.T, res *http.Response, body []byte, location string) {
+	t.Helper()
+	if res.StatusCode != http.StatusFound {
+		t.Fatalf("status %d, want 302; body %s", res.StatusCode, body)
+	}
+	if got := res.Header.Get("Location"); got != location {
+		t.Fatalf("Location %q, want %q", got, location)
+	}
 }
 
 func TestAuthExchange_WrongDevice_400(t *testing.T) {
@@ -145,7 +186,7 @@ func TestProtectedRoute_NoBearer_401(t *testing.T) {
 	wantError(t, res, b, http.StatusUnauthorized, "unauthorized")
 }
 
-func TestAuthCallback_ProcoreFailure_502(t *testing.T) {
+func TestAuthCallback_ProcoreFailure_RedirectsUnavailable(t *testing.T) {
 	srv, _ := newTestServer(t)
 	_, challenge := newVerifier(t)
 	state := startAuth(t, srv, "device-1", challenge)
@@ -153,7 +194,7 @@ func TestAuthCallback_ProcoreFailure_502(t *testing.T) {
 	// The fake rejects authorization codes for users it does not know.
 	q := url.Values{"code": {"999"}, "state": {state}}
 	res, b := call(t, srv, http.MethodGet, "/v1/auth/callback?"+q.Encode(), "", nil)
-	wantError(t, res, b, http.StatusBadGateway, "procore_unavailable")
+	wantCallbackRedirect(t, res, b, "fieldassistant://auth?error=procore_unavailable")
 }
 
 func TestAuthExchange_WrongVerifier_400(t *testing.T) {

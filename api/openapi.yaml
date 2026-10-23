@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Field Assistant API
-  version: 1.2.0
+  version: 1.3.0
 servers:
   - url: /v1
 security:
@@ -32,10 +32,25 @@ paths:
     get:
       operationId: authCallback
       security: []
+      description: >-
+        Procore redirects here after the user consents or declines. The
+        response is always a 302 back to the app: `Location` is either
+        `fieldassistant://auth?code=<one-time code>` on success or
+        `fieldassistant://auth?error=<code>` on failure, where `<code>` is
+        one of `access_denied` (the user declined in Procore), `bad_request`
+        (missing code, or unknown or expired state), `procore_unavailable`
+        (the Procore token exchange or user lookup failed) or `internal`.
       parameters:
         - name: code
           in: query
-          required: true
+          required: false
+          description: Procore authorization code. Absent when Procore reports an error.
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          description: Procore OAuth error, such as `access_denied` when the user declines consent.
           schema:
             type: string
         - name: state
@@ -45,7 +60,9 @@ paths:
             type: string
       responses:
         '302':
-          description: Redirect to the app with a one-time code.
+          description: >-
+            Redirect to the app with either a one-time `code` or an `error`
+            query parameter (see the operation description).
           headers:
             Location:
               required: true

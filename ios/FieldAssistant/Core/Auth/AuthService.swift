@@ -13,7 +13,7 @@ protocol WebAuthPresenter: Sendable {
 enum AuthError: Error, Equatable {
     /// The user closed the login sheet.
     case cancelled
-    /// The callback URL carried no one-time `code`.
+    /// The callback URL carried neither a one-time `code` nor an `error`.
     case invalidCallback
     /// The API answered with an error (or an unusable response).
     case server(code: String, message: String)
@@ -62,10 +62,11 @@ actor AuthService {
         } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
             throw AuthError.cancelled
         }
-        guard let code = URLComponents(url: callback, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name == "code" })?.value,
-            !code.isEmpty
-        else {
+        let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if let errorCode = items.first(where: { $0.name == "error" })?.value {
+            throw Self.callbackError(errorCode)
+        }
+        guard let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty else {
             throw AuthError.invalidCallback
         }
 
@@ -113,6 +114,21 @@ actor AuthService {
             refreshToken: tokens.refresh_token,
             accessExpiresAt: Date().addingTimeInterval(TimeInterval(tokens.expires_in))
         )
+    }
+
+    /// Maps the callback's `error` value to a user-facing failure. The API sends
+    /// `access_denied`, `bad_request`, `procore_unavailable` or `internal`.
+    static func callbackError(_ code: String) -> AuthError {
+        let message: String
+        switch code {
+        case "access_denied":
+            message = "Procore sign-in was declined."
+        case "procore_unavailable":
+            message = "Procore could not be reached. Try again."
+        default:
+            message = "Sign-in failed. Try again."
+        }
+        return .server(code: code, message: message)
     }
 
     private static func serverError(_ response: Components.Responses._Error) throws -> AuthError {
