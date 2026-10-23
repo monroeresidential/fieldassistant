@@ -2,14 +2,81 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Current state
+## Status
 
-Planning stage (Oct 2026). No application code yet. Two documents govern the work:
+Phase 1 is implemented on branch `phase-1`: Go backend plus iOS sign-in, company/project picker and RFI list. Next: Phase 1 sandbox verification, then milestone 2 (RFI extraction) per `docs/superpowers/plans/2026-10-22-roadmap.md`.
+
+Governing documents:
 
 - `procore-field-assistant-spec.md`: the full project spec and target architecture.
 - `docs/superpowers/specs/2026-10-22-v1-decisions.md`: v1 amendments for a single company with tens of users. Where it conflicts with the spec, it wins.
 
-Implementation plans live in `docs/superpowers/plans/`. Update this file with real build, test and codegen commands as each folder gains code.
+Implementation plans live in `docs/superpowers/plans/`.
+
+## Commands
+
+```
+make db-up / make db-down      # local Postgres in Docker (api/docker-compose.yml)
+make run                       # API server; needs api/.env (copy api/.env.example)
+make test                      # go test ./... (DB tests skip without TEST_DATABASE_URL)
+make generate                  # oapi-codegen + sqlc; commit the output
+make sync-contract             # copy api/openapi.yaml into the iOS package
+make check-contract            # fail if the iOS copy is stale (CI runs this)
+make ios-project               # xcodegen + install ios/Package.resolved
+```
+
+DB-backed Go tests (needs `make db-up`):
+
+```
+cd api && TEST_DATABASE_URL='postgres://fa:fa@localhost:5432/fieldassistant_test?sslmode=disable' go test ./...
+```
+
+Single Go test: `cd api && go test ./internal/<pkg>/ -run <Name>`
+
+iOS tests (run `make ios-project` first; CI uses `iPhone 16`). Do not add `-quiet` if you want the `** TEST SUCCEEDED **` line; the exit code is the pass signal either way:
+
+```
+cd ios && xcodebuild test -scheme FieldAssistant -destination 'platform=iOS Simulator,name=iPhone 17' -skipPackagePluginValidation -onlyUsePackageVersionsFromResolvedFile
+```
+
+Single iOS test class: add `-only-testing:FieldAssistantTests/<Class>`.
+
+Fastlane (from `ios/`, via `gem install fastlane`, `brew install fastlane` or `bundle exec`):
+
+- `fastlane test`: regenerates the project and runs the unit tests on iPhone 17.
+- `fastlane beta`: builds the Prod configuration and uploads to TestFlight. Needs `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 App Store Connect key) in the environment, and the Team ID set in `ios/project.yml`.
+
+Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/workflows/deploy-api.yml`.
+
+## Code map
+
+| Path | Role |
+| --- | --- |
+| `api/openapi.yaml` | The contract. Source of the Go server interface and the Swift client. |
+| `api/internal/config` | Environment-driven config loading and validation. |
+| `api/internal/httpapi` | chi router, generated server glue, handlers, middleware, error mapping. |
+| `api/internal/auth` | Procore OAuth broker, session JWTs, refresh-token vault, company cache. |
+| `api/internal/procore` | Procore HTTP client (rate limits, pagination, company header) and OAuth calls. |
+| `api/internal/store` | Postgres access: migrations, sqlc queries and generated code in `db/`. |
+| `api/internal/store/storetest` | Shared test helper: migrates and truncates the test database. |
+| `ios/FieldAssistant/App` | App entry, root view, app state, build-time config. |
+| `ios/FieldAssistant/Core/Auth` | Sign-in flow, Keychain session store, token refresh. |
+| `ios/FieldAssistant/Core/Network` | API client wrapper, auth middleware, failure mapping. |
+| `ios/FieldAssistant/Core/Scope` | Company and project selection and its persistence. |
+| `ios/FieldAssistant/Features/RFI` | RFI list model and view. |
+| `ios/Packages/FieldAssistantAPI` | Generated Swift client package; holds a synced copy of the contract. |
+| `deploy/` | Droplet Compose file, Caddyfile, backup script, runbook. |
+| `.github/workflows/` | `api.yml` and `ios.yml` (CI), `deploy-api.yml` (droplet deploy). |
+
+## Conventions
+
+- Contract changes bump `info.version` in `api/openapi.yaml` and require `make generate` and `make sync-contract` in the same commit.
+- Generated code is committed.
+- Migration `000001` may be edited until the first deploy. After editing, recreate local DBs: `docker compose -f api/docker-compose.yml down -v && make db-up`.
+- DB tests serialize through an advisory lock in `storetest`; do not bypass it.
+- The iOS `.xcodeproj` is generated and never committed. Swift package pins live in `ios/Package.resolved`.
+- Error bodies are `{code,message}` with a fixed code set: `bad_request`, `unauthorized`, `reauth_required`, `forbidden_scope`, `procore_permission_denied`, `procore_unavailable`, `internal`.
+- On iOS only `AuthRefreshError.rejected` signs the user out; other refresh failures keep the session.
 
 ## Repository layout
 
@@ -59,4 +126,4 @@ Decided in the decisions doc: no OpenTelemetry or Prometheus (slog + `/healthz`)
 
 ## Open decisions
 
-Still unresolved: Spanish dictation, app name and bundle identifier, who pilots the first TestFlight build. Do not silently resolve these in code; surface them.
+Decided: the production domain is `fieldassistant.tools` (API at `api.fieldassistant.tools`). Still unresolved: Spanish dictation, the bundle identifier and Apple Team ID (`com.monroeresidential.fieldassistant` is a placeholder), and who pilots the first TestFlight build. Do not silently resolve these in code; surface them.

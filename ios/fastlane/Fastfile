@@ -1,0 +1,37 @@
+default_platform(:ios)
+
+SPM_FLAGS = "-skipPackagePluginValidation -onlyUsePackageVersionsFromResolvedFile"
+
+platform :ios do
+  desc "Run the unit tests on the iPhone 17 simulator"
+  lane :test do
+    sh("make", "-C", "..", "ios-project")
+    run_tests(
+      scheme: "FieldAssistant",
+      devices: ["iPhone 17"],
+      xcargs: SPM_FLAGS
+    )
+  end
+
+  desc "Build the Prod configuration and upload it to TestFlight"
+  lane :beta do
+    # Regenerates the Xcode project with the pinned Swift packages.
+    sh("make", "-C", "..", "ios-project")
+
+    app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_CONTENT"),
+      is_key_content_base64: true
+    )
+
+    build_app(
+      scheme: "FieldAssistant",
+      configuration: "Prod",
+      export_method: "app-store",
+      xcargs: SPM_FLAGS
+    )
+
+    upload_to_testflight(skip_waiting_for_build_processing: true)
+  end
+end
