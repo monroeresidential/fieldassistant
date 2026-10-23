@@ -53,7 +53,7 @@ Three repos on GitHub, connected by one OpenAPI contract that lives in the backe
 **Adding a feature touches both repos in a fixed order:**
 
 1. Backend: add the feature's schemas and endpoints to `openapi.yaml`; bump the minor version.
-2. Backend: implement the feature module (`internal/features/<name>`): Procore mapping, LLM extraction schema, submit job. Merge, tag, deploy.
+2. Backend: implement the feature module (`internal/features/<name>`): Procore mapping, LLM extraction schema, submit job. Merge, tag, deploy. (Superseded by the v1 decisions doc: one repo, and deploys are branch-based, `develop` to dev and `main` to prod via PR.)
 3. iOS and web: bump the API package to the new tag; regenerate the clients.
 4. iOS and web: add the feature module (`Features/<Name>` / `src/features/<name>`): capture config, review screen, field pickers. Ship to TestFlight and Cloudflare Pages.
 
@@ -356,7 +356,7 @@ One DigitalOcean droplet runs the backend; Cloudflare fronts everything; GitHub 
 | Attachments | DigitalOcean Spaces (S3-compatible) | Lifecycle rule deletes objects 30 days after the Procore upload succeeds |
 | Web app | Cloudflare Pages | PR previews; production on `main`; `app.<domain>` |
 | DNS, TLS, WAF | Cloudflare | API at `api.<domain>` proxied through Cloudflare with rate limiting; Cloudflare Access can gate the web app to company emails before Marketplace use |
-| Code, CI, releases | GitHub (three repos) | Actions build and test; backend image pushed to GHCR and deployed by SSH or `docker compose pull` on tag; iOS via Xcode Cloud or Actions + Fastlane |
+| Code, CI, releases | GitHub (three repos) | Actions build and test; backend image pushed to GHCR and deployed by SSH or `docker compose pull` on tag (superseded by the v1 decisions doc: deploys are branch-based, `develop` to dev and `main` to prod via PR); iOS via Xcode Cloud or Actions + Fastlane |
 | Secrets | Droplet environment via `doppler` or `sops`-encrypted file in the repo; Cloudflare Pages env vars; Xcode Cloud secrets | Procore `client_secret` and LLM key never in GitHub |
 | Monitoring | Uptime check on `/healthz`; logs shipped to a hosted Grafana/Loki or DigitalOcean monitoring; alerts to email/Slack | Alert on job failures and Procore 401/403 spikes |
 
