@@ -173,8 +173,9 @@ func NewLookups(st *store.Store, pc ProcoreLookups, tokens AccessTokenSource, tt
 // errors always surface.
 //
 // Otherwise the list is fetched from Procore with the user's token and
-// stored. A 403 on the list is remembered for that user only and returned as
-// an unavailable set; the shared row is left alone. Token errors surface.
+// stored. A 403 on the list, or a 404 (the kind's tool is off for the
+// project), is remembered for that user only and returned as an unavailable
+// set; the shared row is left alone. Token errors surface.
 // Any other failure serves the stale row only to a user verified before for
 // that kind, and returns the error to everyone else.
 func (l *Lookups) Get(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kind LookupKind, force bool) (LookupSet, error) {
@@ -216,7 +217,9 @@ func (l *Lookups) Get(ctx context.Context, userID uuid.UUID, companyID, projectI
 	case fetchErr == nil:
 		l.markVerified(userID, companyID, projectID, kind)
 		return l.save(ctx, companyID, projectID, kind, rows, false, "")
-	case errors.Is(fetchErr, procore.ErrPermissionDenied):
+	case isDenial(fetchErr):
+		// A 404 on the list means the kind's tool is off for the project;
+		// like a 403 it is remembered for this user only.
 		return l.deny(userID, companyID, projectID, kind, fetchErr), nil
 	case errors.Is(fetchErr, auth.ErrReauthRequired), errors.Is(fetchErr, procore.ErrUnauthorized):
 		return LookupSet{}, fetchErr
@@ -458,10 +461,18 @@ func (l *Lookups) fetch(ctx context.Context, userID uuid.UUID, companyID, projec
 	return rowsFor(kind, items), nil
 }
 
+// toolOffReason is the reason given for a kind whose list answers 404: its
+// Procore tool is not enabled on the project.
+const toolOffReason = "tool not enabled on this project"
+
 // denialReason is the Procore message behind a 403, falling back to the full
-// error text.
+// error text. A 404 gets toolOffReason, since Procore's body is empty or
+// says only "not found".
 func denialReason(err error) string {
 	var api *procore.APIError
+	if !errors.Is(err, procore.ErrPermissionDenied) && errors.As(err, &api) && api.Status == http.StatusNotFound {
+		return toolOffReason
+	}
 	if errors.As(err, &api) && api.Body != "" {
 		return api.Body
 	}
