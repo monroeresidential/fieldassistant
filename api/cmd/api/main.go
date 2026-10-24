@@ -136,7 +136,7 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	extractor := llm.NewClient(cfg.LLM.APIKey, cfg.LLM.ExtractModel, "", cfg.LLM.Timeout)
 	lookups := pipeline.NewLookups(st, pc, tokens, lookupCacheTTL, time.Now, logger)
 	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens,
-		map[string]pipeline.Feature{"rfi": rfi.New()}, cfg.LLM.ExtractModel, time.Now, logger)
+		map[string]pipeline.Feature{"rfi": rfi.New()}, cfg.LLM.ExtractModel, cfg.LLM.Timeout, time.Now, logger)
 	jobsClient, err := jobs.NewClient(st.Pool, drafts, logger)
 	if err != nil {
 		st.Close()

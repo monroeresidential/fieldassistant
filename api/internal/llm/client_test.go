@@ -422,6 +422,40 @@ func TestClient_Extract_EmptyHandlerOutput_SendsEmptyArray(t *testing.T) {
 	}
 }
 
+// The timeout bounds each request: several requests that together take
+// longer than it, each well under it, complete.
+func TestClient_Extract_TimeoutIsPerRequest(t *testing.T) {
+	f := newFakeAnthropic(t,
+		toolUseResponse("toolu_1", "list_users", `{"query":"ben"}`),
+		toolUseResponse("toolu_2", "list_users", `{"query":"west"}`),
+		toolUseResponse("toolu_3", "submit_draft", `{"subject":"x"}`),
+	)
+	f.mu.Lock()
+	f.delay = 150 * time.Millisecond
+	f.mu.Unlock()
+	handle := func(context.Context, ToolCall) (json.RawMessage, error) { return json.RawMessage(`[]`), nil }
+	res, err := newTestClient(f, 300*time.Millisecond).Extract(context.Background(), testRequest(), handle)
+	if err != nil {
+		t.Fatalf("Extract = %v, want three 150 ms requests to fit a 300 ms per-request timeout", err)
+	}
+	if string(res.Final) != `{"subject":"x"}` {
+		t.Errorf("final = %s", res.Final)
+	}
+}
+
+// The whole loop is bounded at timeout * (MaxToolCalls + 2): every allowed
+// lookup turn, the forced final turn and one spare.
+func TestClient_Extract_LoopBoundIsMultiple(t *testing.T) {
+	c := NewClient("k", "m", "", 20*time.Second)
+	if got := c.loopTimeout(6); got != 160*time.Second {
+		t.Errorf("loopTimeout(6) = %s, want 160s", got)
+	}
+	if got := NewClient("k", "m", "", 0).loopTimeout(6); got != 0 {
+		t.Errorf("loopTimeout with no timeout = %s, want 0 (none)", got)
+	}
+}
+
+// A single request slower than the timeout fails the extraction.
 func TestClient_Extract_Timeout(t *testing.T) {
 	f := newFakeAnthropic(t, toolUseResponse("toolu_1", "submit_draft", `{"subject":"x"}`))
 	f.mu.Lock()

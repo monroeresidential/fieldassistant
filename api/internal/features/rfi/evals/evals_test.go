@@ -59,7 +59,7 @@ func TestEvals(t *testing.T) {
 	now := func() time.Time { return clock }
 	lookups := pipeline.NewLookups(st, fp, evalTokens{}, lookupTTL, now, nil)
 	extractor := llm.NewClient(os.Getenv("ANTHROPIC_API_KEY"), model, "", extractTimeout)
-	drafts := pipeline.NewDrafts(st, lookups, extractor, nil, evalTokens{}, map[string]pipeline.Feature{feature.Name(): feature}, model, now, nil)
+	drafts := pipeline.NewDrafts(st, lookups, extractor, nil, evalTokens{}, map[string]pipeline.Feature{feature.Name(): feature}, model, extractTimeout, now, nil)
 
 	type row struct {
 		name string

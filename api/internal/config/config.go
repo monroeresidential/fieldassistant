@@ -32,7 +32,8 @@ type ProcoreConfig struct {
 type LLMConfig struct {
 	APIKey       string
 	ExtractModel string
-	Timeout      time.Duration
+	// Timeout bounds each LLM API request (LLM_TIMEOUT_SECONDS).
+	Timeout time.Duration
 }
 
 // Config is the validated service configuration.

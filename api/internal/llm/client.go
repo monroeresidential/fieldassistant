@@ -28,7 +28,9 @@ type Client struct {
 var _ Extractor = (*Client)(nil)
 
 // NewClient returns a Client for model. An empty baseURL means the SDK
-// default. timeout bounds each Extract call as a whole; zero means none.
+// default. timeout bounds each Messages API request (each retry attempt
+// gets its own), and an Extract call as a whole is bounded at a multiple of
+// it (see loopTimeout); zero means no timeout.
 func NewClient(apiKey, model, baseURL string, timeout time.Duration) *Client {
 	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
 	if baseURL != "" {
@@ -49,9 +51,9 @@ func NewClient(apiKey, model, baseURL string, timeout time.Duration) *Client {
 func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (res Result, err error) {
 	start := time.Now()
 	defer func() { res.Duration = time.Since(start) }()
-	if c.timeout > 0 {
+	if d := c.loopTimeout(req.MaxToolCalls); d > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		ctx, cancel = context.WithTimeout(ctx, d)
 		defer cancel()
 	}
 
@@ -83,7 +85,11 @@ func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (
 			params.ToolChoice = anthropic.ToolChoiceUnionParam{OfAny: &anthropic.ToolChoiceAnyParam{}}
 		}
 
-		msg, err := c.api.Messages.New(ctx, params, option.WithMaxRetries(c.maxRetries))
+		opts := []option.RequestOption{option.WithMaxRetries(c.maxRetries)}
+		if c.timeout > 0 {
+			opts = append(opts, option.WithRequestTimeout(c.timeout))
+		}
+		msg, err := c.api.Messages.New(ctx, params, opts...)
 		if err != nil {
 			return res, fmt.Errorf("llm: messages call: %w", err)
 		}
@@ -147,6 +153,22 @@ func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (
 			return res, err
 		}
 	}
+}
+
+// LoopTimeout is how long an Extract call with this per-request timeout and
+// tool budget may take: the timeout times the most requests one call can
+// make (one per allowed lookup turn, the forced final turn, and one spare).
+// A timeout of zero or less means none, and LoopTimeout returns zero.
+func LoopTimeout(timeout time.Duration, maxToolCalls int) time.Duration {
+	if timeout <= 0 {
+		return 0
+	}
+	return timeout * time.Duration(max(maxToolCalls, 0)+2)
+}
+
+// loopTimeout bounds a whole Extract call; zero means none.
+func (c *Client) loopTimeout(maxToolCalls int) time.Duration {
+	return LoopTimeout(c.timeout, maxToolCalls)
 }
 
 // toolParams converts the request tools to SDK params and returns the final

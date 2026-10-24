@@ -121,7 +121,7 @@ func newDraftsEnv(t *testing.T) *draftsEnv {
 	}
 	fp.Project = procore.ProjectDetail{ID: testProject, Name: "Tower", DisplayName: "Tower One", TimeZone: "Central Time (US & Canada)"}
 	scripted := &llmtest.Scripted{Model: "claude-test-model"}
-	d := NewDrafts(st, l, scripted, fp, tokens, map[string]Feature{"rfi": draftsFeature{}}, "claude-configured", clock.Now, nil)
+	d := NewDrafts(st, l, scripted, fp, tokens, map[string]Feature{"rfi": draftsFeature{}}, "claude-configured", 20*time.Second, clock.Now, nil)
 	return &draftsEnv{drafts: d, llm: scripted, fp: fp, st: st, clock: clock, tokens: tokens, user: newDBUser(t, st, 42, "Pat Field")}
 }
 
@@ -637,6 +637,88 @@ func TestRailsZone_Central(t *testing.T) {
 	}
 	if got := RailsZone("Mars Standard Time"); got != time.UTC {
 		t.Errorf("unknown = %s, want UTC", got)
+	}
+}
+
+// gatedExtractor signals entered when an extraction starts and waits for
+// release before running inner; a cancelled context ends the wait with
+// ctx.Err(), as the real client would.
+type gatedExtractor struct {
+	inner   llm.Extractor
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedExtractor) Extract(ctx context.Context, req llm.Request, h llm.ToolHandler) (llm.Result, error) {
+	g.entered <- struct{}{}
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return llm.Result{}, ctx.Err()
+	}
+	return g.inner.Extract(ctx, req, h)
+}
+
+// A client retry that joins an extraction still gets the draft when the
+// request that started the extraction is cancelled.
+func TestCreate_FirstCallerCancelled_SecondStillGetsDraft(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.llm.Steps = []llmtest.Step{{Final: twistedFinal}}
+	gate := &gatedExtractor{inner: e.llm, entered: make(chan struct{}, 4), release: make(chan struct{})}
+	e.drafts.extractor = gate
+	id := uuid.New()
+
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	go func() {
+		_, err := e.drafts.Create(firstCtx, e.input(id))
+		first <- err
+	}()
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("extraction did not start")
+	}
+	second := make(chan struct {
+		d   Draft
+		err error
+	}, 1)
+	go func() {
+		d, err := e.drafts.Create(context.Background(), e.input(id))
+		second <- struct {
+			d   Draft
+			err error
+		}{d, err}
+	}()
+	time.Sleep(100 * time.Millisecond) // let the retry join the flight
+
+	cancelFirst()
+	select {
+	case err := <-first:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("cancelled caller = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("cancelled caller still waiting on the extraction")
+	}
+	close(gate.release)
+
+	select {
+	case r := <-second:
+		if r.err != nil {
+			t.Fatalf("joined caller = %v, want the draft", r.err)
+		}
+		if r.d.ID != id || r.d.Status != StatusExtracted {
+			t.Errorf("joined caller draft = %+v", r.d)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("joined caller did not finish")
+	}
+	if n := len(e.llm.Requests); n != 1 {
+		t.Errorf("extractions = %d, want 1", n)
+	}
+	if got := e.mustGet(t, id); got.ID != id {
+		t.Errorf("stored draft = %+v", got)
 	}
 }
 

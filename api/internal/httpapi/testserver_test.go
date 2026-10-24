@@ -376,7 +376,7 @@ func startTestServer(t *testing.T, scheme string) testServer {
 	lookups := pipeline.NewLookups(st, pc, tokens, 10*time.Minute, clock.now, logger)
 	scripted := &llmtest.Scripted{Model: "claude-test-model"}
 	features := map[string]pipeline.Feature{"rfi": rfi.New()}
-	drafts := pipeline.NewDrafts(st, lookups, scripted, pc, tokens, features, "claude-configured", clock.now, logger)
+	drafts := pipeline.NewDrafts(st, lookups, scripted, pc, tokens, features, "claude-configured", 20*time.Second, clock.now, logger)
 	// The River client works submit jobs for the whole test; it stops
 	// before the database lock is released.
 	riverClient, err := jobs.NewClient(st.Pool, drafts, logger)

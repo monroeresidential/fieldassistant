@@ -110,9 +110,11 @@ type Drafts struct {
 	tokens    AccessTokenSource
 	features  map[string]Feature
 	model     string
-	now       func() time.Time
-	log       *slog.Logger
-	flight    singleflight.Group
+	// llmTimeout is the extractor's per-request timeout; zero means none.
+	llmTimeout time.Duration
+	now        func() time.Time
+	log        *slog.Logger
+	flight     singleflight.Group
 
 	// beforeMarkSubmitting, when set by a test, runs in Submit between
 	// validation and the transition to submitting.
@@ -120,26 +122,49 @@ type Drafts struct {
 }
 
 // NewDrafts builds a Drafts. pc and tokens post submitted drafts to Procore
-// as the draft's user. model is recorded when the extractor reports none. A
-// nil logger means slog.Default().
-func NewDrafts(st *store.Store, lookups *Lookups, extractor llm.Extractor, pc ProcoreRFIs, tokens AccessTokenSource, features map[string]Feature, model string, now func() time.Time, logger *slog.Logger) *Drafts {
+// as the draft's user. model is recorded when the extractor reports none.
+// llmTimeout is the extractor's per-request timeout (zero for none); it
+// bounds a detached extraction (see Create). A nil logger means
+// slog.Default().
+func NewDrafts(st *store.Store, lookups *Lookups, extractor llm.Extractor, pc ProcoreRFIs, tokens AccessTokenSource, features map[string]Feature, model string, llmTimeout time.Duration, now func() time.Time, logger *slog.Logger) *Drafts {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Drafts{st: st, lookups: lookups, extractor: extractor, procore: pc, tokens: tokens, features: features, model: model, now: now, log: logger}
+	return &Drafts{st: st, lookups: lookups, extractor: extractor, procore: pc, tokens: tokens, features: features, model: model, llmTimeout: llmTimeout, now: now, log: logger}
 }
 
+// createSlack is the time a detached extraction gets beyond the
+// extractor's own bound, for the lookups and the store writes.
+const createSlack = 30 * time.Second
+
 // Create returns the draft with in.ID, extracting it first if it does not
-// exist. Concurrent calls with one ID share a single extraction. A draft with
-// that ID owned by another user or company is reported as ErrNotFound.
+// exist. Concurrent calls with one ID share a single extraction. The
+// extraction runs detached from any one caller's context, bounded by the
+// extractor's loop timeout plus createSlack, so a retry that joined it gets
+// the draft even when the request that started it is cancelled; a cancelled
+// caller returns its context's error at once and the extraction goes on. A
+// draft with that ID owned by another user or company is reported as
+// ErrNotFound.
 func (d *Drafts) Create(ctx context.Context, in CreateInput) (Draft, error) {
-	v, err, _ := d.flight.Do(in.ID.String(), func() (any, error) {
-		return d.create(ctx, in)
+	ch := d.flight.DoChan(in.ID.String(), func() (any, error) {
+		fctx := context.WithoutCancel(ctx)
+		if bound := llm.LoopTimeout(d.llmTimeout, maxToolCalls); bound > 0 {
+			var cancel context.CancelFunc
+			fctx, cancel = context.WithTimeout(fctx, bound+createSlack)
+			defer cancel()
+		}
+		return d.create(fctx, in)
 	})
-	if err != nil {
-		return Draft{}, err
+	var r singleflight.Result
+	select {
+	case r = <-ch:
+	case <-ctx.Done():
+		return Draft{}, ctx.Err()
 	}
-	dr := v.(Draft)
+	if r.Err != nil {
+		return Draft{}, r.Err
+	}
+	dr := r.Val.(Draft)
 	if dr.UserID != in.UserID || dr.CompanyID != in.CompanyID {
 		return Draft{}, ErrNotFound
 	}
