@@ -23,6 +23,22 @@ update drafts set status = $2, updated_at = now() where id = $1;
 -- name: SetDraftJob :exec
 update drafts set job_id = $2, updated_at = now() where id = $1;
 
+-- name: ReplaceDraftJob :execrows
+-- Points a submitting draft at a new job, but only while it still holds the
+-- job the caller found finished ($2, null for none). Zero rows means
+-- another submit replaced it first or the draft left submitting.
+update drafts
+set job_id = sqlc.arg(new_job_id), updated_at = now()
+where id = sqlc.arg(id)
+  and status = 'submitting'
+  and job_id is not distinct from sqlc.narg(old_job_id);
+
+-- name: OtherDraftByProcoreRecord :one
+-- A draft other than $4 that already stores Procore record $3 in the project.
+select id from drafts
+where company_id = $1 and project_id = $2 and procore_record_id = $3 and id <> $4
+limit 1;
+
 -- name: SetDraftSubmitted :exec
 update drafts
 set status = 'submitted',

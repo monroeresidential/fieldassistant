@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -637,6 +638,30 @@ func TestClient_CreateRFI_422_IsValidationError(t *testing.T) {
 	}
 	if got := ve.Fields["rfi_manager_id"]; len(got) != 1 || got[0] != "is required" {
 		t.Errorf("rfi_manager_id = %v", got)
+	}
+}
+
+// Nested error objects flatten to dotted keys; other leaf shapes keep their
+// raw JSON as the message rather than losing the 422's detail.
+func TestClient_CreateRFI_NestedErrors_Flattened(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 422, `{"errors":{"question":{"body":["can't be blank"]},"rfi":{"assignees":{"0":"is invalid"}},"subject":"is too long","count":3}}`)
+		},
+	})
+	_, err := newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, RFICreate{Subject: "S"})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want *ValidationError", err)
+	}
+	want := map[string][]string{
+		"question.body":   {"can't be blank"},
+		"rfi.assignees.0": {"is invalid"},
+		"subject":         {"is too long"},
+		"count":           {"3"},
+	}
+	if !reflect.DeepEqual(ve.Fields, want) {
+		t.Errorf("fields = %v, want %v", ve.Fields, want)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 	"github.com/monroeresidential/fieldassistant/api/internal/llm/llmtest"
@@ -38,15 +39,22 @@ func (e *draftsEnv) submittable(t *testing.T, final string) Draft {
 var pat = procore.Person{ID: 42, Name: "Pat Field"}
 
 // enqueuer is a fake job queue that hands out job IDs and records drafts.
+// Jobs in finished count as done; every other job is still live. A job it
+// hands out exists even if the caller's transaction rolls back.
 type enqueuer struct {
-	next   int64
-	drafts []uuid.UUID
+	next     int64
+	drafts   []uuid.UUID
+	finished map[int64]bool
 }
 
-func (q *enqueuer) enqueue(_ context.Context, id uuid.UUID) (int64, error) {
+func (q *enqueuer) EnqueueTx(_ context.Context, _ pgx.Tx, id uuid.UUID) (int64, error) {
 	q.next++
 	q.drafts = append(q.drafts, id)
 	return q.next + 900, nil
+}
+
+func (q *enqueuer) JobFinished(_ context.Context, jobID int64) (bool, error) {
+	return q.finished[jobID], nil
 }
 
 func (e *draftsEnv) mustGet(t *testing.T, id uuid.UUID) Draft {
@@ -61,7 +69,7 @@ func (e *draftsEnv) mustGet(t *testing.T, id uuid.UUID) Draft {
 // submit runs Submit for d with a throwaway queue and fails on error.
 func (e *draftsEnv) submit(t *testing.T, d Draft) {
 	t.Helper()
-	if _, err := e.drafts.Submit(context.Background(), e.user, d.ID, (&enqueuer{}).enqueue); err != nil {
+	if _, err := e.drafts.Submit(context.Background(), e.user, d.ID, &enqueuer{}); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
 }
@@ -97,7 +105,7 @@ func TestRunSubmit_PostsAndStoresResult(t *testing.T) {
 	q := &enqueuer{}
 	ctx := context.Background()
 
-	out, err := e.drafts.Submit(ctx, e.user, d.ID, q.enqueue)
+	out, err := e.drafts.Submit(ctx, e.user, d.ID, q)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -199,11 +207,11 @@ func TestSubmit_Twice_PostsOnce(t *testing.T) {
 	q := &enqueuer{}
 	ctx := context.Background()
 
-	if _, err := e.drafts.Submit(ctx, e.user, d.ID, q.enqueue); err != nil {
+	if _, err := e.drafts.Submit(ctx, e.user, d.ID, q); err != nil {
 		t.Fatalf("first Submit: %v", err)
 	}
 	// A second tap while the job is queued returns the same job.
-	out, err := e.drafts.Submit(ctx, e.user, d.ID, q.enqueue)
+	out, err := e.drafts.Submit(ctx, e.user, d.ID, q)
 	if err != nil || out.JobID != 901 || out.AlreadySubmitted {
 		t.Fatalf("Submit while submitting = %+v, %v", out, err)
 	}
@@ -214,7 +222,7 @@ func TestSubmit_Twice_PostsOnce(t *testing.T) {
 	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
 		t.Fatalf("second RunSubmit: %v", err)
 	}
-	out, err = e.drafts.Submit(ctx, e.user, d.ID, q.enqueue)
+	out, err = e.drafts.Submit(ctx, e.user, d.ID, q)
 	if err != nil {
 		t.Fatalf("third Submit: %v", err)
 	}
@@ -274,6 +282,65 @@ func TestRunSubmit_422_FlagsFields(t *testing.T) {
 	ev := lastAudit(t, e, d.ID, AuditFailed)
 	if !strings.Contains(string(ev.ProcoreResponse), "too short") {
 		t.Errorf("failed audit response = %s", ev.ProcoreResponse)
+	}
+}
+
+// A 4xx that is not a parseable 422 (a 400, or a 422 in another shape) is
+// still a refusal: the draft fails at once with Procore's message on _form,
+// is not retried, and the RFI list is not read.
+func TestRunSubmit_400_FailsDefinitively(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"400", 400, `{"error":"param is missing: rfi"}`, `Procore refused the RFI (HTTP 400): {"error":"param is missing: rfi"}`},
+		{"422 list", 422, `{"errors":["Subject is too long"]}`, `Procore refused the RFI (HTTP 422): {"errors":["Subject is too long"]}`},
+		{"404 empty", 404, "", "Procore refused the RFI (HTTP 404)."},
+		{"long body", 400, long, "Procore refused the RFI (HTTP 400): " + long[:200] + "…"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newDraftsEnv(t)
+			e.fp.Err["CreateRFI"] = fmt.Errorf("post rfi: %w", &procore.APIError{Status: tc.status, Body: tc.body})
+			d := e.submittable(t, twistedFinal)
+			e.submit(t, d)
+
+			if err := e.drafts.RunSubmit(context.Background(), d.ID); err != nil {
+				t.Fatalf("RunSubmit = %v, want nil (not retried)", err)
+			}
+			got := e.mustGet(t, d.ID)
+			if got.Status != StatusFailed || got.Error == nil || got.Error.Code != CodeProcoreValidation {
+				t.Fatalf("draft = status %q error %+v", got.Status, got.Error)
+			}
+			if len(got.Unresolved) != 1 || got.Unresolved[0].Field != FormField || got.Unresolved[0].Message != tc.want {
+				t.Errorf("unresolved = %+v, want _form %q", got.Unresolved, tc.want)
+			}
+			if n := e.fp.CallCount("ListRFIs"); n != 0 {
+				t.Errorf("ListRFIs called %d times, want 0", n)
+			}
+			ev := lastAudit(t, e, d.ID, AuditFailed)
+			if tc.body != "" && !strings.Contains(string(ev.ProcoreResponse), strings.ReplaceAll(tc.body, `"`, `\"`)) {
+				t.Errorf("failed audit response %s lacks the raw body", ev.ProcoreResponse)
+			}
+		})
+	}
+
+	// 408 and 429 may succeed later: they stay unknown and are retried.
+	for _, status := range []int{408, 429} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			e := newDraftsEnv(t)
+			e.fp.Err["CreateRFI"] = &procore.APIError{Status: status}
+			d := e.submittable(t, twistedFinal)
+			e.submit(t, d)
+			if err := e.drafts.RunSubmit(context.Background(), d.ID); err == nil {
+				t.Error("RunSubmit = nil, want an error for River to retry")
+			}
+			if got := e.mustGet(t, d.ID); got.Status != StatusSubmitting {
+				t.Errorf("status = %q, want submitting", got.Status)
+			}
+		})
 	}
 }
 
@@ -427,7 +494,7 @@ func TestSubmit_UnresolvedPayload_Rejected(t *testing.T) {
 	}
 	q := &enqueuer{}
 
-	_, err = e.drafts.Submit(ctx, e.user, d.ID, q.enqueue)
+	_, err = e.drafts.Submit(ctx, e.user, d.ID, q)
 	var un *ErrUnresolved
 	if !errors.As(err, &un) {
 		t.Fatalf("Submit = %v, want ErrUnresolved", err)
@@ -447,7 +514,7 @@ func TestSubmit_OtherUser_NotFound(t *testing.T) {
 	e := newDraftsEnv(t)
 	d := e.submittable(t, twistedFinal)
 	other := newDBUser(t, e.st, 99, "Other Person")
-	if _, err := e.drafts.Submit(context.Background(), other, d.ID, (&enqueuer{}).enqueue); !errors.Is(err, ErrNotFound) {
+	if _, err := e.drafts.Submit(context.Background(), other, d.ID, &enqueuer{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Submit = %v, want ErrNotFound", err)
 	}
 }

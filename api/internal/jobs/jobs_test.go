@@ -11,9 +11,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
+	"github.com/monroeresidential/fieldassistant/api/internal/store"
+	"github.com/monroeresidential/fieldassistant/api/internal/store/db"
 	"github.com/monroeresidential/fieldassistant/api/internal/store/storetest"
 )
 
@@ -56,6 +60,74 @@ func (f *fakeSubmitter) failedDrafts() []uuid.UUID {
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
+// enqueueTx inserts draft's submit job through Queue in its own transaction.
+func enqueueTx(ctx context.Context, st *store.Store, c *river.Client[pgx.Tx], draft uuid.UUID) (int64, error) {
+	var id int64
+	err := st.WithPgxTx(ctx, func(tx pgx.Tx, _ *db.Queries) error {
+		var err error
+		id, err = NewQueue(c).EnqueueTx(ctx, tx, draft)
+		return err
+	})
+	return id, err
+}
+
+// A job inserted in a transaction that rolls back does not exist.
+func TestQueue_EnqueueTx_RolledBack_NoJob(t *testing.T) {
+	st := storetest.New(t)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := context.Background()
+	var id int64
+	rollback := errors.New("rollback")
+	err = st.WithPgxTx(ctx, func(tx pgx.Tx, _ *db.Queries) error {
+		var err error
+		if id, err = NewQueue(c).EnqueueTx(ctx, tx, uuid.New()); err != nil {
+			return err
+		}
+		return rollback
+	})
+	if !errors.Is(err, rollback) {
+		t.Fatalf("WithPgxTx = %v", err)
+	}
+	if _, err := Status(ctx, c, id); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Status of rolled-back job = %v, want ErrNotFound", err)
+	}
+}
+
+func TestQueue_JobFinished(t *testing.T) {
+	st := storetest.New(t)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := context.Background()
+	q := NewQueue(c)
+	draft := uuid.New()
+	id, err := enqueueTx(ctx, st, c, draft)
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if done, err := q.JobFinished(ctx, id); err != nil || done {
+		t.Fatalf("queued job: finished = %v, %v; want false", done, err)
+	}
+	if _, err := c.JobCancel(ctx, id); err != nil {
+		t.Fatalf("JobCancel: %v", err)
+	}
+	if done, err := q.JobFinished(ctx, id); err != nil || !done {
+		t.Fatalf("cancelled job: finished = %v, %v; want true", done, err)
+	}
+	if done, err := q.JobFinished(ctx, 987654); err != nil || !done {
+		t.Fatalf("missing job: finished = %v, %v; want true", done, err)
+	}
+	// A new job for the same draft can be inserted once the old one is done.
+	again, err := enqueueTx(ctx, st, c, draft)
+	if err != nil || again == id {
+		t.Fatalf("enqueue after cancel = %d, %v", again, err)
+	}
+}
+
 func TestEnqueue_SameDraftWhileActive_ReturnsExistingJob(t *testing.T) {
 	st := storetest.New(t)
 	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
@@ -65,18 +137,18 @@ func TestEnqueue_SameDraftWhileActive_ReturnsExistingJob(t *testing.T) {
 	ctx := context.Background()
 	draft := uuid.New()
 
-	first, err := Enqueue(ctx, c, draft)
+	first, err := enqueueTx(ctx, st, c, draft)
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	again, err := Enqueue(ctx, c, draft)
+	again, err := enqueueTx(ctx, st, c, draft)
 	if err != nil {
 		t.Fatalf("second Enqueue: %v", err)
 	}
 	if again != first {
 		t.Errorf("second Enqueue = job %d, want existing %d", again, first)
 	}
-	other, err := Enqueue(ctx, c, uuid.New())
+	other, err := enqueueTx(ctx, st, c, uuid.New())
 	if err != nil {
 		t.Fatalf("other Enqueue: %v", err)
 	}
@@ -121,7 +193,7 @@ func TestWorker_RunsSubmitAndCompletes(t *testing.T) {
 		}
 	})
 	draft := uuid.New()
-	jobID, err := Enqueue(ctx, c, draft)
+	jobID, err := enqueueTx(ctx, st, c, draft)
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}

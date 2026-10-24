@@ -275,6 +275,57 @@ func (q *Queries) MarkDraftSubmitting(ctx context.Context, arg MarkDraftSubmitti
 	return i, err
 }
 
+const otherDraftByProcoreRecord = `-- name: OtherDraftByProcoreRecord :one
+select id from drafts
+where company_id = $1 and project_id = $2 and procore_record_id = $3 and id <> $4
+limit 1
+`
+
+type OtherDraftByProcoreRecordParams struct {
+	CompanyID       int64
+	ProjectID       int64
+	ProcoreRecordID pgtype.Int8
+	ID              pgtype.UUID
+}
+
+// A draft other than $4 that already stores Procore record $3 in the project.
+func (q *Queries) OtherDraftByProcoreRecord(ctx context.Context, arg OtherDraftByProcoreRecordParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, otherDraftByProcoreRecord,
+		arg.CompanyID,
+		arg.ProjectID,
+		arg.ProcoreRecordID,
+		arg.ID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const replaceDraftJob = `-- name: ReplaceDraftJob :execrows
+update drafts
+set job_id = $1, updated_at = now()
+where id = $2
+  and status = 'submitting'
+  and job_id is not distinct from $3
+`
+
+type ReplaceDraftJobParams struct {
+	NewJobID pgtype.Int8
+	ID       pgtype.UUID
+	OldJobID pgtype.Int8
+}
+
+// Points a submitting draft at a new job, but only while it still holds the
+// job the caller found finished ($2, null for none). Zero rows means
+// another submit replaced it first or the draft left submitting.
+func (q *Queries) ReplaceDraftJob(ctx context.Context, arg ReplaceDraftJobParams) (int64, error) {
+	result, err := q.db.Exec(ctx, replaceDraftJob, arg.NewJobID, arg.ID, arg.OldJobID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const saveDraftEdits = `-- name: SaveDraftEdits :one
 update drafts
 set user_payload = $2,

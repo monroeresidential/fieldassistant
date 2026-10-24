@@ -25,10 +25,7 @@ func (s *Server) SubmitDraft(ctx context.Context, req SubmitDraftRequestObject) 
 	if _, err := s.companyDraft(ctx, req.Params.XCompanyId, req.DraftId); err != nil {
 		return nil, err
 	}
-	enqueue := func(ctx context.Context, draftID uuid.UUID) (int64, error) {
-		return jobs.Enqueue(ctx, s.deps.Jobs, draftID)
-	}
-	out, err := s.deps.Drafts.Submit(ctx, claimsFrom(ctx).UserID, req.DraftId, enqueue)
+	out, err := s.deps.Drafts.Submit(ctx, claimsFrom(ctx).UserID, req.DraftId, jobs.NewQueue(s.deps.Jobs))
 	var unresolved *pipeline.ErrUnresolved
 	if errors.As(err, &unresolved) {
 		return nil, badRequest("draft has unresolved fields: " + strings.Join(unresolved.Fields, ", "))

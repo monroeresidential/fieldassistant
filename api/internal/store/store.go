@@ -12,6 +12,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	migratepgx "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver used for migrations
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
@@ -112,12 +113,18 @@ func (s *Store) migrateApp(ctx context.Context) (err error) {
 // WithTx runs fn inside a transaction, committing when fn returns nil and
 // rolling back otherwise.
 func (s *Store) WithTx(ctx context.Context, fn func(q *db.Queries) error) error {
+	return s.WithPgxTx(ctx, func(_ pgx.Tx, q *db.Queries) error { return fn(q) })
+}
+
+// WithPgxTx is WithTx that also hands fn the transaction, for writes that
+// other libraries (the River job queue) make in the same transaction.
+func (s *Store) WithPgxTx(ctx context.Context, fn func(tx pgx.Tx, q *db.Queries) error) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("store: begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if err := fn(s.Q.WithTx(tx)); err != nil {
+	if err := fn(tx, s.Q.WithTx(tx)); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

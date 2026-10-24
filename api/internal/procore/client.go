@@ -65,8 +65,11 @@ func (e *ValidationError) Error() string {
 	return "procore: validation failed: " + strings.Join(parts, ", ")
 }
 
-// parseValidationErrors reads {"errors": {field: "msg" | ["msg", ...]}}. It
-// reports false when the body has any other shape.
+// parseValidationErrors reads {"errors": {field: "msg" | ["msg", ...] |
+// {subfield: ...}}}. Nested objects flatten to dotted keys
+// ({"question": {"body": [...]}} is "question.body"); any other leaf keeps
+// its raw JSON as the message. It reports false when "errors" is missing,
+// empty or not an object.
 func parseValidationErrors(b []byte) (*ValidationError, bool) {
 	var w struct {
 		Errors map[string]json.RawMessage `json:"errors"`
@@ -74,20 +77,34 @@ func parseValidationErrors(b []byte) (*ValidationError, bool) {
 	if json.Unmarshal(b, &w) != nil || len(w.Errors) == 0 {
 		return nil, false
 	}
-	fields := make(map[string][]string, len(w.Errors))
-	for k, raw := range w.Errors {
-		var one string
-		var many []string
-		switch {
-		case json.Unmarshal(raw, &one) == nil:
-			fields[k] = []string{one}
-		case json.Unmarshal(raw, &many) == nil:
-			fields[k] = many
-		default:
-			return nil, false
-		}
+	fields := map[string][]string{}
+	flattenErrors("", w.Errors, fields)
+	if len(fields) == 0 {
+		return nil, false
 	}
 	return &ValidationError{Fields: fields}, true
+}
+
+func flattenErrors(prefix string, errs map[string]json.RawMessage, into map[string][]string) {
+	for k, raw := range errs {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		var one string
+		var many []string
+		var nested map[string]json.RawMessage
+		switch {
+		case json.Unmarshal(raw, &one) == nil:
+			into[key] = []string{one}
+		case json.Unmarshal(raw, &many) == nil:
+			into[key] = many
+		case json.Unmarshal(raw, &nested) == nil && nested != nil:
+			flattenErrors(key, nested, into)
+		default:
+			into[key] = []string{string(raw)}
+		}
+	}
 }
 
 // Client is a client for Procore's REST API.
