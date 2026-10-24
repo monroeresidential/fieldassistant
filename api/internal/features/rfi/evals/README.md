@@ -60,9 +60,31 @@ An extraction error fails the run and scores that case as all missed.
 
 ## Results
 
-Not yet run. No Anthropic API key was available when the set was written. The first live run should record the model, prompt version and summary line here, and tune `../prompt.md` until the thresholds pass. Cases 6 and 7 must never produce an ID.
+### 2026-10-24, `claude-sonnet-5-5`, prompt `7f01a1f2da57`
 
-Watch on the first run:
+First live run, after the extraction loop moved to `tool_choice: auto` (the model rejects `any` and `tool`). It passed on the first attempt with no prompt tuning.
 
-- Case 3 expects "next Friday", said on Tuesday 2026-11-10, to mean 2026-11-13. The prompt has no rule for "next" and may flag the date as ambiguous instead.
-- Case 9 expects `cost_impact.value` to be `"2000"`. The model may write `"$2,000"`; decide during tuning whether the prompt or the expectation should change.
+| Case | Fields | Hallucinated | Precision | ms |
+| --- | --- | --- | --- | --- |
+| 01-twisted-column | 5/5 | 0 | 1.00 | 4964 |
+| 02-assign-to-mike | 2/2 | 0 | 1.00 | 3740 |
+| 03-due-next-friday | 0/1 | 0 | 0.00 | 6183 |
+| 04-spoken-sheet | 1/1 | 0 | 1.00 | 3813 |
+| 05-spec-no-cost-code | 1/2 | 0 | 0.00 | 5292 |
+| 06-location-not-in-tree | 2/2 | 0 | 1.00 | 6743 |
+| 07-assignee-not-in-directory | 2/2 | 0 | 1.00 | 6250 |
+| 08-impacts-unknown | 2/2 | 0 | 1.00 | 5505 |
+| 09-cost-known | 1/1 | 0 | 1.00 | 4396 |
+| 10-filler-and-restarts | 5/5 | 0 | 1.00 | 4790 |
+
+```
+model claude-sonnet-5-5, prompt 7f01a1f2da57
+exact-match rate 0.913 (21/23), hallucinated IDs 0, mean unresolved precision 0.80, p95 latency 6.743s
+```
+
+Misses:
+
+- Case 3 left `due_date` empty instead of 2026-11-13 for "next Friday". The prompt has no rule for "next", as predicted.
+- Case 5 left `specification_section_id` empty instead of 301.
+
+Cases 6 and 7 produced no IDs. Case 9 wrote the cost value as expected.
