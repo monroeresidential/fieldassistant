@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
 	"github.com/monroeresidential/fieldassistant/api/internal/store"
 	"github.com/monroeresidential/fieldassistant/api/internal/store/db"
@@ -102,6 +104,24 @@ type AccessTokenSource interface {
 
 type projectKey struct{ company, project int64 }
 
+type accessKey struct {
+	user    uuid.UUID
+	company int64
+	project int64
+}
+
+type denyKey struct {
+	user    uuid.UUID
+	company int64
+	project int64
+	kind    LookupKind
+}
+
+type denial struct {
+	reason string
+	at     time.Time
+}
+
 type projectEntry struct {
 	detail procore.ProjectDetail
 	at     time.Time
@@ -119,6 +139,8 @@ type Lookups struct {
 
 	mu       sync.Mutex
 	projects map[projectKey]projectEntry
+	access   map[accessKey]time.Time // when the user last proved they can see the project
+	denied   map[denyKey]denial      // per-user 403s on a lookup kind
 }
 
 // NewLookups builds a Lookups. A nil logger means slog.Default().
@@ -126,14 +148,27 @@ func NewLookups(st *store.Store, pc ProcoreLookups, tokens AccessTokenSource, tt
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Lookups{st: st, pc: pc, tokens: tokens, ttl: ttl, now: now, log: logger, projects: map[projectKey]projectEntry{}}
+	return &Lookups{st: st, pc: pc, tokens: tokens, ttl: ttl, now: now, log: logger, projects: map[projectKey]projectEntry{}, access: map[accessKey]time.Time{}, denied: map[denyKey]denial{}}
 }
 
-// Get returns the lookup set for kind. A row younger than the TTL is served
-// unless force is set. Otherwise the list is fetched from Procore and stored.
-// A 403 is stored as an unavailable set. Any other failure serves the stale
-// row when there is one and returns the error when there is not.
+// Get returns the lookup set for kind. The caller must be able to see the
+// project, which is checked with their own token and cached per user for the
+// TTL; otherwise procore.ErrPermissionDenied is returned. A stored row younger
+// than the TTL is served unless force is set. Otherwise the list is fetched
+// from Procore and stored. A 403 on the list is remembered for that user only
+// and returned as an unavailable set; the shared row is left alone. Token
+// errors surface. Any other failure serves the stale row when there is one and
+// returns the error when there is not.
 func (l *Lookups) Get(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kind LookupKind, force bool) (LookupSet, error) {
+	if err := l.requireAccess(ctx, userID, companyID, projectID); err != nil {
+		return LookupSet{}, err
+	}
+	if !force {
+		if d, ok := l.denial(userID, companyID, projectID, kind); ok {
+			return LookupSet{Kind: kind, Rows: []LookupRow{}, Unavailable: true, Reason: d.reason, FetchedAt: d.at}, nil
+		}
+	}
+
 	stale, haveStale, err := l.load(ctx, companyID, projectID, kind)
 	if err != nil {
 		return LookupSet{}, err
@@ -145,15 +180,75 @@ func (l *Lookups) Get(ctx context.Context, userID uuid.UUID, companyID, projectI
 	rows, fetchErr := l.fetch(ctx, userID, companyID, projectID, kind)
 	switch {
 	case fetchErr == nil:
+		l.clearDenial(userID, companyID, projectID, kind)
 		return l.save(ctx, companyID, projectID, kind, rows, false, "")
 	case errors.Is(fetchErr, procore.ErrPermissionDenied):
-		return l.save(ctx, companyID, projectID, kind, nil, true, denialReason(fetchErr))
+		d := denial{reason: denialReason(fetchErr), at: l.now()}
+		l.mu.Lock()
+		l.denied[denyKey{userID, companyID, projectID, kind}] = d
+		l.mu.Unlock()
+		return LookupSet{Kind: kind, Rows: []LookupRow{}, Unavailable: true, Reason: d.reason, FetchedAt: d.at}, nil
+	case errors.Is(fetchErr, auth.ErrReauthRequired), errors.Is(fetchErr, procore.ErrUnauthorized):
+		return LookupSet{}, fetchErr
 	case haveStale:
 		l.log.Warn("lookup refresh failed", "kind", kind, "company_id", companyID, "project_id", projectID, "error", fetchErr)
 		return stale, nil
 	default:
 		return LookupSet{}, fetchErr
 	}
+}
+
+func (l *Lookups) denial(userID uuid.UUID, companyID, projectID int64, kind LookupKind) (denial, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	d, ok := l.denied[denyKey{userID, companyID, projectID, kind}]
+	if !ok || l.now().Sub(d.at) >= l.ttl {
+		return denial{}, false
+	}
+	return d, true
+}
+
+func (l *Lookups) clearDenial(userID uuid.UUID, companyID, projectID int64, kind LookupKind) {
+	l.mu.Lock()
+	delete(l.denied, denyKey{userID, companyID, projectID, kind})
+	l.mu.Unlock()
+}
+
+// requireAccess confirms the user can see the project, using the cached
+// answer when it is younger than the TTL.
+func (l *Lookups) requireAccess(ctx context.Context, userID uuid.UUID, companyID, projectID int64) error {
+	l.mu.Lock()
+	at, ok := l.access[accessKey{userID, companyID, projectID}]
+	l.mu.Unlock()
+	if ok && l.now().Sub(at) < l.ttl {
+		return nil
+	}
+	_, err := l.fetchProject(ctx, userID, companyID, projectID)
+	return err
+}
+
+// fetchProject reads the project with the user's own token. Success records
+// the user's access and refreshes the shared detail cache. A 403 or 404 means
+// the user cannot see the project and is reported as ErrPermissionDenied.
+func (l *Lookups) fetchProject(ctx context.Context, userID uuid.UUID, companyID, projectID int64) (procore.ProjectDetail, error) {
+	token, err := l.tokens.AccessToken(ctx, userID)
+	if err != nil {
+		return procore.ProjectDetail{}, err
+	}
+	detail, err := l.pc.GetProject(ctx, token, companyID, projectID)
+	if err != nil {
+		var api *procore.APIError
+		if errors.Is(err, procore.ErrPermissionDenied) || (errors.As(err, &api) && api.Status == http.StatusNotFound) {
+			return procore.ProjectDetail{}, procore.ErrPermissionDenied
+		}
+		return procore.ProjectDetail{}, err
+	}
+	now := l.now()
+	l.mu.Lock()
+	l.access[accessKey{userID, companyID, projectID}] = now
+	l.projects[projectKey{companyID, projectID}] = projectEntry{detail: detail, at: now}
+	l.mu.Unlock()
+	return detail, nil
 }
 
 // Warm calls Get for each kind. A failure on one kind does not stop the
@@ -174,28 +269,19 @@ func (l *Lookups) Warm(ctx context.Context, userID uuid.UUID, companyID, project
 	return out, first
 }
 
-// Project returns the project detail, cached in memory for the TTL.
+// Project returns the project detail. The caller must be able to see the
+// project (procore.ErrPermissionDenied otherwise). One Procore call per user
+// per project per TTL serves both the access check and the detail.
 func (l *Lookups) Project(ctx context.Context, userID uuid.UUID, companyID, projectID int64) (procore.ProjectDetail, error) {
-	key := projectKey{companyID, projectID}
 	l.mu.Lock()
-	e, ok := l.projects[key]
+	at, seen := l.access[accessKey{userID, companyID, projectID}]
+	e, cached := l.projects[projectKey{companyID, projectID}]
 	l.mu.Unlock()
-	if ok && l.now().Sub(e.at) < l.ttl {
+	now := l.now()
+	if seen && now.Sub(at) < l.ttl && cached && now.Sub(e.at) < l.ttl {
 		return e.detail, nil
 	}
-
-	token, err := l.tokens.AccessToken(ctx, userID)
-	if err != nil {
-		return procore.ProjectDetail{}, err
-	}
-	detail, err := l.pc.GetProject(ctx, token, companyID, projectID)
-	if err != nil {
-		return procore.ProjectDetail{}, err
-	}
-	l.mu.Lock()
-	l.projects[key] = projectEntry{detail: detail, at: l.now()}
-	l.mu.Unlock()
-	return detail, nil
+	return l.fetchProject(ctx, userID, companyID, projectID)
 }
 
 // load reads the stored set. The bool is false when no row exists.

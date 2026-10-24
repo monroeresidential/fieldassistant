@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline/pipelinetest"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
 	"github.com/monroeresidential/fieldassistant/api/internal/store"
@@ -17,9 +19,40 @@ import (
 	"github.com/monroeresidential/fieldassistant/api/internal/store/storetest"
 )
 
-type fixedTokens struct{}
+// testTokens returns "tok" for every user unless a per-user token or error is set.
+type testTokens struct {
+	mu     sync.Mutex
+	tokens map[uuid.UUID]string
+	errs   map[uuid.UUID]error
+}
 
-func (fixedTokens) AccessToken(context.Context, uuid.UUID) (string, error) { return "tok", nil }
+func newTestTokens() *testTokens {
+	return &testTokens{tokens: map[uuid.UUID]string{}, errs: map[uuid.UUID]error{}}
+}
+
+func (t *testTokens) AccessToken(_ context.Context, id uuid.UUID) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if err := t.errs[id]; err != nil {
+		return "", err
+	}
+	if tok, ok := t.tokens[id]; ok {
+		return tok, nil
+	}
+	return "tok", nil
+}
+
+func (t *testTokens) setToken(id uuid.UUID, tok string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.tokens[id] = tok
+}
+
+func (t *testTokens) setErr(id uuid.UUID, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.errs[id] = err
+}
 
 type testClock struct {
 	mu sync.Mutex
@@ -46,10 +79,17 @@ const (
 
 func newLookups(t *testing.T) (*Lookups, *pipelinetest.FakeProcore, *testClock, *store.Store) {
 	t.Helper()
+	l, fp, clock, st, _ := newLookupsWithTokens(t)
+	return l, fp, clock, st
+}
+
+func newLookupsWithTokens(t *testing.T) (*Lookups, *pipelinetest.FakeProcore, *testClock, *store.Store, *testTokens) {
+	t.Helper()
 	st := storetest.New(t)
 	fp := pipelinetest.NewFakeProcore()
 	clock := &testClock{t: time.Now().UTC().Truncate(time.Second)}
-	return NewLookups(st, fp, fixedTokens{}, testTTL, clock.Now, nil), fp, clock, st
+	tokens := newTestTokens()
+	return NewLookups(st, fp, tokens, testTTL, clock.Now, nil), fp, clock, st, tokens
 }
 
 func twoUsers() []procore.ProjectUser {
@@ -109,31 +149,184 @@ func TestLookups_Forbidden_CachedUnavailable(t *testing.T) {
 	l, fp, _, st := newLookups(t)
 	fp.Err["ListCostCodes"] = fmt.Errorf("%w: %w", procore.ErrPermissionDenied, &procore.APIError{Status: 403, Body: "no budget access"})
 	ctx := context.Background()
+	user := uuid.New()
 
-	set, err := l.Get(ctx, uuid.New(), testCompany, testProject, KindCostCodes, false)
+	set, err := l.Get(ctx, user, testCompany, testProject, KindCostCodes, false)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if !set.Unavailable || len(set.Rows) != 0 || set.Reason == "" {
+	if !set.Unavailable || len(set.Rows) != 0 || set.Reason != "no budget access" {
 		t.Fatalf("set = %+v, want unavailable with reason and no rows", set)
 	}
-	row, err := st.Q.GetLookup(ctx, db.GetLookupParams{CompanyID: testCompany, ProjectID: testProject, Kind: string(KindCostCodes)})
-	if err != nil {
-		t.Fatalf("GetLookup: %v", err)
-	}
-	if !row.Unavailable {
-		t.Error("stored row unavailable = false, want true")
+	if _, err := st.Q.GetLookup(ctx, db.GetLookupParams{CompanyID: testCompany, ProjectID: testProject, Kind: string(KindCostCodes)}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("shared row err = %v, want no row written for a per-user denial", err)
 	}
 
-	again, err := l.Get(ctx, uuid.New(), testCompany, testProject, KindCostCodes, false)
+	again, err := l.Get(ctx, user, testCompany, testProject, KindCostCodes, false)
 	if err != nil {
 		t.Fatalf("second Get: %v", err)
 	}
 	if !again.Unavailable {
-		t.Error("cached set lost Unavailable")
+		t.Error("remembered denial lost Unavailable")
 	}
 	if n := fp.CallCount("ListCostCodes"); n != 1 {
 		t.Fatalf("calls = %d, want 1", n)
+	}
+}
+
+func TestLookups_Forbidden_PerUserOnly(t *testing.T) {
+	l, fp, _, st, tokens := newLookupsWithTokens(t)
+	fp.Users = twoUsers()
+	userA, userB := uuid.New(), uuid.New()
+	tokens.setToken(userA, "tok-a")
+	tokens.setToken(userB, "tok-b")
+	fp.ErrForToken["tok-a"] = map[string]error{"ListProjectUsers": procore.ErrPermissionDenied}
+	ctx := context.Background()
+
+	a, err := l.Get(ctx, userA, testCompany, testProject, KindUsers, false)
+	if err != nil {
+		t.Fatalf("user A: %v", err)
+	}
+	if !a.Unavailable {
+		t.Fatalf("user A set = %+v, want unavailable", a)
+	}
+
+	b, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false)
+	if err != nil {
+		t.Fatalf("user B: %v", err)
+	}
+	if b.Unavailable || len(b.Rows) != 2 {
+		t.Fatalf("user B set = %+v, want 2 rows", b)
+	}
+	row, err := st.Q.GetLookup(ctx, db.GetLookupParams{CompanyID: testCompany, ProjectID: testProject, Kind: string(KindUsers)})
+	if err != nil {
+		t.Fatalf("GetLookup: %v", err)
+	}
+	if row.Unavailable {
+		t.Error("shared row marked unavailable by one user's denial")
+	}
+}
+
+func TestLookups_Forbidden_KeepsExistingSharedRows(t *testing.T) {
+	l, fp, clock, st, tokens := newLookupsWithTokens(t)
+	fp.Users = twoUsers()
+	userA, userB := uuid.New(), uuid.New()
+	tokens.setToken(userA, "tok-a")
+	ctx := context.Background()
+
+	if _, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(testTTL + time.Second)
+	fp.ErrForToken["tok-a"] = map[string]error{"ListProjectUsers": procore.ErrPermissionDenied}
+	if _, err := l.Get(ctx, userA, testCompany, testProject, KindUsers, false); err != nil {
+		t.Fatal(err)
+	}
+	row, err := st.Q.GetLookup(ctx, db.GetLookupParams{CompanyID: testCompany, ProjectID: testProject, Kind: string(KindUsers)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Unavailable || string(row.Body) == "[]" {
+		t.Errorf("shared row clobbered: unavailable=%v body=%s", row.Unavailable, row.Body)
+	}
+}
+
+func TestLookups_UserNotOnProject_PermissionDenied(t *testing.T) {
+	for name, denied := range map[string]error{
+		"403": fmt.Errorf("%w: %w", procore.ErrPermissionDenied, &procore.APIError{Status: 403}),
+		"404": &procore.APIError{Status: 404},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l, fp, _, st, tokens := newLookupsWithTokens(t)
+			fp.Users = twoUsers()
+			outsider := uuid.New()
+			tokens.setToken(outsider, "tok-out")
+			fp.ErrForToken["tok-out"] = map[string]error{"GetProject": denied}
+			ctx := context.Background()
+
+			if _, err := l.Get(ctx, outsider, testCompany, testProject, KindUsers, false); !errors.Is(err, procore.ErrPermissionDenied) {
+				t.Fatalf("Get err = %v, want ErrPermissionDenied", err)
+			}
+			if _, err := l.Project(ctx, outsider, testCompany, testProject); !errors.Is(err, procore.ErrPermissionDenied) {
+				t.Fatalf("Project err = %v, want ErrPermissionDenied", err)
+			}
+			if _, err := l.Warm(ctx, outsider, testCompany, testProject, []LookupKind{KindUsers}); !errors.Is(err, procore.ErrPermissionDenied) {
+				t.Fatalf("Warm err = %v, want ErrPermissionDenied", err)
+			}
+			if n := fp.CallCount("ListProjectUsers"); n != 0 {
+				t.Errorf("list calls = %d, want 0", n)
+			}
+			if _, err := st.Q.GetLookup(ctx, db.GetLookupParams{CompanyID: testCompany, ProjectID: testProject, Kind: string(KindUsers)}); !errors.Is(err, pgx.ErrNoRows) {
+				t.Errorf("row written for outsider: %v", err)
+			}
+		})
+	}
+}
+
+func TestLookups_CachedRowNotServedToUserWithoutAccess(t *testing.T) {
+	l, fp, _, _, tokens := newLookupsWithTokens(t)
+	fp.Users = twoUsers()
+	member, outsider := uuid.New(), uuid.New()
+	tokens.setToken(outsider, "tok-out")
+	fp.ErrForToken["tok-out"] = map[string]error{"GetProject": procore.ErrPermissionDenied}
+	ctx := context.Background()
+
+	if _, err := l.Get(ctx, member, testCompany, testProject, KindUsers, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Get(ctx, outsider, testCompany, testProject, KindUsers, false); !errors.Is(err, procore.ErrPermissionDenied) {
+		t.Fatalf("outsider err = %v, want ErrPermissionDenied despite warm cache", err)
+	}
+}
+
+func TestLookups_AccessAndProjectShareOneCall(t *testing.T) {
+	l, fp, _, _ := newLookups(t)
+	fp.Users = twoUsers()
+	ctx := context.Background()
+	user := uuid.New()
+
+	if _, err := l.Get(ctx, user, testCompany, testProject, KindUsers, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Project(ctx, user, testCompany, testProject); err != nil {
+		t.Fatal(err)
+	}
+	if n := fp.CallCount("GetProject"); n != 1 {
+		t.Fatalf("GetProject calls = %d, want 1", n)
+	}
+}
+
+// The project-access check stays fresh (cached) so the failure comes from the
+// list refresh, which must surface rather than serve the stale copy.
+func TestLookups_RefreshTokenError_NotServedStale(t *testing.T) {
+	cases := map[string]struct {
+		want   error
+		break_ func(tokens *testTokens, fp *pipelinetest.FakeProcore, user uuid.UUID)
+	}{
+		"reauth": {auth.ErrReauthRequired, func(tokens *testTokens, _ *pipelinetest.FakeProcore, user uuid.UUID) {
+			tokens.setErr(user, auth.ErrReauthRequired)
+		}},
+		"unauthorized": {procore.ErrUnauthorized, func(_ *testTokens, fp *pipelinetest.FakeProcore, _ uuid.UUID) {
+			fp.Err["ListProjectUsers"] = procore.ErrUnauthorized
+		}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			l, fp, clock, _, tokens := newLookupsWithTokens(t)
+			fp.Users = twoUsers()
+			ctx := context.Background()
+			user := uuid.New()
+
+			if _, err := l.Get(ctx, user, testCompany, testProject, KindUsers, false); err != nil {
+				t.Fatal(err)
+			}
+			clock.Advance(testTTL - time.Second)
+			c.break_(tokens, fp, user)
+
+			if _, err := l.Get(ctx, user, testCompany, testProject, KindUsers, true); !errors.Is(err, c.want) {
+				t.Fatalf("err = %v, want %v", err, c.want)
+			}
+		})
 	}
 }
 
@@ -188,9 +381,10 @@ func TestLookups_Project_CachedForTTL(t *testing.T) {
 	l, fp, clock, _ := newLookups(t)
 	fp.Project = procore.ProjectDetail{ID: testProject, Name: "Tower", TimeZone: "America/Chicago"}
 	ctx := context.Background()
+	user := uuid.New()
 
 	for i := 0; i < 2; i++ {
-		p, err := l.Project(ctx, uuid.New(), testCompany, testProject)
+		p, err := l.Project(ctx, user, testCompany, testProject)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,7 +396,7 @@ func TestLookups_Project_CachedForTTL(t *testing.T) {
 		t.Fatalf("calls within ttl = %d, want 1", n)
 	}
 	clock.Advance(testTTL + time.Second)
-	if _, err := l.Project(ctx, uuid.New(), testCompany, testProject); err != nil {
+	if _, err := l.Project(ctx, user, testCompany, testProject); err != nil {
 		t.Fatal(err)
 	}
 	if n := fp.CallCount("GetProject"); n != 2 {

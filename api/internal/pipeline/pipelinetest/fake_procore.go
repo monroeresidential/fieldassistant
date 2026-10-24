@@ -37,6 +37,9 @@ type FakeProcore struct {
 	// Err maps a method name ("ListProjectUsers", "CreateRFI", ...) to the
 	// error that method returns.
 	Err map[string]error
+	// ErrForToken scripts an error for one access token and method, and wins
+	// over Err. Use it to give different users different outcomes.
+	ErrForToken map[string]map[string]error
 
 	mu    sync.Mutex
 	calls []Call
@@ -44,7 +47,7 @@ type FakeProcore struct {
 
 // NewFakeProcore returns an empty fake with a non-nil Err map.
 func NewFakeProcore() *FakeProcore {
-	return &FakeProcore{Err: map[string]error{}}
+	return &FakeProcore{Err: map[string]error{}, ErrForToken: map[string]map[string]error{}}
 }
 
 // Calls returns a copy of the recorded calls in order.
@@ -72,6 +75,9 @@ func (f *FakeProcore) record(c Call) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, c)
+	if err, ok := f.ErrForToken[c.AccessToken][c.Method]; ok {
+		return err
+	}
 	return f.Err[c.Method]
 }
 
