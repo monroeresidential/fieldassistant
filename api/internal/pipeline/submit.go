@@ -92,9 +92,11 @@ const maxSubmitPasses = 3
 // Submit queues the user's draft for posting to Procore. A submitted draft
 // returns AlreadySubmitted; a submitting draft returns its job while that
 // job can still run. Otherwise the payload is validated against freshly
-// warmed lookups, and any unresolved field, including an earlier flag on a
-// field that is still empty, fails with *ErrUnresolved and leaves the draft
-// as it was.
+// warmed lookups (see revalidate), and any unresolved field, including an
+// earlier flag on a field the reviewer has not changed, fails with
+// *ErrUnresolved. When that validation differs from what the draft stores,
+// it is stored first as SaveEdits would, so the draft shows the fields the
+// error names.
 //
 // A valid draft moves to submitting, its job is inserted and the job ID
 // stored in one transaction, so a draft is never submitting without a job
@@ -136,11 +138,23 @@ func (d *Drafts) Submit(ctx context.Context, userID, id uuid.UUID, q SubmitQueue
 				return SubmitOutcome{}, fmt.Errorf("pipeline: decode payload: %w", err)
 			}
 		}
-		_, unresolved, err := d.revalidate(ctx, userID, cur, payload)
+		validated, unresolved, err := d.revalidate(ctx, userID, cur, payload)
 		if err != nil {
 			return SubmitOutcome{}, err
 		}
 		if len(unresolved) > 0 {
+			// Store what this validation found (a due date that has since
+			// passed, an ID gone from the lookups), so the draft shows the
+			// fields the error names.
+			if !sameJSON(payload, validated) || !sameJSON(cur.Unresolved, unresolved) {
+				_, err := d.storeEdits(ctx, cur, validated, unresolved, true)
+				if errors.Is(err, pgx.ErrNoRows) {
+					continue // edited or submitted meanwhile; look again
+				}
+				if err != nil {
+					return SubmitOutcome{}, err
+				}
+			}
 			fields := make([]string, 0, len(unresolved))
 			for _, u := range unresolved {
 				fields = append(fields, u.Field)
@@ -228,9 +242,13 @@ func (d *Drafts) reviveSubmit(ctx context.Context, cur Draft, q SubmitQueue) (ou
 }
 
 // revalidate runs Validate on payload against freshly warmed lookups, then
-// again with cur's earlier unresolved entries for fields still empty, so a
-// flag only the model or a Procore 422 raised is kept until the field is
-// filled. Validate's own entries come first and win.
+// again with cur's earlier unresolved entries carried forward, so a flag
+// the model, an earlier validation or a Procore 422 raised is kept until the
+// reviewer deals with it. An entry is carried while its field is still
+// empty or still holds the value cur stored when the flag was raised
+// (compared as normalized JSON); a field whose value changed keeps only
+// what Validate says of the new value. Validate's own entries come first
+// and win.
 func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, payload map[string]any) (map[string]any, []Unresolved, error) {
 	f, ok := d.features[cur.Feature]
 	if !ok {
@@ -253,10 +271,17 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 		return nil, nil, err
 	}
 	today, loc := d.now(), RailsZone(project.TimeZone)
+	var stored map[string]any
+	if raw := cur.Payload(); len(raw) > 0 {
+		if err := json.Unmarshal(raw, &stored); err != nil {
+			return nil, nil, fmt.Errorf("pipeline: decode stored payload: %w", err)
+		}
+	}
+	stored, _ = f.Normalize(stored, nil)
 	normalized, flagged := f.Normalize(payload, nil)
 	validated, unresolved := Validate(f, normalized, flagged, sets, today, loc)
 	for _, u := range cur.Unresolved {
-		if isEmptyValue(validated[u.Field]) {
+		if isEmptyValue(validated[u.Field]) || sameJSON(stored[u.Field], normalized[u.Field]) {
 			unresolved = append(unresolved, u)
 		}
 	}

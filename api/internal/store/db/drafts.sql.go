@@ -328,27 +328,37 @@ func (q *Queries) ReplaceDraftJob(ctx context.Context, arg ReplaceDraftJobParams
 
 const saveDraftEdits = `-- name: SaveDraftEdits :one
 update drafts
-set user_payload = $2,
-    unresolved = $3,
+set user_payload = $1,
+    unresolved = $2,
     status = 'reviewed',
     error_code = null,
     error_message = null,
     updated_at = now()
-where id = $1 and status not in ('submitting', 'submitted')
+where id = $3
+  and status not in ('submitting', 'submitted')
+  and ($4::timestamptz is null or updated_at = $4)
 returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at
 `
 
 type SaveDraftEditsParams struct {
-	ID          pgtype.UUID
 	UserPayload []byte
 	Unresolved  []byte
+	ID          pgtype.UUID
+	IfUpdatedAt pgtype.Timestamptz
 }
 
 // Stores the reviewer's payload and its revalidated unresolved list unless
 // the draft is being or has been submitted; no row means it is locked. A
-// failed draft's error is cleared, since the edit supersedes it.
+// failed draft's error is cleared, since the edit supersedes it. When
+// if_updated_at is set, the draft must also be unchanged since then (no row
+// otherwise).
 func (q *Queries) SaveDraftEdits(ctx context.Context, arg SaveDraftEditsParams) (Draft, error) {
-	row := q.db.QueryRow(ctx, saveDraftEdits, arg.ID, arg.UserPayload, arg.Unresolved)
+	row := q.db.QueryRow(ctx, saveDraftEdits,
+		arg.UserPayload,
+		arg.Unresolved,
+		arg.ID,
+		arg.IfUpdatedAt,
+	)
 	var i Draft
 	err := row.Scan(
 		&i.ID,

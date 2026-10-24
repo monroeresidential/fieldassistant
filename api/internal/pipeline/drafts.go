@@ -305,8 +305,20 @@ func (d *Drafts) SaveEdits(ctx context.Context, userID, id uuid.UUID, payload js
 	if err != nil {
 		return Draft{}, err
 	}
+	saved, err := d.storeEdits(ctx, cur, validated, unresolved, false)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Draft{}, ErrDraftLocked
+	}
+	return saved, err
+}
 
-	after, err := json.Marshal(validated)
+// storeEdits stores a revalidated payload and unresolved list on cur as
+// SaveEdits does: status reviewed, error cleared, and an edited audit event
+// with the payload before and after. pgx.ErrNoRows means the draft is being
+// or has been submitted, or, with ifUnchanged, was updated since cur was
+// read.
+func (d *Drafts) storeEdits(ctx context.Context, cur Draft, payload map[string]any, unresolved []Unresolved, ifUnchanged bool) (Draft, error) {
+	after, err := json.Marshal(payload)
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: encode payload: %w", err)
 	}
@@ -318,17 +330,18 @@ func (d *Drafts) SaveEdits(ctx context.Context, userID, id uuid.UUID, payload js
 	err = d.st.WithTx(ctx, func(q *db.Queries) error {
 		var err error
 		row, err = q.SaveDraftEdits(ctx, db.SaveDraftEditsParams{
-			ID:          pgtype.UUID{Bytes: id, Valid: true},
+			ID:          pgtype.UUID{Bytes: cur.ID, Valid: true},
 			UserPayload: after,
 			Unresolved:  unresolvedJSON,
+			IfUpdatedAt: pgtype.Timestamptz{Time: cur.UpdatedAt, Valid: ifUnchanged},
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrDraftLocked
+			return err
 		}
 		if err != nil {
 			return fmt.Errorf("pipeline: save draft: %w", err)
 		}
-		return insertAudit(ctx, q, cur.CompanyID, id, AuditEdited, editedAudit{Before: cur.Payload(), After: after}, 0)
+		return insertAudit(ctx, q, cur.CompanyID, cur.ID, AuditEdited, editedAudit{Before: cur.Payload(), After: after}, 0)
 	})
 	if err != nil {
 		return Draft{}, err
@@ -410,6 +423,14 @@ func isEmptyValue(v any) bool {
 		return len(x) == 0
 	}
 	return false
+}
+
+// sameJSON reports whether two decoded payload values encode to the same
+// JSON. Absent and null are the same; object keys are compared sorted.
+func sameJSON(a, b any) bool {
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && string(ja) == string(jb)
 }
 
 // List returns the user's drafts in a project, newest first. limit is

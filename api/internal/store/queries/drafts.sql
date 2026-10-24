@@ -65,15 +65,19 @@ select count(*) from drafts where user_id = $1 and status = 'submitted';
 -- name: SaveDraftEdits :one
 -- Stores the reviewer's payload and its revalidated unresolved list unless
 -- the draft is being or has been submitted; no row means it is locked. A
--- failed draft's error is cleared, since the edit supersedes it.
+-- failed draft's error is cleared, since the edit supersedes it. When
+-- if_updated_at is set, the draft must also be unchanged since then (no row
+-- otherwise).
 update drafts
-set user_payload = $2,
-    unresolved = $3,
+set user_payload = sqlc.arg(user_payload),
+    unresolved = sqlc.arg(unresolved),
     status = 'reviewed',
     error_code = null,
     error_message = null,
     updated_at = now()
-where id = $1 and status not in ('submitting', 'submitted')
+where id = sqlc.arg(id)
+  and status not in ('submitting', 'submitted')
+  and (sqlc.narg(if_updated_at)::timestamptz is null or updated_at = sqlc.narg(if_updated_at))
 returning *;
 
 -- name: MarkDraftSubmitting :one
