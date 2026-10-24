@@ -8,6 +8,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuditEvent struct {
+	ID              int64
+	CompanyID       int64
+	DraftID         pgtype.UUID
+	Kind            string
+	Payload         []byte
+	ProcoreRequest  []byte
+	ProcoreResponse []byte
+	DurationMs      pgtype.Int4
+	CreatedAt       pgtype.Timestamptz
+}
+
 type AuthCode struct {
 	Code          string
 	SessionID     pgtype.UUID
@@ -20,6 +32,44 @@ type AuthState struct {
 	DeviceID      string
 	CodeChallenge string
 	ExpiresAt     pgtype.Timestamptz
+}
+
+type Draft struct {
+	ID                  pgtype.UUID
+	CompanyID           int64
+	ProjectID           int64
+	UserID              pgtype.UUID
+	Feature             string
+	Status              string
+	Transcript          string
+	CapturedAt          pgtype.Timestamptz
+	LlmOutput           []byte
+	UserPayload         []byte
+	Unresolved          []byte
+	Confidence          []byte
+	ModelVersion        pgtype.Text
+	PromptVersion       pgtype.Text
+	ExtractMs           pgtype.Int4
+	ProcoreRecordID     pgtype.Int8
+	ProcoreRecordNumber pgtype.Text
+	ProcoreUrl          pgtype.Text
+	ErrorCode           pgtype.Text
+	ErrorMessage        pgtype.Text
+	JobID               pgtype.Int8
+	SubmitAttempts      int32
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type LookupCache struct {
+	CompanyID   int64
+	ProjectID   int64
+	Kind        string
+	Etag        string
+	Body        []byte
+	Unavailable bool
+	Reason      pgtype.Text
+	FetchedAt   pgtype.Timestamptz
 }
 
 type ProcoreToken struct {

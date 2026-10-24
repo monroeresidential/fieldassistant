@@ -12,8 +12,11 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	migratepgx "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver used for migrations
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/store/db"
 )
@@ -47,10 +50,25 @@ func (s *Store) Close() {
 	s.Pool.Close()
 }
 
-// Migrate applies all pending up migrations. It uses its own short-lived
-// database/sql connection, separate from the query pool, and releases it
-// before returning.
-func (s *Store) Migrate(ctx context.Context) (err error) {
+// Migrate applies all pending up migrations: the app's own, then River's job
+// queue tables. The app migrations use their own short-lived database/sql
+// connection, separate from the query pool, and release it before River's
+// run on the pool.
+func (s *Store) Migrate(ctx context.Context) error {
+	if err := s.migrateApp(ctx); err != nil {
+		return err
+	}
+	migrator, err := rivermigrate.New(riverpgxv5.New(s.Pool), nil)
+	if err != nil {
+		return fmt.Errorf("store: river migrator: %w", err)
+	}
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+		return fmt.Errorf("store: river migrate up: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) migrateApp(ctx context.Context) (err error) {
 	sqlDB, err := sql.Open("pgx", s.url)
 	if err != nil {
 		return fmt.Errorf("store: open migration db: %w", err)
@@ -95,12 +113,18 @@ func (s *Store) Migrate(ctx context.Context) (err error) {
 // WithTx runs fn inside a transaction, committing when fn returns nil and
 // rolling back otherwise.
 func (s *Store) WithTx(ctx context.Context, fn func(q *db.Queries) error) error {
+	return s.WithPgxTx(ctx, func(_ pgx.Tx, q *db.Queries) error { return fn(q) })
+}
+
+// WithPgxTx is WithTx that also hands fn the transaction, for writes that
+// other libraries (the River job queue) make in the same transaction.
+func (s *Store) WithPgxTx(ctx context.Context, fn func(tx pgx.Tx, q *db.Queries) error) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("store: begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if err := fn(s.Q.WithTx(tx)); err != nil {
+	if err := fn(tx, s.Q.WithTx(tx)); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {

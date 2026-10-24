@@ -96,6 +96,10 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
      and uses `POSTGRES_PROD_PASSWORD`. The redirect URL and `PUBLIC_BASE_URL` use
      `api.fieldassistant.tools`, and `APP_REDIRECT_SCHEME` is `fieldassistant`.
 
+   Both API env files also carry the LLM settings used for RFI extraction:
+   `ANTHROPIC_API_KEY`, `LLM_EXTRACT_MODEL` and `LLM_TIMEOUT_SECONDS` (seconds,
+   defaults to 20). The API refuses to start without the first two.
+
    Each `PROCORE_REDIRECT_URL` must match the redirect URI registered with the
    matching Procore app exactly. Generate `TOKEN_VAULT_KEY` and `SESSION_SECRET`
    separately for each environment. If a database password has special characters

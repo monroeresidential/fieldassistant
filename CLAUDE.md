@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Next: Phase 1 sandbox verification, then milestone 2 (RFI extraction) per `docs/superpowers/plans/2026-10-22-roadmap.md`.
+Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 backend implemented (extraction, drafts, submit); iOS capture/review follows `docs/superpowers/plans/2026-10-24-milestone-2-ios.md`.
 
 Governing documents:
 
@@ -19,6 +19,7 @@ Implementation plans live in `docs/superpowers/plans/`.
 make db-up / make db-down      # local Postgres in Docker (api/docker-compose.yml)
 make run                       # API server; needs api/.env (copy api/.env.example)
 make test                      # go test ./... (DB tests skip without TEST_DATABASE_URL)
+make evals                     # live RFI extraction evals; needs ANTHROPIC_API_KEY, LLM_EXTRACT_MODEL and TEST_DATABASE_URL
 make generate                  # oapi-codegen + sqlc; commit the output
 make sync-contract             # copy api/openapi.yaml into the iOS package
 make check-contract            # fail if the iOS copy is stale (CI runs this)
@@ -58,6 +59,10 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 | `api/internal/httpapi` | chi router, generated server glue, handlers, middleware, error mapping. |
 | `api/internal/auth` | Procore OAuth broker, session JWTs, refresh-token vault, company cache. |
 | `api/internal/procore` | Procore HTTP client (rate limits, pagination, company header) and OAuth calls. |
+| `api/internal/llm` | Anthropic client behind an `Extractor` interface, with a scripted fake in `llmtest`. |
+| `api/internal/pipeline` | Draft pipeline: lookup cache, extraction, ID validation, draft save and revalidate, submit, audit. |
+| `api/internal/features/rfi` | RFI feature module: schema, versioned `prompt.md`, extraction tools and eval set. |
+| `api/internal/jobs` | River client and the idempotent submit worker. |
 | `api/internal/store` | Postgres access: migrations, sqlc queries and generated code in `db/`. |
 | `api/internal/store/storetest` | Shared test helper: migrates and truncates the test database. |
 | `ios/FieldAssistant/App` | App entry, root view, app state, build-time config. |
@@ -78,7 +83,8 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 - Migration `000001` may be edited until the first deploy. After editing, recreate local DBs: `docker compose -f api/docker-compose.yml down -v && make db-up`.
 - DB tests serialize through an advisory lock in `storetest`; do not bypass it.
 - The iOS `.xcodeproj` is generated and never committed. Swift package pins live in `ios/Package.resolved`.
-- Error bodies are `{code,message}` with a fixed code set: `bad_request`, `unauthorized`, `reauth_required`, `forbidden_scope`, `procore_permission_denied`, `not_found`, `procore_unavailable`, `internal` (`not_found` is reserved; nothing emits it yet).
+- Error bodies are `{code,message}` with a fixed code set: `bad_request`, `unauthorized`, `reauth_required`, `forbidden_scope`, `procore_permission_denied`, `not_found`, `procore_unavailable`, `internal`.
+- `procore_validation` is a draft-level error code carried in `DraftResponse.error` and `JobStatus.error`, not an HTTP error-body code.
 - On iOS only `AuthRefreshError.rejected` signs the user out; other refresh failures keep the session.
 
 ## Repository layout

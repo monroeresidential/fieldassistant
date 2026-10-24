@@ -10,6 +10,9 @@ services:
     image: ${API_DEV_IMAGE:-ghcr.io/monroeresidential/fieldassistant-api:develop}
     env_file: .env.dev
     restart: unless-stopped
+    # The API drains HTTP (10 s) then submit jobs (10 s, then 5 s to cancel)
+    # on SIGTERM; Docker's default 10 s would kill a job mid-POST.
+    stop_grace_period: 30s
     depends_on:
       postgres-dev:
         condition: service_healthy
@@ -18,6 +21,7 @@ services:
     image: ${API_PROD_IMAGE:-ghcr.io/monroeresidential/fieldassistant-api:main}
     env_file: .env.prod
     restart: unless-stopped
+    stop_grace_period: 30s
     depends_on:
       postgres-prod:
         condition: service_healthy

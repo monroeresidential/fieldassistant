@@ -2,10 +2,13 @@ package procore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -282,7 +285,7 @@ func TestClient_ListRFIs_DecodesNumberForms(t *testing.T) {
 	f := newFakeProcore(t, map[string]http.HandlerFunc{
 		"/rest/v1.0/projects/55/rfis": func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, `[
-				{"id":1,"number":12,"subject":"Beam size","status":"open","due_date":"2026-11-01","assignees":[{"id":9,"name":"Pat"}]},
+				{"id":1,"number":12,"subject":"Beam size","status":"open","due_date":"2026-11-01","assignees":[{"id":9,"name":"Pat"}],"created_at":"2026-10-24T15:04:05Z","created_by":{"id":42,"name":"Pat Field","login":"pat@example.com"}},
 				{"id":2,"number":"A-3","subject":"Door","status":"closed","due_date":null,"assignees":[]}
 			]`)
 		},
@@ -302,6 +305,9 @@ func TestClient_ListRFIs_DecodesNumberForms(t *testing.T) {
 	}
 	if len(got[0].Assignees) != 1 || got[0].Assignees[0] != (Person{ID: 9, Name: "Pat"}) {
 		t.Errorf("assignees = %+v", got[0].Assignees)
+	}
+	if got[0].CreatedAt != "2026-10-24T15:04:05Z" || got[0].CreatedBy != (Person{ID: 42, Name: "Pat Field"}) {
+		t.Errorf("created = %q by %+v", got[0].CreatedAt, got[0].CreatedBy)
 	}
 	if got[0].Subject != "Beam size" || got[0].Status != "open" {
 		t.Errorf("rfi[0] = %+v", got[0])
@@ -445,5 +451,271 @@ func TestClient_CallerCancelled_IsNotErrUnavailable(t *testing.T) {
 	_, err := newTestClient(f, &sleepRecorder{}).Me(ctx, "secret-token")
 	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want context.Canceled and not ErrUnavailable", err)
+	}
+}
+
+func TestClient_ListProjectUsers_PathAndCompanyHeader(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/users": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":3,"name":"Pat","email_address":"pat@x.com","job_title":"PM","vendor":{"id":5,"name":"Acme"}}]`)
+		},
+	})
+	got, err := newTestClient(f, &sleepRecorder{}).ListProjectUsers(context.Background(), "tok", 7, 9)
+	if err != nil {
+		t.Fatalf("ListProjectUsers: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != 3 || got[0].EmailAddress != "pat@x.com" || got[0].JobTitle != "PM" || got[0].Vendor.Name != "Acme" || got[0].Vendor.ID != 5 {
+		t.Fatalf("users = %+v", got)
+	}
+	reqs := f.recorded()
+	if len(reqs) != 1 || reqs[0].Header.Get("Procore-Company-Id") != "7" {
+		t.Fatalf("requests = %+v", reqs)
+	}
+}
+
+func TestClient_ListLocationsSpecsVendors_DecodeFields(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/locations": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":1,"name":"L1","node_name":"Bldg > L1","parent_id":null},{"id":2,"name":"R2","node_name":"Bldg > L1 > R2","parent_id":1}]`)
+		},
+		"/rest/v1.0/projects/9/specification_sections": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":4,"number":"03 30 00","description":"Concrete","label":"03 30 00 - Concrete"}]`)
+		},
+		"/rest/v1.0/projects/9/vendors": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":6,"name":"Acme Inc","trade_name":"Acme","abbreviated_name":"AC"}]`)
+		},
+	})
+	c := newTestClient(f, &sleepRecorder{})
+	ctx := context.Background()
+	locs, err := c.ListLocations(ctx, "tok", 7, 9)
+	if err != nil || len(locs) != 2 || locs[0].ParentID != nil || locs[1].ParentID == nil || *locs[1].ParentID != 1 || locs[1].NodeName != "Bldg > L1 > R2" {
+		t.Fatalf("locations = %+v, %v", locs, err)
+	}
+	specs, err := c.ListSpecSections(ctx, "tok", 7, 9)
+	if err != nil || len(specs) != 1 || specs[0].Number != "03 30 00" || specs[0].Label != "03 30 00 - Concrete" || specs[0].Description != "Concrete" {
+		t.Fatalf("specs = %+v, %v", specs, err)
+	}
+	vendors, err := c.ListVendors(ctx, "tok", 7, 9)
+	if err != nil || len(vendors) != 1 || vendors[0].TradeName != "Acme" || vendors[0].AbbreviatedName != "AC" {
+		t.Fatalf("vendors = %+v, %v", vendors, err)
+	}
+}
+
+func TestClient_ListCostCodes_UsesQueryParam(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/cost_codes": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":8,"full_code":"03-300","name":"Cast-in-place"}]`)
+		},
+	})
+	got, err := newTestClient(f, &sleepRecorder{}).ListCostCodes(context.Background(), "tok", 7, 9)
+	if err != nil || len(got) != 1 || got[0].FullCode != "03-300" || got[0].Name != "Cast-in-place" {
+		t.Fatalf("cost codes = %+v, %v", got, err)
+	}
+	r := f.recorded()[0]
+	if r.Query["project_id"] != "9" || r.Header.Get("Procore-Company-Id") != "7" {
+		t.Errorf("query/header = %v %q", r.Query, r.Header.Get("Procore-Company-Id"))
+	}
+}
+
+func TestClient_ProbeKind_OnePageOfOne(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/users": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":1,"name":"Ann"}]`)
+		},
+		"/rest/v1.0/cost_codes": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 403, `{"errors":"no budget access"}`)
+		},
+	})
+	c := newTestClient(f, &sleepRecorder{})
+	ctx := context.Background()
+	if err := c.ProbeKind(ctx, "tok", 7, 9, KindUsers); err != nil {
+		t.Fatalf("ProbeKind users = %v", err)
+	}
+	r := f.recorded()[0]
+	if r.Query["per_page"] != "1" || r.Query["page"] != "1" || r.Header.Get("Procore-Company-Id") != "7" {
+		t.Errorf("probe request = %+v", r)
+	}
+	if err := c.ProbeKind(ctx, "tok", 7, 9, KindCostCodes); !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("ProbeKind cost_codes = %v, want ErrPermissionDenied", err)
+	}
+	if r := f.recorded()[1]; r.Query["project_id"] != "9" || r.Query["per_page"] != "1" {
+		t.Errorf("cost code probe query = %v", r.Query)
+	}
+	if err := c.ProbeKind(ctx, "tok", 7, 9, "nope"); err == nil {
+		t.Error("ProbeKind of an unknown kind succeeded")
+	}
+}
+
+func TestClient_ListDrawings_V11(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.1/drawings": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":2,"number":"A-101","title":"Plan","discipline":"Architectural"}]`)
+		},
+	})
+	got, err := newTestClient(f, &sleepRecorder{}).ListDrawings(context.Background(), "tok", 7, 9)
+	if err != nil || len(got) != 1 || got[0] != (Drawing{ID: 2, Number: "A-101", Title: "Plan", Discipline: "Architectural"}) {
+		t.Fatalf("drawings = %+v, %v", got, err)
+	}
+	if r := f.recorded()[0]; r.Query["project_id"] != "9" {
+		t.Errorf("query = %v", r.Query)
+	}
+}
+
+func TestClient_GetProject_TimeZone(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `{"id":9,"name":"Tower","display_name":"Tower One","time_zone":"America/Chicago"}`)
+		},
+	})
+	got, err := newTestClient(f, &sleepRecorder{}).GetProject(context.Background(), "tok", 7, 9)
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if got != (ProjectDetail{ID: 9, Name: "Tower", DisplayName: "Tower One", TimeZone: "America/Chicago"}) {
+		t.Fatalf("project = %+v", got)
+	}
+	if h := f.recorded()[0].Header.Get("Procore-Company-Id"); h != "7" {
+		t.Errorf("company header = %q", h)
+	}
+}
+
+func TestClient_CreateRFI_PostsWrappedBodyWithValidations(t *testing.T) {
+	var method, ctype string
+	var raw []byte
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+			method, ctype = r.Method, r.Header.Get("Content-Type")
+			raw, _ = io.ReadAll(r.Body)
+			writeJSON(w, 201, `{"id":77,"number":12,"status":"draft","link":"https://x/rfis/77"}`)
+		},
+	})
+	body := RFICreate{Subject: "Beam size", Question: RFIQuestion{Body: "What size?"}}
+	got, err := newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, body)
+	if err != nil {
+		t.Fatalf("CreateRFI: %v", err)
+	}
+	if got != (RFICreated{ID: 77, Number: "12", Status: "draft", Link: "https://x/rfis/77"}) {
+		t.Fatalf("created = %+v", got)
+	}
+	if method != http.MethodPost || ctype != "application/json" {
+		t.Errorf("method %q content-type %q", method, ctype)
+	}
+	r := f.recorded()[0]
+	if r.Query["run_configurable_validations"] != "true" || r.Header.Get("Procore-Company-Id") != "7" {
+		t.Errorf("query/header = %v %q", r.Query, r.Header.Get("Procore-Company-Id"))
+	}
+	var top map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		t.Fatalf("body %s: %v", raw, err)
+	}
+	rfi, ok := top["rfi"]
+	if !ok || len(top) != 1 {
+		t.Fatalf("body = %s, want only top-level rfi", raw)
+	}
+	var subject string
+	if err := json.Unmarshal(rfi["subject"], &subject); err != nil || subject != "Beam size" {
+		t.Errorf("subject = %s", rfi["subject"])
+	}
+	var q struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(rfi["question"], &q); err != nil || q.Body != "What size?" {
+		t.Errorf("question = %s", rfi["question"])
+	}
+	for _, k := range []string{"due_date", "location_id", "cost_code_id", "specification_section_id", "drawing_number", "rfi_manager_id", "responsible_contractor_id", "schedule_impact", "cost_impact", "private", "draft"} {
+		if _, present := rfi[k]; present {
+			t.Errorf("optional field %q present in %s", k, raw)
+		}
+	}
+}
+
+func TestClient_CreateRFI_RetriesWithFreshBodyOn429(t *testing.T) {
+	var bodies []string
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			bodies = append(bodies, string(b))
+			if len(bodies) == 1 {
+				writeJSON(w, http.StatusTooManyRequests, `{}`)
+				return
+			}
+			writeJSON(w, 201, `{"id":1,"number":"A-1"}`)
+		},
+	})
+	_, err := newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, RFICreate{Subject: "S"})
+	if err != nil {
+		t.Fatalf("CreateRFI: %v", err)
+	}
+	if len(bodies) != 2 || bodies[0] == "" || bodies[0] != bodies[1] {
+		t.Fatalf("bodies = %q", bodies)
+	}
+}
+
+func TestClient_CreateRFI_422_IsValidationError(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 422, `{"errors":{"due_date":["can't be blank"],"rfi_manager_id":"is required"}}`)
+		},
+	})
+	_, err := newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, RFICreate{Subject: "S"})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want *ValidationError", err)
+	}
+	if got := ve.Fields["due_date"]; len(got) != 1 || got[0] != "can't be blank" {
+		t.Errorf("due_date = %v", got)
+	}
+	if got := ve.Fields["rfi_manager_id"]; len(got) != 1 || got[0] != "is required" {
+		t.Errorf("rfi_manager_id = %v", got)
+	}
+}
+
+// Nested error objects flatten to dotted keys; other leaf shapes keep their
+// raw JSON as the message rather than losing the 422's detail.
+func TestClient_CreateRFI_NestedErrors_Flattened(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 422, `{"errors":{"question":{"body":["can't be blank"]},"rfi":{"assignees":{"0":"is invalid"}},"subject":"is too long","count":3}}`)
+		},
+	})
+	_, err := newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, RFICreate{Subject: "S"})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want *ValidationError", err)
+	}
+	want := map[string][]string{
+		"question.body":   {"can't be blank"},
+		"rfi.assignees.0": {"is invalid"},
+		"subject":         {"is too long"},
+		"count":           {"3"},
+	}
+	if !reflect.DeepEqual(ve.Fields, want) {
+		t.Errorf("fields = %v, want %v", ve.Fields, want)
+	}
+}
+
+func TestClient_422_UnparsableBody_IsAPIError(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 422, `not json`)
+		},
+	})
+	_, err := newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, RFICreate{Subject: "S"})
+	var ve *ValidationError
+	var apiErr *APIError
+	if errors.As(err, &ve) || !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		t.Fatalf("err = %v, want *APIError 422", err)
+	}
+}
+
+func TestClient_CreateRFI_403_IsErrPermissionDenied(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusForbidden, `{"errors":"forbidden"}`)
+		},
+	})
+	_, err := newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, RFICreate{Subject: "S"})
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
 }
