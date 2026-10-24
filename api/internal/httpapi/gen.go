@@ -10,11 +10,222 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for CreateDraftRequestFeature.
+const (
+	CreateDraftRequestFeatureRfi CreateDraftRequestFeature = "rfi"
+)
+
+// Valid indicates whether the value is a known member of the CreateDraftRequestFeature enum.
+func (e CreateDraftRequestFeature) Valid() bool {
+	switch e {
+	case CreateDraftRequestFeatureRfi:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DraftResponseFeature.
+const (
+	DraftResponseFeatureRfi DraftResponseFeature = "rfi"
+)
+
+// Valid indicates whether the value is a known member of the DraftResponseFeature enum.
+func (e DraftResponseFeature) Valid() bool {
+	switch e {
+	case DraftResponseFeatureRfi:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DraftResponseStatus.
+const (
+	DraftResponseStatusExtracted  DraftResponseStatus = "extracted"
+	DraftResponseStatusFailed     DraftResponseStatus = "failed"
+	DraftResponseStatusReviewed   DraftResponseStatus = "reviewed"
+	DraftResponseStatusSubmitted  DraftResponseStatus = "submitted"
+	DraftResponseStatusSubmitting DraftResponseStatus = "submitting"
+)
+
+// Valid indicates whether the value is a known member of the DraftResponseStatus enum.
+func (e DraftResponseStatus) Valid() bool {
+	switch e {
+	case DraftResponseStatusExtracted:
+		return true
+	case DraftResponseStatusFailed:
+		return true
+	case DraftResponseStatusReviewed:
+		return true
+	case DraftResponseStatusSubmitted:
+		return true
+	case DraftResponseStatusSubmitting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ImpactStatus.
+const (
+	No         ImpactStatus = "no"
+	Tbd        ImpactStatus = "tbd"
+	YesKnown   ImpactStatus = "yes_known"
+	YesUnknown ImpactStatus = "yes_unknown"
+)
+
+// Valid indicates whether the value is a known member of the ImpactStatus enum.
+func (e ImpactStatus) Valid() bool {
+	switch e {
+	case No:
+		return true
+	case Tbd:
+		return true
+	case YesKnown:
+		return true
+	case YesUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for JobStatusStatus.
+const (
+	JobStatusStatusFailed    JobStatusStatus = "failed"
+	JobStatusStatusQueued    JobStatusStatus = "queued"
+	JobStatusStatusRunning   JobStatusStatus = "running"
+	JobStatusStatusSucceeded JobStatusStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the JobStatusStatus enum.
+func (e JobStatusStatus) Valid() bool {
+	switch e {
+	case JobStatusStatusFailed:
+		return true
+	case JobStatusStatusQueued:
+		return true
+	case JobStatusStatusRunning:
+		return true
+	case JobStatusStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for LookupResponseKind.
+const (
+	LookupResponseKindCostCodes    LookupResponseKind = "cost_codes"
+	LookupResponseKindDrawings     LookupResponseKind = "drawings"
+	LookupResponseKindLocations    LookupResponseKind = "locations"
+	LookupResponseKindSpecSections LookupResponseKind = "spec_sections"
+	LookupResponseKindUsers        LookupResponseKind = "users"
+	LookupResponseKindVendors      LookupResponseKind = "vendors"
+)
+
+// Valid indicates whether the value is a known member of the LookupResponseKind enum.
+func (e LookupResponseKind) Valid() bool {
+	switch e {
+	case LookupResponseKindCostCodes:
+		return true
+	case LookupResponseKindDrawings:
+		return true
+	case LookupResponseKindLocations:
+		return true
+	case LookupResponseKindSpecSections:
+		return true
+	case LookupResponseKindUsers:
+		return true
+	case LookupResponseKindVendors:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SubmitResponseStatus.
+const (
+	SubmitResponseStatusSubmitted  SubmitResponseStatus = "submitted"
+	SubmitResponseStatusSubmitting SubmitResponseStatus = "submitting"
+)
+
+// Valid indicates whether the value is a known member of the SubmitResponseStatus enum.
+func (e SubmitResponseStatus) Valid() bool {
+	switch e {
+	case SubmitResponseStatusSubmitted:
+		return true
+	case SubmitResponseStatusSubmitting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UnresolvedFieldReason.
+const (
+	Ambiguous         UnresolvedFieldReason = "ambiguous"
+	DateUnparseable   UnresolvedFieldReason = "date_unparseable"
+	NotFound          UnresolvedFieldReason = "not_found"
+	NotInLookup       UnresolvedFieldReason = "not_in_lookup"
+	ProcoreValidation UnresolvedFieldReason = "procore_validation"
+)
+
+// Valid indicates whether the value is a known member of the UnresolvedFieldReason enum.
+func (e UnresolvedFieldReason) Valid() bool {
+	switch e {
+	case Ambiguous:
+		return true
+	case DateUnparseable:
+		return true
+	case NotFound:
+		return true
+	case NotInLookup:
+		return true
+	case ProcoreValidation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetLookupParamsKind.
+const (
+	GetLookupParamsKindCostCodes    GetLookupParamsKind = "cost_codes"
+	GetLookupParamsKindDrawings     GetLookupParamsKind = "drawings"
+	GetLookupParamsKindLocations    GetLookupParamsKind = "locations"
+	GetLookupParamsKindSpecSections GetLookupParamsKind = "spec_sections"
+	GetLookupParamsKindUsers        GetLookupParamsKind = "users"
+	GetLookupParamsKindVendors      GetLookupParamsKind = "vendors"
+)
+
+// Valid indicates whether the value is a known member of the GetLookupParamsKind enum.
+func (e GetLookupParamsKind) Valid() bool {
+	switch e {
+	case GetLookupParamsKindCostCodes:
+		return true
+	case GetLookupParamsKindDrawings:
+		return true
+	case GetLookupParamsKindLocations:
+		return true
+	case GetLookupParamsKindSpecSections:
+		return true
+	case GetLookupParamsKindUsers:
+		return true
+	case GetLookupParamsKindVendors:
+		return true
+	default:
+		return false
+	}
+}
 
 // AuthExchangeRequest defines model for AuthExchangeRequest.
 type AuthExchangeRequest struct {
@@ -49,10 +260,96 @@ type Company struct {
 	Name string `json:"name"`
 }
 
+// CreateDraftRequest defines model for CreateDraftRequest.
+type CreateDraftRequest struct {
+	CapturedAt time.Time                 `json:"captured_at"`
+	Feature    CreateDraftRequestFeature `json:"feature"`
+	Id         openapi_types.UUID        `json:"id"`
+	Location   *struct {
+		Lat float64 `json:"lat"`
+		Lng float64 `json:"lng"`
+	} `json:"location,omitempty"`
+	ProjectId  int64  `json:"project_id"`
+	Transcript string `json:"transcript"`
+}
+
+// CreateDraftRequestFeature defines model for CreateDraftRequest.Feature.
+type CreateDraftRequestFeature string
+
+// DraftResponse defines model for DraftResponse.
+type DraftResponse struct {
+	Confidence   map[string]float64   `json:"confidence"`
+	CreatedAt    time.Time            `json:"created_at"`
+	Error        *Error               `json:"error,omitempty"`
+	Feature      DraftResponseFeature `json:"feature"`
+	Id           openapi_types.UUID   `json:"id"`
+	ModelVersion *string              `json:"model_version,omitempty"`
+	Payload      RFIDraftPayload      `json:"payload"`
+	ProjectId    int64                `json:"project_id"`
+	Result       *DraftResult         `json:"result,omitempty"`
+	Status       DraftResponseStatus  `json:"status"`
+	Transcript   string               `json:"transcript"`
+	Unresolved   []UnresolvedField    `json:"unresolved"`
+	UpdatedAt    time.Time            `json:"updated_at"`
+}
+
+// DraftResponseFeature defines model for DraftResponse.Feature.
+type DraftResponseFeature string
+
+// DraftResponseStatus defines model for DraftResponse.Status.
+type DraftResponseStatus string
+
+// DraftResult defines model for DraftResult.
+type DraftResult struct {
+	Number    *string `json:"number,omitempty"`
+	ProcoreId int64   `json:"procore_id"`
+	Url       *string `json:"url,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// Impact defines model for Impact.
+type Impact struct {
+	Status ImpactStatus `json:"status"`
+	Value  *string      `json:"value,omitempty"`
+}
+
+// ImpactStatus defines model for Impact.Status.
+type ImpactStatus string
+
+// JobStatus defines model for JobStatus.
+type JobStatus struct {
+	DraftId openapi_types.UUID `json:"draft_id"`
+	Error   *Error             `json:"error,omitempty"`
+	Id      string             `json:"id"`
+	Result  *DraftResult       `json:"result,omitempty"`
+	Status  JobStatusStatus    `json:"status"`
+}
+
+// JobStatusStatus defines model for JobStatus.Status.
+type JobStatusStatus string
+
+// LookupResponse defines model for LookupResponse.
+type LookupResponse struct {
+	FetchedAt   time.Time          `json:"fetched_at"`
+	Kind        LookupResponseKind `json:"kind"`
+	Reason      *string            `json:"reason,omitempty"`
+	Rows        []LookupRow        `json:"rows"`
+	Unavailable bool               `json:"unavailable"`
+}
+
+// LookupResponseKind defines model for LookupResponse.Kind.
+type LookupResponseKind string
+
+// LookupRow defines model for LookupRow.
+type LookupRow struct {
+	Extra *map[string]string `json:"extra,omitempty"`
+	Id    int64              `json:"id"`
+	Label string             `json:"label"`
 }
 
 // Project defines model for Project.
@@ -60,6 +357,25 @@ type Project struct {
 	DisplayName string `json:"display_name"`
 	Id          int64  `json:"id"`
 	Name        string `json:"name"`
+}
+
+// RFIDraftPayload defines model for RFIDraftPayload.
+type RFIDraftPayload struct {
+	AssigneeIds             []int64             `json:"assignee_ids"`
+	CostCodeId              *int64              `json:"cost_code_id,omitempty"`
+	CostImpact              *Impact             `json:"cost_impact,omitempty"`
+	DistributionIds         []int64             `json:"distribution_ids"`
+	Draft                   bool                `json:"draft"`
+	DrawingNumber           *string             `json:"drawing_number,omitempty"`
+	DueDate                 *openapi_types.Date `json:"due_date,omitempty"`
+	LocationId              *int64              `json:"location_id,omitempty"`
+	Private                 bool                `json:"private"`
+	QuestionBody            *string             `json:"question_body,omitempty"`
+	ResponsibleContractorId *int64              `json:"responsible_contractor_id,omitempty"`
+	RfiManagerId            *int64              `json:"rfi_manager_id,omitempty"`
+	ScheduleImpact          *Impact             `json:"schedule_impact,omitempty"`
+	SpecificationSectionId  *int64              `json:"specification_section_id,omitempty"`
+	Subject                 *string             `json:"subject,omitempty"`
 }
 
 // RFISummary defines model for RFISummary.
@@ -72,11 +388,26 @@ type RFISummary struct {
 	Subject   string              `json:"subject"`
 }
 
+// SaveDraftRequest defines model for SaveDraftRequest.
+type SaveDraftRequest struct {
+	Payload RFIDraftPayload `json:"payload"`
+}
+
 // Selection defines model for Selection.
 type Selection struct {
 	CompanyId int64 `json:"company_id"`
 	ProjectId int64 `json:"project_id"`
 }
+
+// SubmitResponse defines model for SubmitResponse.
+type SubmitResponse struct {
+	DraftId openapi_types.UUID   `json:"draft_id"`
+	JobId   string               `json:"job_id"`
+	Status  SubmitResponseStatus `json:"status"`
+}
+
+// SubmitResponseStatus defines model for SubmitResponse.Status.
+type SubmitResponseStatus string
 
 // TokenPair defines model for TokenPair.
 type TokenPair struct {
@@ -84,6 +415,17 @@ type TokenPair struct {
 	ExpiresIn    int    `json:"expires_in"`
 	RefreshToken string `json:"refresh_token"`
 }
+
+// UnresolvedField defines model for UnresolvedField.
+type UnresolvedField struct {
+	Candidates []LookupRow           `json:"candidates"`
+	Field      string                `json:"field"`
+	Message    *string               `json:"message,omitempty"`
+	Reason     UnresolvedFieldReason `json:"reason"`
+}
+
+// UnresolvedFieldReason defines model for UnresolvedField.Reason.
+type UnresolvedFieldReason string
 
 // User defines model for User.
 type User struct {
@@ -106,6 +448,51 @@ type AuthCallbackParams struct {
 	State string  `form:"state" json:"state"`
 }
 
+// ListDraftsParams defines parameters for ListDrafts.
+type ListDraftsParams struct {
+	ProjectId  int64 `form:"project_id" json:"project_id"`
+	Limit      *int  `form:"limit,omitempty" json:"limit,omitempty"`
+	XCompanyId int64 `json:"X-Company-Id"`
+}
+
+// CreateDraftParams defines parameters for CreateDraft.
+type CreateDraftParams struct {
+	XCompanyId int64 `json:"X-Company-Id"`
+}
+
+// GetDraftParams defines parameters for GetDraft.
+type GetDraftParams struct {
+	XCompanyId int64 `json:"X-Company-Id"`
+}
+
+// SaveDraftParams defines parameters for SaveDraft.
+type SaveDraftParams struct {
+	XCompanyId int64 `json:"X-Company-Id"`
+}
+
+// SubmitDraftParams defines parameters for SubmitDraft.
+type SubmitDraftParams struct {
+	XCompanyId     int64  `json:"X-Company-Id"`
+	IdempotencyKey string `json:"Idempotency-Key"`
+}
+
+// GetJobParams defines parameters for GetJob.
+type GetJobParams struct {
+	XCompanyId int64 `json:"X-Company-Id"`
+}
+
+// GetLookupParams defines parameters for GetLookup.
+type GetLookupParams struct {
+	XCompanyId  int64   `json:"X-Company-Id"`
+	IfNoneMatch *string `json:"If-None-Match,omitempty"`
+
+	// CacheControl `no-cache` refetches the list from Procore.
+	CacheControl *string `json:"Cache-Control,omitempty"`
+}
+
+// GetLookupParamsKind defines parameters for GetLookup.
+type GetLookupParamsKind string
+
 // ListRFIsParams defines parameters for ListRFIs.
 type ListRFIsParams struct {
 	XCompanyId int64 `json:"X-Company-Id"`
@@ -119,6 +506,12 @@ type AuthRefreshJSONRequestBody = AuthRefreshRequest
 
 // AuthStartJSONRequestBody defines body for AuthStart for application/json ContentType.
 type AuthStartJSONRequestBody = AuthStartRequest
+
+// CreateDraftJSONRequestBody defines body for CreateDraft for application/json ContentType.
+type CreateDraftJSONRequestBody = CreateDraftRequest
+
+// SaveDraftJSONRequestBody defines body for SaveDraft for application/json ContentType.
+type SaveDraftJSONRequestBody = SaveDraftRequest
 
 // PutMeSelectionJSONRequestBody defines body for PutMeSelection for application/json ContentType.
 type PutMeSelectionJSONRequestBody = Selection
@@ -147,11 +540,32 @@ type ServerInterface interface {
 	// (GET /companies/{companyId}/projects)
 	ListProjects(w http.ResponseWriter, r *http.Request, companyId int64)
 
+	// (GET /drafts)
+	ListDrafts(w http.ResponseWriter, r *http.Request, params ListDraftsParams)
+
+	// (POST /drafts)
+	CreateDraft(w http.ResponseWriter, r *http.Request, params CreateDraftParams)
+
+	// (GET /drafts/{draftId})
+	GetDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params GetDraftParams)
+
+	// (PATCH /drafts/{draftId})
+	SaveDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params SaveDraftParams)
+
+	// (POST /drafts/{draftId}/submit)
+	SubmitDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params SubmitDraftParams)
+
+	// (GET /jobs/{jobId})
+	GetJob(w http.ResponseWriter, r *http.Request, jobId string, params GetJobParams)
+
 	// (GET /me)
 	GetMe(w http.ResponseWriter, r *http.Request)
 
 	// (PUT /me/selection)
 	PutMeSelection(w http.ResponseWriter, r *http.Request)
+
+	// (GET /projects/{projectId}/lookups/{kind})
+	GetLookup(w http.ResponseWriter, r *http.Request, projectId int64, kind GetLookupParamsKind, params GetLookupParams)
 
 	// (GET /projects/{projectId}/rfis)
 	ListRFIs(w http.ResponseWriter, r *http.Request, projectId int64, params ListRFIsParams)
@@ -196,6 +610,36 @@ func (_ Unimplemented) ListProjects(w http.ResponseWriter, r *http.Request, comp
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /drafts)
+func (_ Unimplemented) ListDrafts(w http.ResponseWriter, r *http.Request, params ListDraftsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /drafts)
+func (_ Unimplemented) CreateDraft(w http.ResponseWriter, r *http.Request, params CreateDraftParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /drafts/{draftId})
+func (_ Unimplemented) GetDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params GetDraftParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PATCH /drafts/{draftId})
+func (_ Unimplemented) SaveDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params SaveDraftParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /drafts/{draftId}/submit)
+func (_ Unimplemented) SubmitDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params SubmitDraftParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /jobs/{jobId})
+func (_ Unimplemented) GetJob(w http.ResponseWriter, r *http.Request, jobId string, params GetJobParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /me)
 func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -203,6 +647,11 @@ func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
 
 // (PUT /me/selection)
 func (_ Unimplemented) PutMeSelection(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /projects/{projectId}/lookups/{kind})
+func (_ Unimplemented) GetLookup(w http.ResponseWriter, r *http.Request, projectId int64, kind GetLookupParamsKind, params GetLookupParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -375,6 +824,361 @@ func (siw *ServerInterfaceWrapper) ListProjects(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// ListDrafts operation middleware
+func (siw *ServerInterfaceWrapper) ListDrafts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListDraftsParams
+
+	// ------------- Required query parameter "project_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "project_id", r.URL.Query(), &params.ProjectId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "project_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListDrafts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateDraft operation middleware
+func (siw *ServerInterfaceWrapper) CreateDraft(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateDraftParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateDraft(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDraft operation middleware
+func (siw *ServerInterfaceWrapper) GetDraft(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "draftId" -------------
+	var draftId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "draftId", chi.URLParam(r, "draftId"), &draftId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "draftId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDraftParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDraft(w, r, draftId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaveDraft operation middleware
+func (siw *ServerInterfaceWrapper) SaveDraft(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "draftId" -------------
+	var draftId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "draftId", chi.URLParam(r, "draftId"), &draftId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "draftId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SaveDraftParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveDraft(w, r, draftId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SubmitDraft operation middleware
+func (siw *ServerInterfaceWrapper) SubmitDraft(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "draftId" -------------
+	var draftId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "draftId", chi.URLParam(r, "draftId"), &draftId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "draftId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SubmitDraftParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubmitDraft(w, r, draftId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetJob operation middleware
+func (siw *ServerInterfaceWrapper) GetJob(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "jobId" -------------
+	var jobId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "jobId", chi.URLParam(r, "jobId"), &jobId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "jobId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetJobParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetJob(w, r, jobId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetMe operation middleware
 func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
 
@@ -394,6 +1198,107 @@ func (siw *ServerInterfaceWrapper) PutMeSelection(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutMeSelection(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetLookup operation middleware
+func (siw *ServerInterfaceWrapper) GetLookup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", chi.URLParam(r, "projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "kind" -------------
+	var kind GetLookupParamsKind
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetLookupParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	// ------------- Optional header parameter "If-None-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-None-Match")]; found {
+		var IfNoneMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-None-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-None-Match", valueList[0], &IfNoneMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-None-Match", Err: err})
+			return
+		}
+
+		params.IfNoneMatch = &IfNoneMatch
+
+	}
+
+	// ------------- Optional header parameter "Cache-Control" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Cache-Control")]; found {
+		var CacheControl string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Cache-Control", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Cache-Control", valueList[0], &CacheControl, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Cache-Control", Err: err})
+			return
+		}
+
+		params.CacheControl = &CacheControl
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetLookup(w, r, projectId, kind, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -599,6 +1504,27 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/projects/{projectId}/rfis", wrapper.ListRFIs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/projects/{projectId}/lookups/{kind}", wrapper.GetLookup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/drafts", wrapper.ListDrafts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/drafts", wrapper.CreateDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/drafts/{draftId}", wrapper.GetDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/drafts/{draftId}", wrapper.SaveDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/drafts/{draftId}/submit", wrapper.SubmitDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/jobs/{jobId}", wrapper.GetJob)
 	})
 
 	return r
@@ -1025,6 +1951,624 @@ func (response ListProjectsdefaultJSONResponse) VisitListProjectsResponse(w http
 	return err
 }
 
+type ListDraftsRequestObject struct {
+	Params ListDraftsParams
+}
+
+type ListDraftsResponseObject interface {
+	VisitListDraftsResponse(w http.ResponseWriter) error
+}
+
+type ListDrafts200JSONResponse []DraftResponse
+
+func (response ListDrafts200JSONResponse) VisitListDraftsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDrafts400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ListDrafts400JSONResponse) VisitListDraftsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDrafts401JSONResponse Error
+
+func (response ListDrafts401JSONResponse) VisitListDraftsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDrafts403JSONResponse Error
+
+func (response ListDrafts403JSONResponse) VisitListDraftsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDrafts502JSONResponse Error
+
+func (response ListDrafts502JSONResponse) VisitListDraftsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListDraftsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response ListDraftsdefaultJSONResponse) VisitListDraftsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateDraftRequestObject struct {
+	Params CreateDraftParams
+	Body   *CreateDraftJSONRequestBody
+}
+
+type CreateDraftResponseObject interface {
+	VisitCreateDraftResponse(w http.ResponseWriter) error
+}
+
+type CreateDraft200JSONResponse DraftResponse
+
+func (response CreateDraft200JSONResponse) VisitCreateDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateDraft400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateDraft400JSONResponse) VisitCreateDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateDraft401JSONResponse Error
+
+func (response CreateDraft401JSONResponse) VisitCreateDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateDraft403JSONResponse Error
+
+func (response CreateDraft403JSONResponse) VisitCreateDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateDraft502JSONResponse Error
+
+func (response CreateDraft502JSONResponse) VisitCreateDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateDraftdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response CreateDraftdefaultJSONResponse) VisitCreateDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDraftRequestObject struct {
+	DraftId openapi_types.UUID `json:"draftId"`
+	Params  GetDraftParams
+}
+
+type GetDraftResponseObject interface {
+	VisitGetDraftResponse(w http.ResponseWriter) error
+}
+
+type GetDraft200JSONResponse DraftResponse
+
+func (response GetDraft200JSONResponse) VisitGetDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDraft401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetDraft401JSONResponse) VisitGetDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDraft403JSONResponse Error
+
+func (response GetDraft403JSONResponse) VisitGetDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDraft404JSONResponse Error
+
+func (response GetDraft404JSONResponse) VisitGetDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDraft502JSONResponse Error
+
+func (response GetDraft502JSONResponse) VisitGetDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDraftdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetDraftdefaultJSONResponse) VisitGetDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveDraftRequestObject struct {
+	DraftId openapi_types.UUID `json:"draftId"`
+	Params  SaveDraftParams
+	Body    *SaveDraftJSONRequestBody
+}
+
+type SaveDraftResponseObject interface {
+	VisitSaveDraftResponse(w http.ResponseWriter) error
+}
+
+type SaveDraft200JSONResponse DraftResponse
+
+func (response SaveDraft200JSONResponse) VisitSaveDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveDraft400JSONResponse struct{ ErrorJSONResponse }
+
+func (response SaveDraft400JSONResponse) VisitSaveDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveDraft401JSONResponse Error
+
+func (response SaveDraft401JSONResponse) VisitSaveDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveDraft403JSONResponse Error
+
+func (response SaveDraft403JSONResponse) VisitSaveDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveDraft404JSONResponse Error
+
+func (response SaveDraft404JSONResponse) VisitSaveDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveDraft502JSONResponse Error
+
+func (response SaveDraft502JSONResponse) VisitSaveDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveDraftdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response SaveDraftdefaultJSONResponse) VisitSaveDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitDraftRequestObject struct {
+	DraftId openapi_types.UUID `json:"draftId"`
+	Params  SubmitDraftParams
+}
+
+type SubmitDraftResponseObject interface {
+	VisitSubmitDraftResponse(w http.ResponseWriter) error
+}
+
+type SubmitDraft200JSONResponse SubmitResponse
+
+func (response SubmitDraft200JSONResponse) VisitSubmitDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitDraft202JSONResponse SubmitResponse
+
+func (response SubmitDraft202JSONResponse) VisitSubmitDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitDraft400JSONResponse struct{ ErrorJSONResponse }
+
+func (response SubmitDraft400JSONResponse) VisitSubmitDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitDraft401JSONResponse Error
+
+func (response SubmitDraft401JSONResponse) VisitSubmitDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitDraft403JSONResponse Error
+
+func (response SubmitDraft403JSONResponse) VisitSubmitDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitDraft404JSONResponse Error
+
+func (response SubmitDraft404JSONResponse) VisitSubmitDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitDraft502JSONResponse Error
+
+func (response SubmitDraft502JSONResponse) VisitSubmitDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitDraftdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response SubmitDraftdefaultJSONResponse) VisitSubmitDraftResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetJobRequestObject struct {
+	JobId  string `json:"jobId"`
+	Params GetJobParams
+}
+
+type GetJobResponseObject interface {
+	VisitGetJobResponse(w http.ResponseWriter) error
+}
+
+type GetJob200JSONResponse JobStatus
+
+func (response GetJob200JSONResponse) VisitGetJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetJob401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetJob401JSONResponse) VisitGetJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetJob403JSONResponse Error
+
+func (response GetJob403JSONResponse) VisitGetJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetJob404JSONResponse Error
+
+func (response GetJob404JSONResponse) VisitGetJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetJob502JSONResponse Error
+
+func (response GetJob502JSONResponse) VisitGetJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetJobdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetJobdefaultJSONResponse) VisitGetJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetMeRequestObject struct {
 }
 
@@ -1152,6 +2696,119 @@ func (response PutMeSelectiondefaultJSONResponse) VisitPutMeSelectionResponse(w 
 	return err
 }
 
+type GetLookupRequestObject struct {
+	ProjectId int64               `json:"projectId"`
+	Kind      GetLookupParamsKind `json:"kind"`
+	Params    GetLookupParams
+}
+
+type GetLookupResponseObject interface {
+	VisitGetLookupResponse(w http.ResponseWriter) error
+}
+
+type GetLookup200ResponseHeaders struct {
+	ETag string
+}
+
+type GetLookup200JSONResponse struct {
+	Body    LookupResponse
+	Headers GetLookup200ResponseHeaders
+}
+
+func (response GetLookup200JSONResponse) VisitGetLookupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("ETag", fmt.Sprint(response.Headers.ETag))
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetLookup304Response struct {
+}
+
+func (response GetLookup304Response) VisitGetLookupResponse(w http.ResponseWriter) error {
+	w.WriteHeader(304)
+	return nil
+}
+
+type GetLookup400JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetLookup400JSONResponse) VisitGetLookupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetLookup401JSONResponse Error
+
+func (response GetLookup401JSONResponse) VisitGetLookupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetLookup403JSONResponse Error
+
+func (response GetLookup403JSONResponse) VisitGetLookupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetLookup502JSONResponse Error
+
+func (response GetLookup502JSONResponse) VisitGetLookupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetLookupdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetLookupdefaultJSONResponse) VisitGetLookupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListRFIsRequestObject struct {
 	ProjectId int64 `json:"projectId"`
 	Params    ListRFIsParams
@@ -1258,11 +2915,32 @@ type StrictServerInterface interface {
 	// (GET /companies/{companyId}/projects)
 	ListProjects(ctx context.Context, request ListProjectsRequestObject) (ListProjectsResponseObject, error)
 
+	// (GET /drafts)
+	ListDrafts(ctx context.Context, request ListDraftsRequestObject) (ListDraftsResponseObject, error)
+
+	// (POST /drafts)
+	CreateDraft(ctx context.Context, request CreateDraftRequestObject) (CreateDraftResponseObject, error)
+
+	// (GET /drafts/{draftId})
+	GetDraft(ctx context.Context, request GetDraftRequestObject) (GetDraftResponseObject, error)
+
+	// (PATCH /drafts/{draftId})
+	SaveDraft(ctx context.Context, request SaveDraftRequestObject) (SaveDraftResponseObject, error)
+
+	// (POST /drafts/{draftId}/submit)
+	SubmitDraft(ctx context.Context, request SubmitDraftRequestObject) (SubmitDraftResponseObject, error)
+
+	// (GET /jobs/{jobId})
+	GetJob(ctx context.Context, request GetJobRequestObject) (GetJobResponseObject, error)
+
 	// (GET /me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
 
 	// (PUT /me/selection)
 	PutMeSelection(ctx context.Context, request PutMeSelectionRequestObject) (PutMeSelectionResponseObject, error)
+
+	// (GET /projects/{projectId}/lookups/{kind})
+	GetLookup(ctx context.Context, request GetLookupRequestObject) (GetLookupResponseObject, error)
 
 	// (GET /projects/{projectId}/rfis)
 	ListRFIs(ctx context.Context, request ListRFIsRequestObject) (ListRFIsResponseObject, error)
@@ -1500,6 +3178,180 @@ func (sh *strictHandler) ListProjects(w http.ResponseWriter, r *http.Request, co
 	}
 }
 
+// ListDrafts operation middleware
+func (sh *strictHandler) ListDrafts(w http.ResponseWriter, r *http.Request, params ListDraftsParams) {
+	var request ListDraftsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListDrafts(ctx, request.(ListDraftsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListDrafts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListDraftsResponseObject); ok {
+		if err := validResponse.VisitListDraftsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateDraft operation middleware
+func (sh *strictHandler) CreateDraft(w http.ResponseWriter, r *http.Request, params CreateDraftParams) {
+	var request CreateDraftRequestObject
+
+	request.Params = params
+
+	var body CreateDraftJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateDraft(ctx, request.(CreateDraftRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateDraft")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateDraftResponseObject); ok {
+		if err := validResponse.VisitCreateDraftResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetDraft operation middleware
+func (sh *strictHandler) GetDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params GetDraftParams) {
+	var request GetDraftRequestObject
+
+	request.DraftId = draftId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDraft(ctx, request.(GetDraftRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDraft")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDraftResponseObject); ok {
+		if err := validResponse.VisitGetDraftResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaveDraft operation middleware
+func (sh *strictHandler) SaveDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params SaveDraftParams) {
+	var request SaveDraftRequestObject
+
+	request.DraftId = draftId
+	request.Params = params
+
+	var body SaveDraftJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaveDraft(ctx, request.(SaveDraftRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaveDraft")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaveDraftResponseObject); ok {
+		if err := validResponse.VisitSaveDraftResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SubmitDraft operation middleware
+func (sh *strictHandler) SubmitDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params SubmitDraftParams) {
+	var request SubmitDraftRequestObject
+
+	request.DraftId = draftId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SubmitDraft(ctx, request.(SubmitDraftRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SubmitDraft")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SubmitDraftResponseObject); ok {
+		if err := validResponse.VisitSubmitDraftResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetJob operation middleware
+func (sh *strictHandler) GetJob(w http.ResponseWriter, r *http.Request, jobId string, params GetJobParams) {
+	var request GetJobRequestObject
+
+	request.JobId = jobId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetJob(ctx, request.(GetJobRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetJob")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetJobResponseObject); ok {
+		if err := validResponse.VisitGetJobResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetMe operation middleware
 func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	var request GetMeRequestObject
@@ -1548,6 +3400,34 @@ func (sh *strictHandler) PutMeSelection(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutMeSelectionResponseObject); ok {
 		if err := validResponse.VisitPutMeSelectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetLookup operation middleware
+func (sh *strictHandler) GetLookup(w http.ResponseWriter, r *http.Request, projectId int64, kind GetLookupParamsKind, params GetLookupParams) {
+	var request GetLookupRequestObject
+
+	request.ProjectId = projectId
+	request.Kind = kind
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetLookup(ctx, request.(GetLookupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetLookup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetLookupResponseObject); ok {
+		if err := validResponse.VisitGetLookupResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

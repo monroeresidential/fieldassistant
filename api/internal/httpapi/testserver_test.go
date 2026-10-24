@@ -20,6 +20,7 @@ import (
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 	"github.com/monroeresidential/fieldassistant/api/internal/config"
+	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
 	"github.com/monroeresidential/fieldassistant/api/internal/store/storetest"
 )
@@ -68,7 +69,24 @@ type fakeProcore struct {
 	RefreshFails  bool                        // /oauth/token refresh_token grant answers 401
 	RefreshErrors bool                        // /oauth/token refresh_token grant answers 500
 	Status429Once bool                        // the next REST request answers 429
-	Forbidden     map[string]bool             // REST paths, e.g. "/projects/5/rfis", that answer 403
+	Forbidden     map[string]bool             // REST paths without the version prefix, e.g. "/projects/5/rfis", that answer 403
+
+	// Lookup lists by project id. Cost codes and drawings are matched on
+	// the project_id query parameter.
+	ProjectUsers map[int64][]procore.ProjectUser
+	Locations    map[int64][]procore.Location
+	SpecSections map[int64][]procore.SpecSection
+	CostCodes    map[int64][]procore.CostCode
+	Vendors      map[int64][]procore.Vendor
+	Drawings     map[int64][]procore.Drawing
+	// ProjectDetails answers GET /projects/{id}; a missing project is 404.
+	ProjectDetails map[int64]procore.ProjectDetail
+
+	// RFICreateResponse scripts POST /projects/{id}/rfis: it receives the
+	// request body and returns the status and JSON body to answer with. It
+	// runs under the fake's lock, so it must not call With. Nil answers 500.
+	RFICreateResponse func(body []byte) (int, string)
+	RFICreateBodies   [][]byte // bodies posted to /projects/{id}/rfis
 
 	Revoked  []string      // tokens posted to /oauth/revoke
 	Requests []fakeRequest // every request, in arrival order
@@ -100,7 +118,7 @@ func (f *fakeProcore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/oauth/revoke":
 		f.Revoked = append(f.Revoked, r.FormValue("token"))
 		w.WriteHeader(http.StatusOK)
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/rest/v1.0/"):
+	case strings.HasPrefix(r.URL.Path, "/rest/v1.0/"), strings.HasPrefix(r.URL.Path, "/rest/v1.1/"):
 		f.rest(w, r)
 	default:
 		http.Error(w, "unexpected request", http.StatusNotFound)
@@ -154,25 +172,90 @@ func (f *fakeProcore) rest(w http.ResponseWriter, r *http.Request) {
 	// Every list fits on the first page, so later pages are empty.
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	firstPage := page <= 1
-	path := strings.TrimPrefix(r.URL.Path, "/rest/v1.0")
+	version, path := r.URL.Path[len("/rest/"):len("/rest/v1.0")], r.URL.Path[len("/rest/v1.0"):]
 	if f.Forbidden[path] {
 		http.Error(w, `{"errors":"forbidden"}`, http.StatusForbidden)
 		return
 	}
-	switch {
-	case path == "/me":
+	queryProject, _ := strconv.ParseInt(r.URL.Query().Get("project_id"), 10, 64)
+	projectID, sub, isProject := projectRoute(path)
+	route := r.Method + " " + version + " " + path
+	if isProject {
+		route = r.Method + " " + version + " /projects/{id}" + sub
+	}
+	switch route {
+	case "GET v1.0 /me":
 		writeJSON(w, me)
-	case path == "/companies":
+	case "GET v1.0 /companies":
 		writeJSON(w, pageOf(f.Companies, firstPage))
-	case path == "/projects":
+	case "GET v1.0 /projects":
 		companyID, _ := strconv.ParseInt(r.URL.Query().Get("company_id"), 10, 64)
 		writeJSON(w, pageOf(f.Projects[companyID], firstPage))
-	case strings.HasPrefix(path, "/projects/") && strings.HasSuffix(path, "/rfis"):
-		projectID, _ := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(path, "/projects/"), "/rfis"), 10, 64)
+	case "GET v1.0 /projects/{id}":
+		detail, ok := f.ProjectDetails[projectID]
+		if !ok {
+			http.Error(w, `{"errors":"not found"}`, http.StatusNotFound)
+			return
+		}
+		writeJSON(w, detail)
+	case "GET v1.0 /projects/{id}/rfis":
 		writeJSON(w, pageOf(f.RFIs[projectID], firstPage))
+	case "POST v1.0 /projects/{id}/rfis":
+		body, _ := io.ReadAll(r.Body)
+		f.RFICreateBodies = append(f.RFICreateBodies, body)
+		status, resp := http.StatusInternalServerError, `{"errors":"no scripted response"}`
+		if f.RFICreateResponse != nil {
+			status, resp = f.RFICreateResponse(body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, resp)
+	case "GET v1.0 /projects/{id}/users":
+		writeJSON(w, pageOf(f.ProjectUsers[projectID], firstPage))
+	case "GET v1.0 /projects/{id}/locations":
+		writeJSON(w, pageOf(f.Locations[projectID], firstPage))
+	case "GET v1.0 /projects/{id}/specification_sections":
+		writeJSON(w, pageOf(f.SpecSections[projectID], firstPage))
+	case "GET v1.0 /projects/{id}/vendors":
+		writeJSON(w, pageOf(f.Vendors[projectID], firstPage))
+	case "GET v1.0 /cost_codes":
+		writeJSON(w, pageOf(f.CostCodes[queryProject], firstPage))
+	case "GET v1.1 /drawings":
+		writeJSON(w, pageOf(f.Drawings[queryProject], firstPage))
 	default:
 		http.Error(w, "unexpected request", http.StatusNotFound)
 	}
+}
+
+// projectRoute splits "/projects/{id}[/sub]" into the id and "/sub". ok is
+// false for any other path, including the bare "/projects" list.
+func projectRoute(path string) (id int64, sub string, ok bool) {
+	rest, found := strings.CutPrefix(path, "/projects/")
+	if !found {
+		return 0, "", false
+	}
+	idPart, tail, hasTail := strings.Cut(rest, "/")
+	id, err := strconv.ParseInt(idPart, 10, 64)
+	if err != nil {
+		return 0, "", false
+	}
+	if hasTail {
+		sub = "/" + tail
+	}
+	return id, sub, true
+}
+
+// requestsTo returns how many requests the fake received for path.
+func (f *fakeProcore) requestsTo(path string) int {
+	n := 0
+	f.With(func(f *fakeProcore) {
+		for _, r := range f.Requests {
+			if r.Path == path {
+				n++
+			}
+		}
+	})
+	return n
 }
 
 // tokenUserID extracts the user id from a token shaped "<kind>-<id>-<n>".
@@ -220,7 +303,16 @@ func newTestServerWithScheme(t *testing.T, scheme string) (*httptest.Server, *fa
 		Projects:  map[int64][]procore.Project{},
 		RFIs:      map[int64][]procore.RFI{},
 		Forbidden: map[string]bool{},
-		Clock:     clock,
+
+		ProjectUsers:   map[int64][]procore.ProjectUser{},
+		Locations:      map[int64][]procore.Location{},
+		SpecSections:   map[int64][]procore.SpecSection{},
+		CostCodes:      map[int64][]procore.CostCode{},
+		Vendors:        map[int64][]procore.Vendor{},
+		Drawings:       map[int64][]procore.Drawing{},
+		ProjectDetails: map[int64]procore.ProjectDetail{},
+
+		Clock: clock,
 	}
 	procoreSrv := httptest.NewServer(fp)
 	t.Cleanup(procoreSrv.Close)
@@ -252,9 +344,10 @@ func newTestServerWithScheme(t *testing.T, scheme string) (*httptest.Server, *fa
 	pc := procore.NewClient(cfg.Procore.APIURL, procoreSrv.Client(), func(time.Duration) {}, clock.now)
 	tokens := auth.NewTokenSource(st, vault, oauth, clock.now)
 	sessions := auth.NewSessions(st, cfg.SessionSecret, clock.now)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	api.Config.Handler = NewRouter(Deps{
-		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:    logger,
 		Config:    cfg,
 		Store:     st,
 		Sessions:  sessions,
@@ -262,6 +355,7 @@ func newTestServerWithScheme(t *testing.T, scheme string) (*httptest.Server, *fa
 		Tokens:    tokens,
 		Procore:   pc,
 		Companies: auth.NewCompanyCache(pc, tokens, 10*time.Minute, clock.now),
+		Lookups:   pipeline.NewLookups(st, pc, tokens, 10*time.Minute, clock.now, logger),
 	})
 	api.Start()
 	t.Cleanup(api.Close)

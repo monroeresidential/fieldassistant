@@ -10,6 +10,7 @@ import (
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 	"github.com/monroeresidential/fieldassistant/api/internal/config"
+	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
 	"github.com/monroeresidential/fieldassistant/api/internal/store"
 )
@@ -26,6 +27,8 @@ type Deps struct {
 	Procore  *procore.Client
 	// Companies caches each user's Procore company list for scope checks.
 	Companies *auth.CompanyCache
+	// Lookups serves project lookup lists from the Postgres-backed cache.
+	Lookups *pipeline.Lookups
 }
 
 // NewRouter builds the HTTP handler for the API.
