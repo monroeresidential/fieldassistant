@@ -12,7 +12,7 @@ struct UnresolvedRow: View {
     init(
         label: String,
         field: UnresolvedField,
-        kind: LookupKind = .users,
+        kind: LookupKind,
         onChoose: @escaping (LookupRow) -> Void,
         onSomeoneElse: @escaping () -> Void
     ) {
@@ -109,6 +109,7 @@ struct UnresolvedRow: View {
             UnresolvedRow(
                 label: "Assignee",
                 field: UnresolvedField(field: "assignee", reason: .ambiguous, candidates: people, blocking: true),
+                kind: .users,
                 onChoose: { _ in }, onSomeoneElse: {}
             )
             UnresolvedRow(

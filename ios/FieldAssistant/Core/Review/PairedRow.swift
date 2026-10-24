@@ -28,7 +28,6 @@ struct PairedRow<L: View, R: View>: View {
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(label)
     }
 }
 

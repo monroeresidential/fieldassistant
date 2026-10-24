@@ -9,7 +9,6 @@ struct ReviewLabel: View {
         Text(text.uppercased())
             .font(.caption2.weight(.semibold))
             .foregroundStyle(flagged ? Color.orange : Color.secondary)
-            .accessibilityHidden(true)
     }
 }
 
@@ -41,11 +40,9 @@ struct ReviewRow<Content: View>: View {
             if let action {
                 Button(action: action) { rowBody }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(label)
             } else {
                 rowBody
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(label)
             }
             Divider()
         }
