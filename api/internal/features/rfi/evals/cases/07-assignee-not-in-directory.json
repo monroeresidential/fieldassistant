@@ -1,0 +1,140 @@
+{
+  "name": "assignee not in directory",
+  "transcript": "Can the backing for the wall-mounted TVs in the level one lobby be fire-retardant plywood instead of steel strap? Send it to Jorge.",
+  "today": "2026-11-10",
+  "time_zone": "America/Chicago",
+  "user": {
+    "procore_id": 42,
+    "name": "Pat Field"
+  },
+  "fixture": {
+    "users": [
+      {
+        "id": 11,
+        "label": "Ben West",
+        "extra": {
+          "role": "Architect",
+          "company": "West Studio"
+        }
+      },
+      {
+        "id": 12,
+        "label": "Mike Ross",
+        "extra": {
+          "role": "Project Manager"
+        }
+      },
+      {
+        "id": 13,
+        "label": "Mike Chen",
+        "extra": {
+          "role": "Electrician",
+          "company": "Chen Electric"
+        }
+      },
+      {
+        "id": 42,
+        "label": "Pat Field",
+        "extra": {
+          "role": "Superintendent"
+        }
+      }
+    ],
+    "locations": [
+      {
+        "id": 201,
+        "label": "Level 2 > Mechanical Room",
+        "extra": {
+          "node": "Mechanical Room"
+        }
+      },
+      {
+        "id": 202,
+        "label": "Roof > Air Handler Platform",
+        "extra": {
+          "node": "Air Handler Platform"
+        }
+      },
+      {
+        "id": 203,
+        "label": "Level 1 > Lobby",
+        "extra": {
+          "node": "Lobby"
+        }
+      }
+    ],
+    "spec_sections": [
+      {
+        "id": 301,
+        "label": "23 05 00 Common Work Results for HVAC",
+        "extra": {
+          "number": "23 05 00"
+        }
+      },
+      {
+        "id": 302,
+        "label": "06 10 00 Rough Carpentry",
+        "extra": {
+          "number": "06 10 00"
+        }
+      }
+    ],
+    "cost_codes": [
+      {
+        "id": 401,
+        "label": "01-310 Supervision",
+        "extra": {
+          "code": "01-310"
+        }
+      }
+    ],
+    "vendors": [
+      {
+        "id": 501,
+        "label": "West Studio",
+        "extra": {
+          "trade": "Architecture"
+        }
+      },
+      {
+        "id": 502,
+        "label": "Chen Electric",
+        "extra": {
+          "trade": "Electrical"
+        }
+      }
+    ],
+    "drawings": [
+      {
+        "id": 601,
+        "label": "M-301 Mechanical Plan Level 2",
+        "extra": {
+          "number": "M-301",
+          "discipline": "Mechanical"
+        }
+      },
+      {
+        "id": 602,
+        "label": "S-201 Framing Plan",
+        "extra": {
+          "number": "S-201",
+          "discipline": "Structural"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "payload": {
+      "assignee_ids": []
+    },
+    "forbid_ids": [
+      "assignee_ids"
+    ],
+    "unresolved": [
+      {
+        "field": "assignee_ids",
+        "reason": "not_found"
+      }
+    ]
+  }
+}
