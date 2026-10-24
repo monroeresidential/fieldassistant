@@ -29,6 +29,8 @@ type Deps struct {
 	Companies *auth.CompanyCache
 	// Lookups serves project lookup lists from the Postgres-backed cache.
 	Lookups *pipeline.Lookups
+	// Drafts extracts, stores and revalidates drafts.
+	Drafts *pipeline.Drafts
 }
 
 // NewRouter builds the HTTP handler for the API.

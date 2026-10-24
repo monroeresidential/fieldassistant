@@ -48,3 +48,14 @@ where id = $1;
 
 -- name: CountSubmittedDrafts :one
 select count(*) from drafts where user_id = $1 and status = 'submitted';
+
+-- name: SaveDraftEdits :one
+-- Stores the reviewer's payload and its revalidated unresolved list unless
+-- the draft is being or has been submitted; no row means it is locked.
+update drafts
+set user_payload = $2,
+    unresolved = $3,
+    status = 'reviewed',
+    updated_at = now()
+where id = $1 and status not in ('submitting', 'submitted')
+returning *;

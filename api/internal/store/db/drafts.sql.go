@@ -225,6 +225,55 @@ func (q *Queries) ListDraftsForUserProject(ctx context.Context, arg ListDraftsFo
 	return items, nil
 }
 
+const saveDraftEdits = `-- name: SaveDraftEdits :one
+update drafts
+set user_payload = $2,
+    unresolved = $3,
+    status = 'reviewed',
+    updated_at = now()
+where id = $1 and status not in ('submitting', 'submitted')
+returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at
+`
+
+type SaveDraftEditsParams struct {
+	ID          pgtype.UUID
+	UserPayload []byte
+	Unresolved  []byte
+}
+
+// Stores the reviewer's payload and its revalidated unresolved list unless
+// the draft is being or has been submitted; no row means it is locked.
+func (q *Queries) SaveDraftEdits(ctx context.Context, arg SaveDraftEditsParams) (Draft, error) {
+	row := q.db.QueryRow(ctx, saveDraftEdits, arg.ID, arg.UserPayload, arg.Unresolved)
+	var i Draft
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.ProjectID,
+		&i.UserID,
+		&i.Feature,
+		&i.Status,
+		&i.Transcript,
+		&i.CapturedAt,
+		&i.LlmOutput,
+		&i.UserPayload,
+		&i.Unresolved,
+		&i.Confidence,
+		&i.ModelVersion,
+		&i.PromptVersion,
+		&i.ExtractMs,
+		&i.ProcoreRecordID,
+		&i.ProcoreRecordNumber,
+		&i.ProcoreUrl,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.JobID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setDraftFailed = `-- name: SetDraftFailed :exec
 update drafts
 set status = 'failed',

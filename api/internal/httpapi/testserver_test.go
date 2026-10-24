@@ -20,6 +20,8 @@ import (
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 	"github.com/monroeresidential/fieldassistant/api/internal/config"
+	"github.com/monroeresidential/fieldassistant/api/internal/features/rfi"
+	"github.com/monroeresidential/fieldassistant/api/internal/llm/llmtest"
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
 	"github.com/monroeresidential/fieldassistant/api/internal/store/storetest"
@@ -295,6 +297,28 @@ func newTestServer(t *testing.T) (*httptest.Server, *fakeProcore) {
 // newTestServerWithScheme is newTestServer with the app redirect scheme set.
 func newTestServerWithScheme(t *testing.T, scheme string) (*httptest.Server, *fakeProcore) {
 	t.Helper()
+	ts := startTestServer(t, scheme)
+	return ts.Server, ts.Procore
+}
+
+// testServer is a running API test server and its fakes.
+type testServer struct {
+	Server  *httptest.Server
+	Procore *fakeProcore
+	// LLM is the extractor behind the drafts pipeline. Set its Steps
+	// before creating a draft; every extraction replays them.
+	LLM *llmtest.Scripted
+}
+
+// newDraftTestServer is newTestServer that also returns the scripted
+// extractor the drafts pipeline uses.
+func newDraftTestServer(t *testing.T) testServer {
+	t.Helper()
+	return startTestServer(t, "fieldassistant")
+}
+
+func startTestServer(t *testing.T, scheme string) testServer {
+	t.Helper()
 	st := storetest.New(t)
 	clock := &fakeClock{Now: time.Now()}
 
@@ -345,6 +369,9 @@ func newTestServerWithScheme(t *testing.T, scheme string) (*httptest.Server, *fa
 	tokens := auth.NewTokenSource(st, vault, oauth, clock.now)
 	sessions := auth.NewSessions(st, cfg.SessionSecret, clock.now)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lookups := pipeline.NewLookups(st, pc, tokens, 10*time.Minute, clock.now, logger)
+	scripted := &llmtest.Scripted{Model: "claude-test-model"}
+	features := map[string]pipeline.Feature{"rfi": rfi.New()}
 
 	api.Config.Handler = NewRouter(Deps{
 		Logger:    logger,
@@ -355,11 +382,12 @@ func newTestServerWithScheme(t *testing.T, scheme string) (*httptest.Server, *fa
 		Tokens:    tokens,
 		Procore:   pc,
 		Companies: auth.NewCompanyCache(pc, tokens, 10*time.Minute, clock.now),
-		Lookups:   pipeline.NewLookups(st, pc, tokens, 10*time.Minute, clock.now, logger),
+		Lookups:   lookups,
+		Drafts:    pipeline.NewDrafts(st, lookups, scripted, features, "claude-configured", clock.now, logger),
 	})
 	api.Start()
 	t.Cleanup(api.Close)
-	return api, fp
+	return testServer{Server: api, Procore: fp, LLM: scripted}
 }
 
 // noRedirectClient returns redirects to the caller instead of following them.
@@ -450,7 +478,14 @@ func startAuth(t *testing.T, srv *httptest.Server, deviceID, challenge string) s
 // one-time code from the app redirect.
 func callbackCode(t *testing.T, srv *httptest.Server, state string) string {
 	t.Helper()
-	q := url.Values{"code": {testProcoreCode}, "state": {state}}
+	return callbackCodeAs(t, srv, state, testProcoreCode)
+}
+
+// callbackCodeAs is callbackCode signing in to Procore with procoreCode, the
+// decimal Procore user id.
+func callbackCodeAs(t *testing.T, srv *httptest.Server, state, procoreCode string) string {
+	t.Helper()
+	q := url.Values{"code": {procoreCode}, "state": {state}}
 	res, b := call(t, srv, http.MethodGet, "/v1/auth/callback?"+q.Encode(), "", nil)
 	if res.StatusCode != http.StatusFound {
 		t.Fatalf("callback: status %d; body %s", res.StatusCode, b)
@@ -472,8 +507,15 @@ func callbackCode(t *testing.T, srv *httptest.Server, state string) string {
 // signIn runs start, callback and exchange for deviceID and returns the pair.
 func signIn(t *testing.T, srv *httptest.Server, deviceID string) TokenPair {
 	t.Helper()
+	return signInAs(t, srv, deviceID, testProcoreCode)
+}
+
+// signInAs is signIn as the Procore user whose decimal id is procoreCode;
+// that user must be in the fake's Users.
+func signInAs(t *testing.T, srv *httptest.Server, deviceID, procoreCode string) TokenPair {
+	t.Helper()
 	verifier, challenge := newVerifier(t)
-	code := callbackCode(t, srv, startAuth(t, srv, deviceID, challenge))
+	code := callbackCodeAs(t, srv, startAuth(t, srv, deviceID, challenge), procoreCode)
 	res, b := call(t, srv, http.MethodPost, "/v1/auth/exchange", "", AuthExchangeRequest{Code: code, DeviceId: deviceID, CodeVerifier: verifier})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("exchange: status %d; body %s", res.StatusCode, b)
