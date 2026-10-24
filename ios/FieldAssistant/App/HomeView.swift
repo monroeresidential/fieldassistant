@@ -1,4 +1,5 @@
 import FieldAssistantAPI
+import SwiftData
 import SwiftUI
 
 /// The screens pushed from Home. Each carries the draft id the screen works on.
@@ -52,7 +53,12 @@ struct HomeView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
             .safeAreaInset(edge: .top, spacing: 0) {
-                if showsNoSignalBanner { noSignalBanner }
+                if appState.phase == .offline {
+                    noSignalBanner
+                } else if let owner = appState.draftOwnerID,
+                          !appState.reachability.isReachable || appState.sendingWaitsForSignal {
+                    WaitingDraftsGate(owner: owner) { noSignalBanner }
+                }
             }
             .navigationDestination(for: Route.self, destination: destination)
             .navigationDestination(isPresented: $showsSettings) { SettingsView() }
@@ -164,13 +170,6 @@ struct HomeView: View {
 
     // MARK: - No signal
 
-    /// Offline at launch, or a draft is waiting because the last send found no connection.
-    private var showsNoSignalBanner: Bool {
-        if appState.phase == .offline { return true }
-        guard appState.sendingWaitsForSignal, let owner = appState.draftOwnerID else { return false }
-        return !appState.drafts.drafts(withStatus: .waiting, owner: owner).isEmpty
-    }
-
     private var noSignalBanner: some View {
         HStack {
             Label("No signal. Recording works; sending waits.", systemImage: "wifi.slash")
@@ -193,12 +192,12 @@ struct HomeView: View {
         .background(.yellow.opacity(0.25))
     }
 
-    /// Reconnects the session if it started offline, then sends this project's waiting drafts.
+    /// Reconnects the session if it started offline, then runs a sync pass, which sends waiting drafts.
     private func retry() async {
         isRetrying = true
         defer { isRetrying = false }
         if appState.phase == .offline { await appState.bootstrap() }
-        if appState.phase != .offline { await appState.sendWaiting(projectID: projectID) }
+        if appState.phase != .offline { await appState.draftSync?.runOnce() }
     }
 
     // MARK: - Title
@@ -216,6 +215,27 @@ struct HomeView: View {
 
     static func title(_ project: Project) -> String {
         project.display_name.isEmpty ? project.name : project.display_name
+    }
+}
+
+/// Shows its content only while the owner has a waiting draft. The SwiftData query keeps it live as
+/// sync sends drafts, so Home does not fetch in `body`.
+private struct WaitingDraftsGate<Content: View>: View {
+    @Query private var waiting: [LocalDraft]
+    private let content: () -> Content
+
+    init(owner: Int64, @ViewBuilder content: @escaping () -> Content) {
+        let raw = LocalDraftStatus.waiting.rawValue
+        var descriptor = FetchDescriptor<LocalDraft>(
+            predicate: #Predicate { $0.statusRaw == raw && $0.ownerProcoreUserID == owner }
+        )
+        descriptor.fetchLimit = 1
+        _waiting = Query(descriptor)
+        self.content = content
+    }
+
+    var body: some View {
+        if !waiting.isEmpty { content() }
     }
 }
 

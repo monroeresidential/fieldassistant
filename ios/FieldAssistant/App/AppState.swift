@@ -36,7 +36,8 @@ final class AppState {
 
     private(set) var phase: Phase = .loading
     /// True after a send found no connection, until a later send gets through. Home shows the
-    /// "No signal" banner while it is set and a draft is waiting.
+    /// "No signal" banner while it is set and a draft is waiting, which covers a network path that
+    /// is up but cannot reach the server.
     private(set) var sendingWaitsForSignal = false
     private(set) var isSigningIn = false
     /// Why the last sign-in attempt failed, or `nil`. `.cancelled` means the user closed the sheet.
@@ -75,6 +76,10 @@ final class AppState {
     /// The drafts captured on this phone.
     @ObservationIgnored let drafts: DraftStore
     @ObservationIgnored let settings: Settings
+    /// Whether the phone has a network path. Home observes it for the "No signal" banner.
+    @ObservationIgnored let reachability: ReachabilityProviding
+    /// Resends waiting drafts and reconciles submitting ones while a user is signed in; `nil` otherwise.
+    @ObservationIgnored private(set) var draftSync: DraftSync?
 
     var draftService: DraftService { DraftService(client: client) }
 
@@ -84,10 +89,12 @@ final class AppState {
         baseURL: URL,
         modelContext: ModelContext,
         transport: ClientTransport? = nil,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        reachability: ReachabilityProviding? = nil
     ) {
         self.store = store
         self.defaults = defaults
+        self.reachability = reachability ?? Reachability()
         drafts = DraftStore(context: modelContext)
         settings = Settings(defaults: defaults)
         selectedCompanyID = Self.storedID(forKey: Keys.selectedCompanyID, in: defaults)
@@ -188,14 +195,6 @@ final class AppState {
         }
     }
 
-    /// Sends every waiting draft of a project, oldest first, stopping at the first one that finds no connection.
-    func sendWaiting(projectID: Int64) async {
-        guard let owner = draftOwnerID else { return }
-        for draft in drafts.drafts(withStatus: .waiting, owner: owner) where draft.projectID == projectID {
-            if await send(draft) == .waiting { return }
-        }
-    }
-
     // MARK: - Private
 
     private func loadMe() async {
@@ -228,6 +227,7 @@ final class AppState {
             draftOwnerID = user.procore_user_id
             phase = .signedIn(user)
             prefetchLookups()
+            startDraftSync()
         case .unauthorized:
             try? store.clear()
             endSession()
@@ -249,6 +249,8 @@ final class AppState {
     /// The cached lookups belong to the signed-in user too, so they are deleted here as well.
     private func endSession() {
         cancelPrefetch()
+        draftSync?.stop()
+        draftSync = nil
         lookups.clearAll()
         selectedCompanyID = nil
         selectedProjectID = nil
@@ -265,6 +267,21 @@ final class AppState {
         guard let companyID = selectedCompanyID, let projectID = selectedProjectID else { return }
         let lookups: LookupStore = lookups
         prefetchTask = Task { await lookups.prefetch(companyID: companyID, projectID: projectID) }
+    }
+
+    /// Starts a fresh sync for the signed-in user, replacing any running one.
+    private func startDraftSync() {
+        draftSync?.stop()
+        let client: Client = client
+        let sync = DraftSync(
+            store: drafts,
+            service: { DraftService(client: client) },
+            reachability: reachability,
+            owner: { [weak self] in self?.draftOwnerID },
+            send: { [weak self] draft in await self?.send(draft) ?? .waiting }
+        )
+        draftSync = sync
+        sync.start()
     }
 
     private func cancelPrefetch() {

@@ -5,6 +5,7 @@ import SwiftUI
 struct FieldAssistantApp: App {
     private let container: ModelContainer
     @State private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         let container: ModelContainer
@@ -27,6 +28,10 @@ struct FieldAssistantApp: App {
             RootView()
                 .environment(appState)
                 .task { await appState.bootstrap() }
+                .onChange(of: scenePhase) { _, phase in
+                    // Coming back to the app is a chance to send waiting drafts and settle submitting ones.
+                    if phase == .active { Task { await appState.draftSync?.runOnce() } }
+                }
         }
         .modelContainer(container)
     }
