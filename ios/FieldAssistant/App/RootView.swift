@@ -23,12 +23,15 @@ struct RootView: View {
 }
 
 #Preview {
+    let container = try! AppContainer.makeModelContainer(inMemory: true)
     RootView()
         .environment(
             AppState(
                 store: KeychainSessionStore(),
                 presenter: ASWebAuthenticationSessionPresenter(),
-                baseURL: URL(string: "https://example.invalid/v1")!
+                baseURL: URL(string: "https://example.invalid/v1")!,
+                modelContext: container.mainContext
             )
         )
+        .modelContainer(container)
 }

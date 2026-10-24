@@ -60,6 +60,26 @@ enum APIStub {
         return json(.ok, "{" + fields.joined(separator: ",") + "}")
     }
 
+    /// A 200 lookup list with an `ETag`. `rows` is the JSON array body of `rows`.
+    static func lookup(
+        kind: String = "users",
+        rows: String = "[]",
+        etag: String = #""v1""#,
+        unavailable: Bool = false,
+        reason: String? = nil
+    ) -> (HTTPResponse, HTTPBody?) {
+        var fields = [
+            #""kind":"\#(kind)""#,
+            #""rows":\#(rows)"#,
+            #""unavailable":\#(unavailable)"#,
+            #""fetched_at":"2026-10-24T10:00:00Z""#,
+        ]
+        if let reason { fields.append(#""reason":"\#(reason)""#) }
+        var response = HTTPResponse(status: .ok, headerFields: [.contentType: "application/json"])
+        response.headerFields[.eTag] = etag
+        return (response, HTTPBody("{" + fields.joined(separator: ",") + "}"))
+    }
+
     /// Decodes a recorded JSON request body into a string dictionary.
     static func jsonObject(_ bytes: [UInt8]?) throws -> [String: Any] {
         let data = Data(bytes ?? [])

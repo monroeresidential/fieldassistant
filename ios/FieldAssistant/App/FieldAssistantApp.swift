@@ -1,12 +1,26 @@
+import SwiftData
 import SwiftUI
 
 @main
 struct FieldAssistantApp: App {
-    @State private var appState = AppState(
-        store: KeychainSessionStore(),
-        presenter: ASWebAuthenticationSessionPresenter(),
-        baseURL: AppConfig.apiBaseURL
-    )
+    private let container: ModelContainer
+    @State private var appState: AppState
+
+    init() {
+        let container: ModelContainer
+        do {
+            container = try AppContainer.makeModelContainer()
+        } catch {
+            fatalError("Could not open the on-device store: \(error)")
+        }
+        self.container = container
+        _appState = State(initialValue: AppState(
+            store: KeychainSessionStore(),
+            presenter: ASWebAuthenticationSessionPresenter(),
+            baseURL: AppConfig.apiBaseURL,
+            modelContext: container.mainContext
+        ))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -14,5 +28,6 @@ struct FieldAssistantApp: App {
                 .environment(appState)
                 .task { await appState.bootstrap() }
         }
+        .modelContainer(container)
     }
 }

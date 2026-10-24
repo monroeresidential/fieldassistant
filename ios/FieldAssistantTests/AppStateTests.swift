@@ -2,14 +2,18 @@ import AuthenticationServices
 import FieldAssistantAPI
 import HTTPTypes
 import OpenAPIRuntime
+import SwiftData
 import XCTest
 @testable import FieldAssistant
 
 final class AppStateTests: XCTestCase {
     private let suiteName = "AppStateTests.\(UUID().uuidString)"
+    /// Kept alive for the test: `ModelContext` does not own its container.
+    private var container: ModelContainer?
 
     override func tearDown() {
         UserDefaults().removePersistentDomain(forName: suiteName)
+        container = nil
         super.tearDown()
     }
 
@@ -239,6 +243,72 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(transport.requests.map(\.request.path), ["/auth/refresh"])
     }
 
+    @MainActor
+    func testBootstrapWithStoredSelectionPrefetchesLookups() async throws {
+        let transport = StubTransport([APIStub.me(lastCompanyID: 7, lastProjectID: 99)])
+        LookupKind.allCases.forEach { _ in transport.enqueue(.notModified) }
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+
+        await state.bootstrap()
+        await state.prefetchTask?.value
+
+        let paths = transport.requests.map { $0.request.path ?? "" }
+        XCTAssertEqual(paths.first, "/me")
+        XCTAssertEqual(Set(paths.dropFirst()), Set(LookupKind.allCases.map { "/projects/99/lookups/\($0.rawValue)" }))
+        XCTAssertEqual(paths.count, 1 + LookupKind.allCases.count, "one prefetch, not one per selection change")
+        XCTAssertTrue(transport.requests.dropFirst().allSatisfy {
+            $0.request.headerFields[HTTPField.Name("X-Company-Id")!] == "7"
+        })
+    }
+
+    @MainActor
+    func testSelectingProjectPrefetchesLookups() async throws {
+        let transport = StubTransport([APIStub.me()])
+        LookupKind.allCases.forEach { _ in transport.enqueue(.notModified) }
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        XCTAssertNil(state.prefetchTask, "no selection, nothing to prefetch")
+
+        state.selectedCompanyID = 7
+        state.selectedProjectID = 42
+        await state.prefetchTask?.value
+
+        let lookupPaths = transport.requests.dropFirst().map { $0.request.path ?? "" }
+        XCTAssertEqual(Set(lookupPaths), Set(LookupKind.allCases.map { "/projects/42/lookups/\($0.rawValue)" }))
+    }
+
+    @MainActor
+    func testReselectingProjectRevalidatesWithRawETag() async throws {
+        let transport = StubTransport(
+            [APIStub.me(lastCompanyID: 7, lastProjectID: 99)] + LookupKind.allCases.map { _ in APIStub.lookup(etag: #""u1""#) }
+        )
+        LookupKind.allCases.forEach { _ in transport.enqueue(.notModified) }
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        await state.prefetchTask?.value
+
+        state.selectedProjectID = nil
+        state.selectedProjectID = 99
+        await state.prefetchTask?.value
+
+        let revalidations = transport.requests.suffix(LookupKind.allCases.count)
+        XCTAssertEqual(revalidations.map { $0.request.headerFields[.ifNoneMatch] }, Array(repeating: #""u1""#, count: 6))
+        XCTAssertEqual(state.lookups.set(projectID: 99, kind: .users)?.etag, #""u1""#)
+    }
+
+    @MainActor
+    func testSelectionWhileSignedOutDoesNotPrefetch() async throws {
+        let transport = StubTransport([])
+        let state = makeState(store: InMemorySessionStore(), transport: transport)
+        await state.bootstrap()
+
+        state.selectedCompanyID = 7
+        state.selectedProjectID = 99
+
+        XCTAssertNil(state.prefetchTask)
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -276,10 +346,13 @@ final class AppStateTests: XCTestCase {
         transport: StubTransport,
         presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError())
     ) -> AppState {
-        AppState(
+        let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true))
+        self.container = container
+        return AppState(
             store: store,
             presenter: presenter,
             baseURL: APIStub.baseURL,
+            modelContext: container.mainContext,
             transport: transport,
             defaults: UserDefaults(suiteName: suiteName)!
         )

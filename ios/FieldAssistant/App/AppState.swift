@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import OpenAPIRuntime
 import OpenAPIURLSession
+import SwiftData
 
 /// App-wide session state: who is signed in and which company/project is selected.
 @Observable
@@ -34,7 +35,11 @@ final class AppState {
         didSet { Self.persist(selectedCompanyID, forKey: Keys.selectedCompanyID, in: defaults) }
     }
     var selectedProjectID: Int64? {
-        didSet { Self.persist(selectedProjectID, forKey: Keys.selectedProjectID, in: defaults) }
+        didSet {
+            Self.persist(selectedProjectID, forKey: Keys.selectedProjectID, in: defaults)
+            // While `loadMe` fills the selection the phase is not signed in yet; it prefetches itself.
+            if selectedProjectID != oldValue, case .signedIn = phase { prefetchLookups() }
+        }
     }
 
     @ObservationIgnored private let store: SessionStore
@@ -42,11 +47,17 @@ final class AppState {
     /// The authenticated API client every feature service uses.
     @ObservationIgnored private(set) var client: Client!
     @ObservationIgnored private var authService: AuthService!
+    /// The cached project lookup lists. Set once in `init`; implicitly unwrapped because it needs the
+    /// client, which is built after the middleware closures that capture `self`.
+    @ObservationIgnored private(set) var lookups: LookupStore!
+    /// The running lookup prefetch, if any. A new selection or the end of the session cancels it.
+    @ObservationIgnored private(set) var prefetchTask: Task<Void, Never>?
 
     init(
         store: SessionStore,
         presenter: WebAuthPresenter,
         baseURL: URL,
+        modelContext: ModelContext,
         transport: ClientTransport? = nil,
         defaults: UserDefaults = .standard
     ) {
@@ -68,9 +79,10 @@ final class AppState {
         let client = Client(
             serverURL: baseURL,
             transport: transport ?? URLSessionTransport(),
-            middlewares: [middleware]
+            middlewares: [middleware, IfNoneMatchMiddleware()]
         )
         self.client = client
+        lookups = LookupStore(context: modelContext, service: LookupService(client: client))
         authService = AuthService(
             client: client,
             store: store,
@@ -148,6 +160,7 @@ final class AppState {
             if selectedCompanyID == nil, let id = user.last_company_id { selectedCompanyID = id }
             if selectedProjectID == nil, let id = user.last_project_id { selectedProjectID = id }
             phase = .signedIn(user)
+            prefetchLookups()
         case .unauthorized:
             try? store.clear()
             endSession()
@@ -167,9 +180,19 @@ final class AppState {
     /// The selection belongs to the signed-in user, so it is dropped whenever the session ends.
     /// Setting the IDs to nil also removes their `UserDefaults` keys.
     private func endSession() {
+        prefetchTask?.cancel()
+        prefetchTask = nil
         selectedCompanyID = nil
         selectedProjectID = nil
         phase = .signedOut
+    }
+
+    /// Refreshes the selected project's lookup lists in the background, replacing any running prefetch.
+    private func prefetchLookups() {
+        guard let companyID = selectedCompanyID, let projectID = selectedProjectID else { return }
+        prefetchTask?.cancel()
+        let lookups: LookupStore = lookups
+        prefetchTask = Task { await lookups.prefetch(companyID: companyID, projectID: projectID) }
     }
 
     /// The generated client wraps middleware errors in `ClientError`.
