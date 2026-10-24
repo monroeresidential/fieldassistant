@@ -65,7 +65,6 @@ a second client while the contract is still moving doubles sync work.
 ## Still open (from the spec)
 
 - Spanish dictation for v1 crews.
-- App name and bundle identifier: decided 2026-10-24, see below.
 - Who pilots the first TestFlight build and on which project.
 - "Dictate and fire" for trusted users (deferred past v1).
 

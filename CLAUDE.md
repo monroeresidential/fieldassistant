@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 backend implemented (extraction, drafts, submit); iOS capture/review follows `docs/superpowers/plans/2026-10-24-milestone-2-ios.md`.
+Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 implemented end to end (backend merged; iOS capture, review and submit on branch `milestone-2-ios`); next: on-device dictation check, then the design pass (roadmap 2b).
 
 Governing documents:
 
@@ -69,6 +69,10 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 | `ios/FieldAssistant/Core/Auth` | Sign-in flow, Keychain session store, token refresh. |
 | `ios/FieldAssistant/Core/Network` | API client wrapper, auth middleware, failure mapping. |
 | `ios/FieldAssistant/Core/Scope` | Company and project selection and its persistence. |
+| `ios/FieldAssistant/Core/Capture` | Capture model, on-device speech transcriber, one-shot location, photo saving. |
+| `ios/FieldAssistant/Core/Drafts` | Local draft store, submit and resend sync, reconcile on launch. |
+| `ios/FieldAssistant/Core/Lookups` | Lookup lists fetched from the backend and cached locally for review pickers. |
+| `ios/FieldAssistant/Core/Review` | Review screen rows, lookup picker, unresolved-field rows, footer. |
 | `ios/FieldAssistant/Features/RFI` | RFI list model and view. |
 | `ios/Packages/FieldAssistantAPI` | Generated Swift client package; holds a synced copy of the contract. |
 | `deploy/` | Droplet Compose file, Caddyfile, backup script, runbook. |
