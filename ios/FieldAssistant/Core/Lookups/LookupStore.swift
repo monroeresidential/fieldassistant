@@ -9,6 +9,7 @@ final class LookupStore {
     private(set) var isPrefetching = false
     /// Bumped on every save, and read by `set(projectID:kind:)`, so views showing rows re-render.
     private var revision = 0
+    @ObservationIgnored private var prefetchGeneration = 0
 
     @ObservationIgnored private let context: ModelContext
     /// A context references its container weakly and traps once it is gone, so the store keeps it alive.
@@ -35,10 +36,27 @@ final class LookupStore {
         return try? context.fetch(descriptor).first
     }
 
+    /// Deletes every cached list, for every project. Called when the session ends so the next user
+    /// on this device never sees the previous user's rows.
+    func clearAll() {
+        do {
+            for record in try context.fetch(FetchDescriptor<CachedLookup>()) {
+                context.delete(record)
+            }
+            try context.save()
+        } catch {
+            context.rollback()
+        }
+        revision += 1
+    }
+
     /// Refreshes all six lists concurrently. A list that fails keeps its cached copy.
+    /// `isPrefetching` stays true until the most recently started prefetch finishes.
     func prefetch(companyID: Int64, projectID: Int64, force: Bool = false) async {
+        prefetchGeneration += 1
+        let generation = prefetchGeneration
         isPrefetching = true
-        defer { isPrefetching = false }
+        defer { if generation == prefetchGeneration { isPrefetching = false } }
         await withTaskGroup(of: Void.self) { group in
             for kind in LookupKind.allCases {
                 group.addTask {
@@ -58,6 +76,8 @@ final class LookupStore {
             etag: set(projectID: projectID, kind: kind)?.etag,
             force: force
         )
+        // A cancelled refresh (project switch or sign-out) must not write after the cache was cleared.
+        try Task.checkCancellation()
         guard case .rows(let response, let etag) = result else { return }
         let rowsData = try JSONEncoder().encode(response.rows)
         // Looked up again after the await, in case a concurrent refresh inserted the record meanwhile.

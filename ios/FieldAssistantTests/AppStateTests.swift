@@ -297,6 +297,55 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testSignOutClearsCachedLookups() async throws {
+        let transport = StubTransport(
+            [APIStub.me(lastCompanyID: 7, lastProjectID: 99)]
+                + LookupKind.allCases.map { _ in APIStub.lookup(rows: #"[{"id":11,"label":"Ben West"}]"#) }
+        )
+        transport.enqueue(.noContent)
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        await state.prefetchTask?.value
+        XCTAssertEqual(state.lookups.rows(projectID: 99, kind: .users).map(\.label), ["Ben West"])
+
+        await state.signOut()
+
+        for kind in LookupKind.allCases {
+            XCTAssertNil(state.lookups.set(projectID: 99, kind: kind), "\(kind) is cleared")
+        }
+        let count = try XCTUnwrap(container).mainContext.fetchCount(FetchDescriptor<CachedLookup>())
+        XCTAssertEqual(count, 0)
+        XCTAssertEqual(transport.requests.last?.request.path, "/auth/logout")
+    }
+
+    @MainActor
+    func testSignOutCancelsRunningPrefetch() async throws {
+        let transport = StubTransport([APIStub.me(lastCompanyID: 7, lastProjectID: 99)])
+        transport.enqueue(.noContent)
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        let prefetch = try XCTUnwrap(state.prefetchTask)
+
+        await state.signOut()
+
+        XCTAssertTrue(prefetch.isCancelled)
+        XCTAssertNil(state.prefetchTask)
+    }
+
+    @MainActor
+    func testClearingProjectCancelsRunningPrefetch() async throws {
+        let transport = StubTransport([APIStub.me(lastCompanyID: 7, lastProjectID: 99)])
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        let prefetch = try XCTUnwrap(state.prefetchTask)
+
+        state.selectedProjectID = nil
+
+        XCTAssertTrue(prefetch.isCancelled)
+        XCTAssertNil(state.prefetchTask)
+    }
+
+    @MainActor
     func testSelectionWhileSignedOutDoesNotPrefetch() async throws {
         let transport = StubTransport([])
         let state = makeState(store: InMemorySessionStore(), transport: transport)

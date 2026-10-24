@@ -126,6 +126,7 @@ final class AppState {
     }
 
     func signOut() async {
+        cancelPrefetch()
         await authService.signOut()
         endSession()
     }
@@ -179,20 +180,27 @@ final class AppState {
 
     /// The selection belongs to the signed-in user, so it is dropped whenever the session ends.
     /// Setting the IDs to nil also removes their `UserDefaults` keys.
+    /// The cached lookups belong to the signed-in user too, so they are deleted here as well.
     private func endSession() {
-        prefetchTask?.cancel()
-        prefetchTask = nil
+        cancelPrefetch()
+        lookups.clearAll()
         selectedCompanyID = nil
         selectedProjectID = nil
         phase = .signedOut
     }
 
     /// Refreshes the selected project's lookup lists in the background, replacing any running prefetch.
+    /// Clearing the project only cancels the running one.
     private func prefetchLookups() {
+        cancelPrefetch()
         guard let companyID = selectedCompanyID, let projectID = selectedProjectID else { return }
-        prefetchTask?.cancel()
         let lookups: LookupStore = lookups
         prefetchTask = Task { await lookups.prefetch(companyID: companyID, projectID: projectID) }
+    }
+
+    private func cancelPrefetch() {
+        prefetchTask?.cancel()
+        prefetchTask = nil
     }
 
     /// The generated client wraps middleware errors in `ClientError`.

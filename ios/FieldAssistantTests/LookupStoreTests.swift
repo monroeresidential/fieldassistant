@@ -87,11 +87,94 @@ final class LookupStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testClearAllDeletesEveryProject() async throws {
+        let transport = StubTransport([
+            APIStub.lookup(rows: #"[{"id":11,"label":"Ben West"}]"#),
+            APIStub.lookup(kind: "locations", rows: #"[{"id":5,"label":"Level 2"}]"#),
+        ])
+        let (store, container) = try makeStore(transport)
+        try await store.refresh(companyID: 7, projectID: 99, kind: .users, force: false)
+        try await store.refresh(companyID: 7, projectID: 100, kind: .locations, force: false)
+
+        store.clearAll()
+
+        XCTAssertTrue(store.rows(projectID: 99, kind: .users).isEmpty)
+        XCTAssertNil(store.set(projectID: 100, kind: .locations))
+        XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<CachedLookup>()), 0)
+    }
+
+    @MainActor
+    func testIsPrefetchingStaysTrueUntilLatestPrefetchFinishes() async throws {
+        let transport = ProjectGatedTransport(gated: [1, 2])
+        let (store, _) = try makeStore(transport)
+        let kinds = LookupKind.allCases.count
+
+        let first = Task { await store.prefetch(companyID: 7, projectID: 1) }
+        await transport.waitUntilParked(projectID: 1, count: kinds)
+        let second = Task { await store.prefetch(companyID: 7, projectID: 2) }
+        await transport.waitUntilParked(projectID: 2, count: kinds)
+
+        first.cancel()
+        transport.release(projectID: 1)
+        await first.value
+        XCTAssertTrue(store.isPrefetching, "the newer prefetch is still running")
+
+        transport.release(projectID: 2)
+        await second.value
+        XCTAssertFalse(store.isPrefetching)
+    }
+
+    @MainActor
     private func makeStore(_ transport: ClientTransport) throws -> (LookupStore, ModelContainer) {
         let container = try AppContainer.makeModelContainer(inMemory: true)
         let client = makeClient(transport, middlewares: [IfNoneMatchMiddleware()])
         let store = LookupStore(context: container.mainContext, service: LookupService(client: client))
         return (store, container)
+    }
+}
+
+/// `ClientTransport` that holds lookup requests for the gated projects until `release(projectID:)`,
+/// then answers 304. Requests for other projects answer 304 at once.
+final class ProjectGatedTransport: ClientTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var gated: Set<Int64>
+    private var parked: [Int64: [CheckedContinuation<Void, Never>]] = [:]
+
+    init(gated: Set<Int64>) {
+        self.gated = gated
+    }
+
+    func waitUntilParked(projectID: Int64, count: Int) async {
+        while lock.withLock({ parked[projectID, default: []].count }) < count {
+            await Task.yield()
+        }
+    }
+
+    func release(projectID: Int64) {
+        let released = lock.withLock {
+            gated.remove(projectID)
+            return parked.removeValue(forKey: projectID) ?? []
+        }
+        released.forEach { $0.resume() }
+    }
+
+    func send(
+        _ request: HTTPRequest,
+        body: HTTPBody?,
+        baseURL: URL,
+        operationID: String
+    ) async throws -> (HTTPResponse, HTTPBody?) {
+        let segments = request.path?.split(separator: "/") ?? []
+        let projectID = segments.count > 1 ? Int64(segments[1]) ?? 0 : 0
+        await withCheckedContinuation { continuation in
+            let isParked = lock.withLock {
+                guard gated.contains(projectID) else { return false }
+                parked[projectID, default: []].append(continuation)
+                return true
+            }
+            if !isParked { continuation.resume() }
+        }
+        return (HTTPResponse(status: .notModified), nil)
     }
 }
 
