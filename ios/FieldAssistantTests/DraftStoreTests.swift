@@ -98,6 +98,25 @@ final class DraftStoreTests: XCTestCase {
         DraftFiles.removeAll(for: draft.id)
     }
 
+    func testDraftsFolderExcludedFromBackup() throws {
+        let draftID = UUID()
+        defer { DraftFiles.removeAll(for: draftID) }
+        // Start from a folder an earlier build made without the flag.
+        var root = URL.applicationSupportDirectory.appending(path: "drafts", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var cleared = URLResourceValues()
+        cleared.isExcludedFromBackup = false
+        try root.setResourceValues(cleared)
+
+        let directory = try DraftFiles.directory(for: draftID)
+
+        // Fresh URLs, so the values are read from disk rather than a URL's cache.
+        let freshRoot = URL(filePath: root.path(percentEncoded: false), directoryHint: .isDirectory)
+        let freshDraft = URL(filePath: directory.path(percentEncoded: false), directoryHint: .isDirectory)
+        XCTAssertEqual(try freshRoot.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+        XCTAssertEqual(try freshDraft.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+    }
+
     @MainActor
     private func makeStore() throws -> (DraftStore, ModelContainer) {
         let container = try AppContainer.makeModelContainer(inMemory: true)
