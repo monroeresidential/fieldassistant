@@ -11,6 +11,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimDraftResubmit = `-- name: ClaimDraftResubmit :one
+update drafts
+set submit_attempts = submit_attempts + 1,
+    error_code = null,
+    error_message = null,
+    updated_at = now()
+where id = $1
+  and status = 'submitting'
+  and job_id is not distinct from $2
+returning submit_attempts
+`
+
+type ClaimDraftResubmitParams struct {
+	ID       pgtype.UUID
+	OldJobID pgtype.Int8
+}
+
+// Claims a new submit attempt for a submitting draft whose job the caller
+// found finished (old_job_id, null for none), but only while it still holds
+// that job. Returns the new attempt number; no row means another submit
+// replaced the job first or the draft left submitting. The caller stores
+// the new job with SetDraftJob in the same transaction.
+func (q *Queries) ClaimDraftResubmit(ctx context.Context, arg ClaimDraftResubmitParams) (int32, error) {
+	row := q.db.QueryRow(ctx, claimDraftResubmit, arg.ID, arg.OldJobID)
+	var submit_attempts int32
+	err := row.Scan(&submit_attempts)
+	return submit_attempts, err
+}
+
 const countSubmittedDrafts = `-- name: CountSubmittedDrafts :one
 select count(*) from drafts where user_id = $1 and status = 'submitted'
 `
@@ -23,7 +52,7 @@ func (q *Queries) CountSubmittedDrafts(ctx context.Context, userID pgtype.UUID) 
 }
 
 const getDraft = `-- name: GetDraft :one
-select id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at from drafts where id = $1
+select id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, submit_attempts, created_at, updated_at from drafts where id = $1
 `
 
 func (q *Queries) GetDraft(ctx context.Context, id pgtype.UUID) (Draft, error) {
@@ -51,6 +80,49 @@ func (q *Queries) GetDraft(ctx context.Context, id pgtype.UUID) (Draft, error) {
 		&i.ErrorCode,
 		&i.ErrorMessage,
 		&i.JobID,
+		&i.SubmitAttempts,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDraftByJob = `-- name: GetDraftByJob :one
+select id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, submit_attempts, created_at, updated_at from drafts where user_id = $1 and job_id = $2 limit 1
+`
+
+type GetDraftByJobParams struct {
+	UserID pgtype.UUID
+	JobID  pgtype.Int8
+}
+
+// The user's draft whose current submit job is job_id.
+func (q *Queries) GetDraftByJob(ctx context.Context, arg GetDraftByJobParams) (Draft, error) {
+	row := q.db.QueryRow(ctx, getDraftByJob, arg.UserID, arg.JobID)
+	var i Draft
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.ProjectID,
+		&i.UserID,
+		&i.Feature,
+		&i.Status,
+		&i.Transcript,
+		&i.CapturedAt,
+		&i.LlmOutput,
+		&i.UserPayload,
+		&i.Unresolved,
+		&i.Confidence,
+		&i.ModelVersion,
+		&i.PromptVersion,
+		&i.ExtractMs,
+		&i.ProcoreRecordID,
+		&i.ProcoreRecordNumber,
+		&i.ProcoreUrl,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.JobID,
+		&i.SubmitAttempts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -58,7 +130,7 @@ func (q *Queries) GetDraft(ctx context.Context, id pgtype.UUID) (Draft, error) {
 }
 
 const getDraftForUser = `-- name: GetDraftForUser :one
-select id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at from drafts where id = $1 and user_id = $2
+select id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, submit_attempts, created_at, updated_at from drafts where id = $1 and user_id = $2
 `
 
 type GetDraftForUserParams struct {
@@ -91,6 +163,7 @@ func (q *Queries) GetDraftForUser(ctx context.Context, arg GetDraftForUserParams
 		&i.ErrorCode,
 		&i.ErrorMessage,
 		&i.JobID,
+		&i.SubmitAttempts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -102,7 +175,7 @@ insert into drafts (
   id, company_id, project_id, user_id, feature, status, transcript, captured_at,
   llm_output, unresolved, confidence, model_version, prompt_version, extract_ms
 ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at
+returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, submit_attempts, created_at, updated_at
 `
 
 type InsertDraftParams struct {
@@ -162,6 +235,7 @@ func (q *Queries) InsertDraft(ctx context.Context, arg InsertDraftParams) (Draft
 		&i.ErrorCode,
 		&i.ErrorMessage,
 		&i.JobID,
+		&i.SubmitAttempts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -169,7 +243,7 @@ func (q *Queries) InsertDraft(ctx context.Context, arg InsertDraftParams) (Draft
 }
 
 const listDraftsForUserProject = `-- name: ListDraftsForUserProject :many
-select id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at from drafts
+select id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, submit_attempts, created_at, updated_at from drafts
 where user_id = $1 and project_id = $2
 order by created_at desc
 limit $3
@@ -212,6 +286,7 @@ func (q *Queries) ListDraftsForUserProject(ctx context.Context, arg ListDraftsFo
 			&i.ErrorCode,
 			&i.ErrorMessage,
 			&i.JobID,
+			&i.SubmitAttempts,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -229,11 +304,14 @@ const markDraftSubmitting = `-- name: MarkDraftSubmitting :one
 update drafts
 set status = 'submitting',
     job_id = null,
+    error_code = null,
+    error_message = null,
+    submit_attempts = submit_attempts + 1,
     updated_at = now()
 where id = $1
   and status not in ('submitting', 'submitted')
   and updated_at = $2
-returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at
+returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, submit_attempts, created_at, updated_at
 `
 
 type MarkDraftSubmittingParams struct {
@@ -241,9 +319,10 @@ type MarkDraftSubmittingParams struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
-// Moves a draft to submitting and clears any earlier job, but only if it is
-// not already submitting or submitted and is unchanged since the caller
-// validated it (updated_at = $2). No row means another submit or an edit won.
+// Moves a draft to submitting, clears any earlier job and error and claims
+// the next submit attempt number, but only if it is not already submitting
+// or submitted and is unchanged since the caller validated it (updated_at =
+// $2). No row means another submit or an edit won.
 func (q *Queries) MarkDraftSubmitting(ctx context.Context, arg MarkDraftSubmittingParams) (Draft, error) {
 	row := q.db.QueryRow(ctx, markDraftSubmitting, arg.ID, arg.UpdatedAt)
 	var i Draft
@@ -269,6 +348,7 @@ func (q *Queries) MarkDraftSubmitting(ctx context.Context, arg MarkDraftSubmitti
 		&i.ErrorCode,
 		&i.ErrorMessage,
 		&i.JobID,
+		&i.SubmitAttempts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -301,31 +381,6 @@ func (q *Queries) OtherDraftByProcoreRecord(ctx context.Context, arg OtherDraftB
 	return id, err
 }
 
-const replaceDraftJob = `-- name: ReplaceDraftJob :execrows
-update drafts
-set job_id = $1, updated_at = now()
-where id = $2
-  and status = 'submitting'
-  and job_id is not distinct from $3
-`
-
-type ReplaceDraftJobParams struct {
-	NewJobID pgtype.Int8
-	ID       pgtype.UUID
-	OldJobID pgtype.Int8
-}
-
-// Points a submitting draft at a new job, but only while it still holds the
-// job the caller found finished ($2, null for none). Zero rows means
-// another submit replaced it first or the draft left submitting.
-func (q *Queries) ReplaceDraftJob(ctx context.Context, arg ReplaceDraftJobParams) (int64, error) {
-	result, err := q.db.Exec(ctx, replaceDraftJob, arg.NewJobID, arg.ID, arg.OldJobID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const saveDraftEdits = `-- name: SaveDraftEdits :one
 update drafts
 set user_payload = $1,
@@ -337,7 +392,7 @@ set user_payload = $1,
 where id = $3
   and status not in ('submitting', 'submitted')
   and ($4::timestamptz is null or updated_at = $4)
-returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at
+returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, submit_attempts, created_at, updated_at
 `
 
 type SaveDraftEditsParams struct {
@@ -382,6 +437,7 @@ func (q *Queries) SaveDraftEdits(ctx context.Context, arg SaveDraftEditsParams) 
 		&i.ErrorCode,
 		&i.ErrorMessage,
 		&i.JobID,
+		&i.SubmitAttempts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

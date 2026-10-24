@@ -23,15 +23,25 @@ update drafts set status = $2, updated_at = now() where id = $1;
 -- name: SetDraftJob :exec
 update drafts set job_id = $2, updated_at = now() where id = $1;
 
--- name: ReplaceDraftJob :execrows
--- Points a submitting draft at a new job, but only while it still holds the
--- job the caller found finished ($2, null for none). Zero rows means
--- another submit replaced it first or the draft left submitting.
+-- name: ClaimDraftResubmit :one
+-- Claims a new submit attempt for a submitting draft whose job the caller
+-- found finished (old_job_id, null for none), but only while it still holds
+-- that job. Returns the new attempt number; no row means another submit
+-- replaced the job first or the draft left submitting. The caller stores
+-- the new job with SetDraftJob in the same transaction.
 update drafts
-set job_id = sqlc.arg(new_job_id), updated_at = now()
+set submit_attempts = submit_attempts + 1,
+    error_code = null,
+    error_message = null,
+    updated_at = now()
 where id = sqlc.arg(id)
   and status = 'submitting'
-  and job_id is not distinct from sqlc.narg(old_job_id);
+  and job_id is not distinct from sqlc.narg(old_job_id)
+returning submit_attempts;
+
+-- name: GetDraftByJob :one
+-- The user's draft whose current submit job is job_id.
+select * from drafts where user_id = $1 and job_id = $2 limit 1;
 
 -- name: OtherDraftByProcoreRecord :one
 -- A draft other than $4 that already stores Procore record $3 in the project.
@@ -81,12 +91,16 @@ where id = sqlc.arg(id)
 returning *;
 
 -- name: MarkDraftSubmitting :one
--- Moves a draft to submitting and clears any earlier job, but only if it is
--- not already submitting or submitted and is unchanged since the caller
--- validated it (updated_at = $2). No row means another submit or an edit won.
+-- Moves a draft to submitting, clears any earlier job and error and claims
+-- the next submit attempt number, but only if it is not already submitting
+-- or submitted and is unchanged since the caller validated it (updated_at =
+-- $2). No row means another submit or an edit won.
 update drafts
 set status = 'submitting',
     job_id = null,
+    error_code = null,
+    error_message = null,
+    submit_attempts = submit_attempts + 1,
     updated_at = now()
 where id = $1
   and status not in ('submitting', 'submitted')

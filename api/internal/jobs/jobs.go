@@ -30,6 +30,10 @@ const (
 	// assumes its process died (a deploy killed it mid-run) and retries it.
 	// It must exceed JobTimeout so a live job is never rescued.
 	RescueStuckJobsAfter = 5 * time.Minute
+	// JobRetention is how long River keeps completed and discarded jobs, so
+	// a client polling a job after a long background stretch still finds it.
+	// GetJob answers from the draft once the row is gone.
+	JobRetention = 7 * 24 * time.Hour
 )
 
 // Job statuses, matching the contract's JobStatus.status enum.
@@ -55,18 +59,25 @@ func NewClient(pool *pgxpool.Pool, s Submitter, logger *slog.Logger) (*river.Cli
 	if err := river.AddWorkerSafely(workers, &SubmitWorker{Submitter: s}); err != nil {
 		return nil, fmt.Errorf("jobs: add submit worker: %w", err)
 	}
-	c, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Queues:               map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 4}},
-		Workers:              workers,
-		Logger:               logger,
-		ErrorHandler:         &errorHandler{s: s, log: logger},
-		JobTimeout:           JobTimeout,
-		RescueStuckJobsAfter: RescueStuckJobsAfter,
-	})
+	c, err := river.NewClient(riverpgxv5.New(pool), riverConfig(workers, s, logger))
 	if err != nil {
 		return nil, fmt.Errorf("jobs: river client: %w", err)
 	}
 	return c, nil
+}
+
+// riverConfig is the River configuration NewClient uses.
+func riverConfig(workers *river.Workers, s Submitter, logger *slog.Logger) *river.Config {
+	return &river.Config{
+		Queues:                      map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 4}},
+		Workers:                     workers,
+		Logger:                      logger,
+		ErrorHandler:                &errorHandler{s: s, log: logger},
+		JobTimeout:                  JobTimeout,
+		RescueStuckJobsAfter:        RescueStuckJobsAfter,
+		CompletedJobRetentionPeriod: JobRetention,
+		DiscardedJobRetentionPeriod: JobRetention,
+	}
 }
 
 // Queue inserts and inspects submit jobs. It satisfies pipeline.SubmitQueue.
@@ -79,13 +90,14 @@ func NewQueue(c *river.Client[pgx.Tx]) *Queue {
 	return &Queue{c: c}
 }
 
-// EnqueueTx inserts a submit job for draftID inside tx and returns its ID;
-// the job exists only if tx commits. While a job for the draft is pending,
-// queued, running or waiting to retry, River skips the insert and the
-// existing job's ID is returned, so a draft never has two submit jobs in
-// flight.
-func (q *Queue) EnqueueTx(ctx context.Context, tx pgx.Tx, draftID uuid.UUID) (int64, error) {
-	res, err := q.c.InsertTx(ctx, tx, SubmitArgs{DraftID: draftID}, &river.InsertOpts{
+// EnqueueTx inserts the submit job for attempt of draftID inside tx and
+// returns its ID; the job exists only if tx commits. While a job for the
+// same draft and attempt is pending, queued, running or waiting to retry,
+// River skips the insert and the existing job's ID is returned. A new
+// attempt number always gets a new job, even while the previous attempt's
+// job is still finishing.
+func (q *Queue) EnqueueTx(ctx context.Context, tx pgx.Tx, draftID uuid.UUID, attempt int) (int64, error) {
+	res, err := q.c.InsertTx(ctx, tx, SubmitArgs{DraftID: draftID, Attempt: attempt}, &river.InsertOpts{
 		MaxAttempts: MaxAttempts,
 		UniqueOpts: river.UniqueOpts{
 			ByArgs: true,

@@ -32,10 +32,17 @@ create table drafts (
   error_code text,
   error_message text,
   job_id bigint,
+  -- submit_attempts counts the submit jobs queued for the draft; each job's
+  -- unique key includes its number.
+  submit_attempts integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index drafts_user_project_idx on drafts (user_id, project_id, created_at desc);
+-- One Procore record belongs to at most one draft, so two drafts recovering
+-- at once cannot both adopt it.
+create unique index drafts_procore_record_uidx on drafts (company_id, procore_record_id) where procore_record_id is not null;
+create index drafts_user_job_idx on drafts (user_id, job_id) where job_id is not null;
 
 create table audit_events (
   id bigserial primary key,

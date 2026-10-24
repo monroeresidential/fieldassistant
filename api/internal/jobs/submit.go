@@ -14,10 +14,14 @@ import (
 // KindDraftSubmit is the River kind of the submit job.
 const KindDraftSubmit = "draft_submit"
 
-// SubmitArgs are the submit job's arguments. Jobs are unique by these args,
-// so one draft has at most one active submit job.
+// SubmitArgs are the submit job's arguments. Jobs are unique by these args
+// while active, so one submit attempt of a draft has at most one active job.
+// Attempt is the draft's submit attempt number (drafts.submit_attempts), so
+// a resubmit gets a new job even while River still shows the previous
+// attempt's job running.
 type SubmitArgs struct {
 	DraftID uuid.UUID `json:"draft_id"`
+	Attempt int       `json:"attempt"`
 }
 
 // Kind implements river.JobArgs.

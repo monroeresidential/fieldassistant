@@ -43,6 +43,8 @@ type RFI struct {
 	CreatedAt string   `json:"created_at"`
 	// CreatedBy is the Procore user who created the RFI.
 	CreatedBy Person `json:"created_by"`
+	// Link is the RFI's web URL in Procore.
+	Link string `json:"link"`
 }
 
 // UnmarshalJSON accepts Procore's RFI number as either a JSON number or string.

@@ -18,11 +18,12 @@ import (
 	"github.com/monroeresidential/fieldassistant/api/internal/store"
 )
 
-// riverQueue mimics River's unique insert: one live job per draft, and a new
-// job once the draft's job is finished. It ignores the transaction.
+// riverQueue mimics River's unique insert by args: one live job per draft
+// and attempt, and a new job once that job is finished or for a new
+// attempt. It ignores the transaction.
 type riverQueue struct {
 	mu       sync.Mutex
-	ids      map[uuid.UUID]int64
+	ids      map[jobArgs]int64
 	finished map[int64]bool
 	calls    int
 	// onEnqueue, when set, runs at the start of EnqueueTx, outside the
@@ -30,7 +31,13 @@ type riverQueue struct {
 	onEnqueue func() error
 }
 
-func (q *riverQueue) EnqueueTx(_ context.Context, _ pgx.Tx, id uuid.UUID) (int64, error) {
+type jobArgs struct {
+	draft   uuid.UUID
+	attempt int
+}
+
+func (q *riverQueue) EnqueueTx(_ context.Context, _ pgx.Tx, draft uuid.UUID, attempt int) (int64, error) {
+	id := jobArgs{draft, attempt}
 	q.mu.Lock()
 	hook := q.onEnqueue
 	q.mu.Unlock()
@@ -43,7 +50,7 @@ func (q *riverQueue) EnqueueTx(_ context.Context, _ pgx.Tx, id uuid.UUID) (int64
 	defer q.mu.Unlock()
 	q.calls++
 	if q.ids == nil {
-		q.ids = map[uuid.UUID]int64{}
+		q.ids = map[jobArgs]int64{}
 	}
 	if job, ok := q.ids[id]; ok && !q.finished[job] {
 		return job, nil

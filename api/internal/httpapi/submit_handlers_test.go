@@ -239,6 +239,50 @@ func TestGetJob_EarlierJob_NoDraftOverlay(t *testing.T) {
 	}
 }
 
+// Once River has dropped a finished job's row, GET /jobs/{id} answers from
+// the caller's draft that holds the job, and stays 404 for anyone else.
+func TestGetJob_RowGone_FallsBackToDraft(t *testing.T) {
+	ts, token := newSubmitServer(t)
+	_, ok := submitted(t, ts, token)
+	ts.Procore.With(func(f *fakeProcore) {
+		f.RFICreateResponse = func([]byte) (int, string) {
+			return http.StatusUnprocessableEntity, `{"errors":{"question.body":["is too short"]}}`
+		}
+	})
+	_, failed := submitted(t, ts, token)
+	if ok.Status != JobStatusStatusSucceeded || failed.Status != JobStatusStatusFailed {
+		t.Fatalf("jobs = %+v and %+v", ok, failed)
+	}
+	if _, err := ts.Store.Pool.Exec(context.Background(), `delete from river_job where id = any($1::bigint[])`, []string{ok.Id, failed.Id}); err != nil {
+		t.Fatalf("delete river jobs: %v", err)
+	}
+
+	res, b := draftCall(t, ts.Server, http.MethodGet, "/v1/jobs/"+ok.Id, token, draftCompany, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("get gone succeeded job: status %d; body %s", res.StatusCode, b)
+	}
+	if got := decode[JobStatus](t, b); got.Status != JobStatusStatusSucceeded || got.DraftId != ok.DraftId ||
+		got.Result == nil || got.Result.ProcoreId != 501 || got.Error != nil {
+		t.Errorf("gone succeeded job = %+v", got)
+	}
+
+	res, b = draftCall(t, ts.Server, http.MethodGet, "/v1/jobs/"+failed.Id, token, draftCompany, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("get gone failed job: status %d; body %s", res.StatusCode, b)
+	}
+	if got := decode[JobStatus](t, b); got.Status != JobStatusStatusFailed || got.Error == nil ||
+		got.Error.Code != "procore_validation" || got.Result != nil {
+		t.Errorf("gone failed job = %+v", got)
+	}
+
+	ts.Procore.With(func(f *fakeProcore) {
+		f.Users[11] = procore.Me{ID: 11, Login: "ben@example.com", Name: "Ben West"}
+	})
+	other := signInAs(t, ts.Server, "device-2", "11").AccessToken
+	res, b = draftCall(t, ts.Server, http.MethodGet, "/v1/jobs/"+ok.Id, other, draftCompany, nil)
+	wantError(t, res, b, http.StatusNotFound, "not_found")
+}
+
 func TestGetJob_OtherUser_404(t *testing.T) {
 	ts, token := newSubmitServer(t)
 	ts.Procore.With(func(f *fakeProcore) {

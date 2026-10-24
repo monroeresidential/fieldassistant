@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
@@ -78,9 +79,11 @@ type SubmitOutcome struct {
 
 // SubmitQueue queues submit jobs. *jobs.Queue satisfies it.
 type SubmitQueue interface {
-	// EnqueueTx inserts draftID's submit job in tx and returns its ID. While
-	// the draft already has an active job, that job's ID is returned.
-	EnqueueTx(ctx context.Context, tx pgx.Tx, draftID uuid.UUID) (int64, error)
+	// EnqueueTx inserts the submit job for attempt (the draft's
+	// submit_attempts after claiming it) of draftID in tx and returns its ID.
+	// While that attempt already has an active job, that job's ID is
+	// returned; a new attempt always gets a new job.
+	EnqueueTx(ctx context.Context, tx pgx.Tx, draftID uuid.UUID, attempt int) (int64, error)
 	// JobFinished reports whether jobID will never run again: it completed,
 	// was discarded or cancelled, or no longer exists.
 	JobFinished(ctx context.Context, jobID int64) (bool, error)
@@ -167,13 +170,13 @@ func (d *Drafts) Submit(ctx context.Context, userID, id uuid.UUID, q SubmitQueue
 
 		var jobID int64
 		err = d.st.WithPgxTx(ctx, func(tx pgx.Tx, qtx *db.Queries) error {
-			if _, err := qtx.MarkDraftSubmitting(ctx, db.MarkDraftSubmittingParams{
+			row, err := qtx.MarkDraftSubmitting(ctx, db.MarkDraftSubmittingParams{
 				ID: pid, UpdatedAt: pgtype.Timestamptz{Time: cur.UpdatedAt, Valid: true},
-			}); err != nil {
+			})
+			if err != nil {
 				return err
 			}
-			var err error
-			if jobID, err = q.EnqueueTx(ctx, tx, id); err != nil {
+			if jobID, err = q.EnqueueTx(ctx, tx, id, int(row.SubmitAttempts)); err != nil {
 				return fmt.Errorf("pipeline: enqueue submit: %w", err)
 			}
 			return qtx.SetDraftJob(ctx, db.SetDraftJobParams{ID: pid, JobID: pgtype.Int8{Int64: jobID, Valid: true}})
@@ -195,9 +198,10 @@ func (d *Drafts) Submit(ctx context.Context, userID, id uuid.UUID, q SubmitQueue
 
 // reviveSubmit handles Submit on a submitting draft. While its job can still
 // run, that job is returned. Once the job has finished without settling the
-// draft, a new job is inserted and stored in one transaction, provided the
-// draft still holds the finished job; replaced is false when another Submit
-// changed it first, and the caller reads the draft again.
+// draft, a new attempt is claimed and its job inserted and stored in one
+// transaction, provided the draft still holds the finished job; replaced is
+// false when another Submit changed it first, and the caller reads the
+// draft again.
 func (d *Drafts) reviveSubmit(ctx context.Context, cur Draft, q SubmitQueue) (out SubmitOutcome, replaced bool, err error) {
 	if cur.JobID != 0 {
 		finished, err := q.JobFinished(ctx, cur.JobID)
@@ -211,20 +215,19 @@ func (d *Drafts) reviveSubmit(ctx context.Context, cur Draft, q SubmitQueue) (ou
 	d.log.Warn("submitting draft has no live job; queueing a new one", "draft_id", cur.ID, "old_job_id", cur.JobID)
 	var jobID int64
 	err = d.st.WithPgxTx(ctx, func(tx pgx.Tx, qtx *db.Queries) error {
-		var err error
-		if jobID, err = q.EnqueueTx(ctx, tx, cur.ID); err != nil {
-			return fmt.Errorf("pipeline: enqueue submit: %w", err)
-		}
-		n, err := qtx.ReplaceDraftJob(ctx, db.ReplaceDraftJobParams{
-			ID:       pgtype.UUID{Bytes: cur.ID, Valid: true},
+		pid := pgtype.UUID{Bytes: cur.ID, Valid: true}
+		attempt, err := qtx.ClaimDraftResubmit(ctx, db.ClaimDraftResubmitParams{
+			ID:       pid,
 			OldJobID: pgtype.Int8{Int64: cur.JobID, Valid: cur.JobID != 0},
-			NewJobID: pgtype.Int8{Int64: jobID, Valid: true},
 		})
 		if err != nil {
-			return fmt.Errorf("pipeline: store job id: %w", err)
+			return err // pgx.ErrNoRows: another Submit got there first
 		}
-		if n == 0 {
-			return pgx.ErrNoRows
+		if jobID, err = q.EnqueueTx(ctx, tx, cur.ID, int(attempt)); err != nil {
+			return fmt.Errorf("pipeline: enqueue submit: %w", err)
+		}
+		if err := qtx.SetDraftJob(ctx, db.SetDraftJobParams{ID: pid, JobID: pgtype.Int8{Int64: jobID, Valid: true}}); err != nil {
+			return fmt.Errorf("pipeline: store job id: %w", err)
 		}
 		return nil
 	})
@@ -315,6 +318,10 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 //   - Any other error may hide a created RFI, so the list is read and a
 //     single matching RFI created since this attempt began is adopted;
 //     several fail the draft definitively.
+//   - A Procore record belongs to one draft (drafts_procore_record_uidx).
+//     When another draft stores a matching RFI first, a recovery treats it
+//     as no match; a POST whose own RFI was taken that way fails the draft
+//     with AmbiguousRFIMessage rather than post again.
 func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 	cur, err := d.load(ctx, draftID)
 	if errors.Is(err, ErrNotFound) {
@@ -376,7 +383,12 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 		case n == 1:
 			d.log.Info("found rfi from an earlier attempt before posting", "draft_id", cur.ID, "procore_id", rfi.ID)
 			resp := map[string]any{"recovered": true, "before_post": true, "rfi": rfi}
-			return d.markSubmitted(ctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number}, nil, resp, 0)
+			err := d.markSubmitted(ctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number, URL: rfi.Link}, nil, resp, 0)
+			if !errors.Is(err, errRecordOwned) {
+				return err
+			}
+			// Another draft adopted it between the list and the store:
+			// it was the only match, so there is none; post.
 		case n > 1:
 			return d.failAmbiguous(ctx, cur, n, nil, 0)
 		}
@@ -394,7 +406,21 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postWriteTimeout)
 	defer cancel()
 	if err == nil {
-		return d.markSubmitted(wctx, cur, Result{ProcoreID: created.ID, Number: created.Number, URL: created.Link}, request, created, ms)
+		err := d.markSubmitted(wctx, cur, Result{ProcoreID: created.ID, Number: created.Number, URL: created.Link}, request, created, ms)
+		if errors.Is(err, errRecordOwned) {
+			// Another draft's recovery adopted this POST's RFI before it
+			// was stored. Retrying would post again, so tell the user to
+			// check Procore instead.
+			return d.failSubmit(wctx, cur, submitFailure{
+				code:    CodeProcoreValidation,
+				message: AmbiguousRFIMessage,
+				cause:   fmt.Errorf("pipeline: created rfi %d is stored by another draft", created.ID),
+				invalid: []Unresolved{{Field: FormField, Reason: ReasonProcoreValidation, Message: AmbiguousRFIMessage, Candidates: []LookupRow{}}},
+				request: request, ms: ms,
+				closesRun: true,
+			})
+		}
+		return err
 	}
 
 	// Procore answered and created nothing: fail the draft, do not retry.
@@ -427,7 +453,11 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 	case n == 1:
 		d.log.Info("recovered submitted rfi after lost response", "draft_id", cur.ID, "procore_id", rfi.ID, "error", err)
 		resp := map[string]any{"recovered": true, "error": err.Error(), "rfi": rfi}
-		return d.markSubmitted(wctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number}, request, resp, ms)
+		merr := d.markSubmitted(wctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number, URL: rfi.Link}, request, resp, ms)
+		if !errors.Is(merr, errRecordOwned) {
+			return merr
+		}
+		// Another draft adopted it first: no match; retry.
 	case n > 1:
 		return d.failAmbiguous(wctx, cur, n, request, ms)
 	}
@@ -528,7 +558,17 @@ func (d *Drafts) findCreated(ctx context.Context, token string, cur Draft, creat
 	return match, n, nil
 }
 
-// markSubmitted stores the Procore record and a submitted audit event.
+// errRecordOwned means markSubmitted found the Procore record already
+// stored by another draft (drafts_procore_record_uidx); nothing was stored.
+var errRecordOwned = errors.New("pipeline: procore record is stored by another draft")
+
+// procoreRecordIndex is the unique index that gives a Procore record one
+// draft.
+const procoreRecordIndex = "drafts_procore_record_uidx"
+
+// markSubmitted stores the Procore record and a submitted audit event. When
+// another draft stored the same record first, nothing is stored and
+// errRecordOwned is returned.
 func (d *Drafts) markSubmitted(ctx context.Context, cur Draft, res Result, request json.RawMessage, response any, ms int) error {
 	err := d.st.WithTx(ctx, func(q *db.Queries) error {
 		if err := q.SetDraftSubmitted(ctx, db.SetDraftSubmittedParams{
@@ -541,6 +581,11 @@ func (d *Drafts) markSubmitted(ctx context.Context, cur Draft, res Result, reque
 		}
 		return insertProcoreAudit(ctx, q, cur.CompanyID, cur.ID, AuditSubmitted, request, response, ms)
 	})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == procoreRecordIndex {
+		d.log.Info("rfi stored by another draft first; not adopting", "draft_id", cur.ID, "procore_id", res.ProcoreID)
+		return errRecordOwned
+	}
 	if err != nil {
 		d.log.Error("store submitted draft", "draft_id", cur.ID, "procore_id", res.ProcoreID, "error", err)
 	}

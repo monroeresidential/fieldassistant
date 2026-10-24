@@ -280,6 +280,21 @@ func (d *Drafts) Get(ctx context.Context, userID, id uuid.UUID) (Draft, error) {
 	return fromRow(row)
 }
 
+// GetByJob returns the user's draft whose current submit job is jobID, or
+// ErrNotFound.
+func (d *Drafts) GetByJob(ctx context.Context, userID uuid.UUID, jobID int64) (Draft, error) {
+	row, err := d.st.Q.GetDraftByJob(ctx, db.GetDraftByJobParams{
+		UserID: pgtype.UUID{Bytes: userID, Valid: true}, JobID: pgtype.Int8{Int64: jobID, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Draft{}, ErrNotFound
+	}
+	if err != nil {
+		return Draft{}, fmt.Errorf("pipeline: load draft by job: %w", err)
+	}
+	return fromRow(row)
+}
+
 // SaveEdits stores the reviewer's payload after validating its IDs and dates
 // against the lookups again. The draft becomes reviewed and loses any failure
 // error. Its unresolved list becomes the validation result plus the earlier

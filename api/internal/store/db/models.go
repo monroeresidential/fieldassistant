@@ -56,6 +56,7 @@ type Draft struct {
 	ErrorCode           pgtype.Text
 	ErrorMessage        pgtype.Text
 	JobID               pgtype.Int8
+	SubmitAttempts      int32
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
 }

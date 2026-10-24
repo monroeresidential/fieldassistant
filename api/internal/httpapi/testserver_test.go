@@ -25,6 +25,7 @@ import (
 	"github.com/monroeresidential/fieldassistant/api/internal/llm/llmtest"
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
+	"github.com/monroeresidential/fieldassistant/api/internal/store"
 	"github.com/monroeresidential/fieldassistant/api/internal/store/storetest"
 )
 
@@ -309,6 +310,8 @@ type testServer struct {
 	// LLM is the extractor behind the drafts pipeline. Set its Steps
 	// before creating a draft; every extraction replays them.
 	LLM *llmtest.Scripted
+	// Store is the test database behind the server.
+	Store *store.Store
 }
 
 // newDraftTestServer is newTestServer that also returns the scripted
@@ -404,7 +407,7 @@ func startTestServer(t *testing.T, scheme string) testServer {
 	})
 	api.Start()
 	t.Cleanup(api.Close)
-	return testServer{Server: api, Procore: fp, LLM: scripted}
+	return testServer{Server: api, Procore: fp, LLM: scripted, Store: st}
 }
 
 // noRedirectClient returns redirects to the caller instead of following them.

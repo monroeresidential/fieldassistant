@@ -45,6 +45,9 @@ type FakeProcore struct {
 	// OnCreateRFI, when set, runs at the start of each CreateRFI call,
 	// outside the lock, so a test can observe state at the moment of the POST.
 	OnCreateRFI func()
+	// OnListRFIs, when set, runs at the start of each ListRFIs call, outside
+	// the lock.
+	OnListRFIs func()
 
 	mu    sync.Mutex
 	calls []Call
@@ -163,6 +166,9 @@ func (f *FakeProcore) GetProject(_ context.Context, token string, companyID, pro
 }
 
 func (f *FakeProcore) ListRFIs(_ context.Context, token string, companyID, projectID int64) ([]procore.RFI, error) {
+	if f.OnListRFIs != nil {
+		f.OnListRFIs()
+	}
 	if err := f.record(Call{Method: "ListRFIs", AccessToken: token, CompanyID: companyID, ProjectID: projectID}); err != nil {
 		return nil, err
 	}

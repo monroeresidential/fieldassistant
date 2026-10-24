@@ -47,7 +47,7 @@ type enqueuer struct {
 	finished map[int64]bool
 }
 
-func (q *enqueuer) EnqueueTx(_ context.Context, _ pgx.Tx, id uuid.UUID) (int64, error) {
+func (q *enqueuer) EnqueueTx(_ context.Context, _ pgx.Tx, id uuid.UUID, _ int) (int64, error) {
 	q.next++
 	q.drafts = append(q.drafts, id)
 	return q.next + 900, nil
@@ -350,7 +350,7 @@ func TestRunSubmit_LostResponse_FindsExistingRFI(t *testing.T) {
 	now := e.clock.Now()
 	e.fp.RFIs = []procore.RFI{
 		{ID: 400, Number: "100", Subject: "Twisted column", CreatedBy: pat, CreatedAt: now.Add(-48 * time.Hour).Format(time.RFC3339)},
-		{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: now.Add(2 * time.Second).Format(time.RFC3339)},
+		{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: now.Add(2 * time.Second).Format(time.RFC3339), Link: "https://app.procore.com/rfis/501"},
 		{ID: 502, Number: "215", Subject: "Something else", CreatedAt: now.Format(time.RFC3339)},
 	}
 	d := e.submittable(t, twistedFinal)
@@ -360,7 +360,8 @@ func TestRunSubmit_LostResponse_FindsExistingRFI(t *testing.T) {
 		t.Fatalf("RunSubmit: %v", err)
 	}
 	got := e.mustGet(t, d.ID)
-	if got.Status != StatusSubmitted || got.Result == nil || got.Result.ProcoreID != 501 || got.Result.Number != "214" {
+	if got.Status != StatusSubmitted || got.Result == nil || got.Result.ProcoreID != 501 || got.Result.Number != "214" ||
+		got.Result.URL != "https://app.procore.com/rfis/501" {
 		t.Fatalf("draft = status %q result %+v", got.Status, got.Result)
 	}
 	if n := e.fp.CallCount("CreateRFI"); n != 1 {
@@ -415,7 +416,7 @@ func TestRunSubmit_RetryAfterUnknownOutcome_FindsRFIBeforePosting(t *testing.T) 
 	// The retry must find it instead of posting again.
 	delete(e.fp.Err, "CreateRFI")
 	e.fp.Created = procore.RFICreated{ID: 999}
-	e.fp.RFIs = []procore.RFI{{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: e.clock.Now().Format(time.RFC3339)}}
+	e.fp.RFIs = []procore.RFI{{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: e.clock.Now().Format(time.RFC3339), Link: "https://app.procore.com/rfis/501"}}
 	e.clock.Advance(2 * time.Minute)
 
 	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
@@ -425,7 +426,7 @@ func TestRunSubmit_RetryAfterUnknownOutcome_FindsRFIBeforePosting(t *testing.T) 
 		t.Errorf("CreateRFI called %d times, want 1", n)
 	}
 	got := e.mustGet(t, d.ID)
-	if got.Status != StatusSubmitted || got.Result == nil || got.Result.ProcoreID != 501 {
+	if got.Status != StatusSubmitted || got.Result == nil || got.Result.ProcoreID != 501 || got.Result.URL != "https://app.procore.com/rfis/501" {
 		t.Fatalf("draft = status %q result %+v", got.Status, got.Result)
 	}
 }
@@ -449,6 +450,9 @@ func TestRunSubmit_ResubmitAfterRetriesRanOut_FindsRFIBeforePosting(t *testing.T
 	e.fp.RFIs = []procore.RFI{{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: e.clock.Now().Format(time.RFC3339)}}
 	e.clock.Advance(10 * time.Minute)
 	e.submit(t, d)
+	if got := e.mustGet(t, d.ID); got.Status != StatusSubmitting || got.Error != nil {
+		t.Fatalf("after resubmit = status %q error %+v, want submitting with no error", got.Status, got.Error)
+	}
 	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
 		t.Fatalf("resubmit: %v", err)
 	}

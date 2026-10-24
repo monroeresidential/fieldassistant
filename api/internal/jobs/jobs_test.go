@@ -60,15 +60,58 @@ func (f *fakeSubmitter) failedDrafts() []uuid.UUID {
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
-// enqueueTx inserts draft's submit job through Queue in its own transaction.
+// enqueueTx inserts draft's submit job for attempt 1 through Queue in its
+// own transaction.
 func enqueueTx(ctx context.Context, st *store.Store, c *river.Client[pgx.Tx], draft uuid.UUID) (int64, error) {
+	return enqueueAttempt(ctx, st, c, draft, 1)
+}
+
+func enqueueAttempt(ctx context.Context, st *store.Store, c *river.Client[pgx.Tx], draft uuid.UUID, attempt int) (int64, error) {
 	var id int64
 	err := st.WithPgxTx(ctx, func(tx pgx.Tx, _ *db.Queries) error {
 		var err error
-		id, err = NewQueue(c).EnqueueTx(ctx, tx, draft)
+		id, err = NewQueue(c).EnqueueTx(ctx, tx, draft, attempt)
 		return err
 	})
 	return id, err
+}
+
+// While River still shows an attempt's job running (its draft already
+// settled), the next attempt gets a new job; the same attempt does not.
+func TestQueue_EnqueueTx_NewAttemptWhileOldRunning(t *testing.T) {
+	st := storetest.New(t)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := context.Background()
+	draft := uuid.New()
+	first, err := enqueueAttempt(ctx, st, c, draft, 1)
+	if err != nil {
+		t.Fatalf("enqueue attempt 1: %v", err)
+	}
+	if _, err := st.Pool.Exec(ctx, `update river_job set state = 'running', attempt = 1, attempted_at = now() where id = $1`, first); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
+	if again, err := enqueueAttempt(ctx, st, c, draft, 1); err != nil || again != first {
+		t.Fatalf("attempt 1 again = %d, %v; want the running job %d", again, err, first)
+	}
+	second, err := enqueueAttempt(ctx, st, c, draft, 2)
+	if err != nil || second == first {
+		t.Fatalf("attempt 2 = %d, %v; want a new job", second, err)
+	}
+	js, err := Status(ctx, c, second)
+	if err != nil || js.DraftID != draft || js.Status != StatusQueued {
+		t.Fatalf("attempt 2 status = %+v, %v", js, err)
+	}
+}
+
+// River keeps finished jobs for a week, so a client polling late finds them.
+func TestRiverConfig_RetainsFinishedJobsForAWeek(t *testing.T) {
+	cfg := riverConfig(river.NewWorkers(), newFakeSubmitter(), quiet)
+	if cfg.CompletedJobRetentionPeriod != 7*24*time.Hour || cfg.DiscardedJobRetentionPeriod != 7*24*time.Hour {
+		t.Errorf("retention completed %s discarded %s, want 168h", cfg.CompletedJobRetentionPeriod, cfg.DiscardedJobRetentionPeriod)
+	}
 }
 
 // A job inserted in a transaction that rolls back does not exist.
@@ -83,7 +126,7 @@ func TestQueue_EnqueueTx_RolledBack_NoJob(t *testing.T) {
 	rollback := errors.New("rollback")
 	err = st.WithPgxTx(ctx, func(tx pgx.Tx, _ *db.Queries) error {
 		var err error
-		if id, err = NewQueue(c).EnqueueTx(ctx, tx, uuid.New()); err != nil {
+		if id, err = NewQueue(c).EnqueueTx(ctx, tx, uuid.New(), 1); err != nil {
 			return err
 		}
 		return rollback
