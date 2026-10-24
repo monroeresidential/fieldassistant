@@ -43,6 +43,8 @@
 	<string>Field Assistant uses the microphone to record voice notes.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Field Assistant accesses your photo library to attach photos.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Field Assistant turns your voice notes into text on this phone.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>
