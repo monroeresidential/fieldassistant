@@ -31,11 +31,13 @@ type ExtractContext struct {
 // Feature is what a feature module supplies to the shared extraction
 // pipeline. Payloads are JSON-decoded maps, so numbers arrive as float64.
 //
-// Call order: after extraction the pipeline calls ApplyDefaults with the
-// model's payload and unresolved list, appends the unresolved entries it
-// returns to the model's, and then calls Validate with the defaulted payload
-// and the merged list. Validate runs last so that no default can reintroduce
-// an ID or a field that validation removed.
+// Call order: after extraction the pipeline calls Normalize with the model's
+// payload and unresolved list, then ApplyDefaults with the normalized ones,
+// appends the unresolved entries ApplyDefaults returns, and then calls
+// Validate with the defaulted payload and the merged list. Validate runs last
+// so that no default can reintroduce an ID or a field that validation
+// removed. A reviewer's payload goes through Normalize (with no unresolved
+// list) and then Validate on every save and submit.
 type Feature interface {
 	Name() string
 	LookupKinds() []LookupKind
@@ -52,6 +54,14 @@ type Feature interface {
 	// and the unresolved entries the defaults add. It does not default a
 	// field that is already in unresolved, and must not mutate its inputs.
 	ApplyDefaults(ctx ExtractContext, payload map[string]any, unresolved []Unresolved, lookups map[LookupKind]LookupSet) (map[string]any, []Unresolved)
+	// Normalize makes an untrusted payload and unresolved list fit the
+	// feature's schema, since neither the model's tool input nor a client's
+	// edit is schema-checked: unknown or wrong-typed payload keys are
+	// dropped, numeric IDs coerced, values outside an enum dropped and
+	// flagged invalid_value, and reasons the model may not use mapped to
+	// ambiguous. It returns the unresolved list it was given, normalized,
+	// followed by the entries it adds. It must not mutate its inputs.
+	Normalize(payload map[string]any, unresolved []Unresolved) (map[string]any, []Unresolved)
 }
 
 // Unresolved reasons, matching the UnresolvedField.reason enum in the contract.
@@ -61,6 +71,9 @@ const (
 	ReasonNotInLookup       = "not_in_lookup"
 	ReasonDateUnparseable   = "date_unparseable"
 	ReasonProcoreValidation = "procore_validation"
+	// ReasonInvalidValue flags a value of the wrong shape: an enum value
+	// outside the enum, or a number field holding words.
+	ReasonInvalidValue = "invalid_value"
 )
 
 // Unresolved is a field the user must settle during review.

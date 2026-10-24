@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,6 +91,56 @@ func (*Feature) UserMessage(ctx pipeline.ExtractContext, transcript string) stri
 	fmt.Fprintf(&b, "Speaker: %s (Procore ID %d)\n", ctx.UserName, ctx.UserProcoreID)
 	fmt.Fprintf(&b, "\nTranscript:\n%s\n", transcript)
 	return b.String()
+}
+
+// impactFields hold {status, value} objects whose value is a plain number.
+var impactFields = []string{"schedule_impact", "cost_impact"}
+
+// Normalize fits a payload to OutputSchema (see pipeline.NormalizeToSchema),
+// after rewriting impact values as plain numbers: a JSON number becomes its
+// decimal string and "$2,000" becomes "2000". An impact value that is still
+// not a number stays in the payload, so the reviewer sees what was said,
+// and its field is flagged invalid_value.
+func (f *Feature) Normalize(payload map[string]any, unresolved []pipeline.Unresolved) (map[string]any, []pipeline.Unresolved) {
+	in := make(map[string]any, len(payload))
+	for k, v := range payload {
+		in[k] = v
+	}
+	for _, field := range impactFields {
+		obj, ok := in[field].(map[string]any)
+		if !ok {
+			continue
+		}
+		cp := make(map[string]any, len(obj))
+		for k, v := range obj {
+			cp[k] = v
+		}
+		switch v := cp["value"].(type) {
+		case float64:
+			cp["value"] = strconv.FormatFloat(v, 'f', -1, 64)
+		case string:
+			if n, ok := pipeline.ParseAmount(v); ok {
+				cp["value"] = strconv.FormatFloat(n, 'f', -1, 64)
+			}
+		}
+		in[field] = cp
+	}
+
+	out, un := pipeline.NormalizeToSchema(f, in, unresolved)
+	for _, field := range impactFields {
+		obj, ok := out[field].(map[string]any)
+		if !ok {
+			continue
+		}
+		if s, _ := obj["value"].(string); strings.TrimSpace(s) != "" {
+			if _, ok := pipeline.ParseAmount(s); !ok {
+				un = append(un, pipeline.Unresolved{
+					Field: field, Reason: pipeline.ReasonInvalidValue, Message: pipeline.ImpactValueMessage, Candidates: []pipeline.LookupRow{},
+				})
+			}
+		}
+	}
+	return out, un
 }
 
 // ApplyDefaults fills the fields the server owns and returns a new payload

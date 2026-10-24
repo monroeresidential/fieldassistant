@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Field Assistant API
-  version: 1.4.0
+  version: 1.4.1
 servers:
   - url: /v1
 security:
@@ -804,7 +804,7 @@ components:
           type: string
         reason:
           type: string
-          enum: [ambiguous, not_found, not_in_lookup, date_unparseable, procore_validation]
+          enum: [ambiguous, not_found, not_in_lookup, date_unparseable, procore_validation, invalid_value]
         message:
           type: string
         candidates:

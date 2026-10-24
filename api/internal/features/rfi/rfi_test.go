@@ -11,6 +11,86 @@ import (
 
 var _ pipeline.Feature = (*Feature)(nil)
 
+// An impact value must be a plain number. Currency formatting is cleaned
+// up; words are kept for the reviewer and the field is flagged, so the
+// problem shows on the review screen instead of after Submit.
+func TestValidate_ImpactValue_NonNumeric_Flagged(t *testing.T) {
+	f := New()
+	payload := map[string]any{
+		"subject":         "Twisted column",
+		"schedule_impact": map[string]any{"status": "yes_known", "value": "two weeks"},
+		"cost_impact":     map[string]any{"status": "yes_known", "value": " $2,000 "},
+	}
+	norm, un := f.Normalize(payload, nil)
+	out, un := pipeline.Validate(f, norm, un, usersWith(), time.Now(), time.UTC)
+
+	if len(un) != 1 || un[0].Field != "schedule_impact" || un[0].Reason != pipeline.ReasonInvalidValue || un[0].Message != pipeline.ImpactValueMessage {
+		t.Errorf("unresolved = %+v, want schedule_impact invalid_value", un)
+	}
+	if v := out["schedule_impact"].(map[string]any)["value"]; v != "two weeks" {
+		t.Errorf("schedule_impact.value = %v, want kept as spoken", v)
+	}
+	if v := out["cost_impact"].(map[string]any)["value"]; v != "2000" {
+		t.Errorf("cost_impact.value = %v, want 2000", v)
+	}
+	if v := payload["cost_impact"].(map[string]any)["value"]; v != " $2,000 " {
+		t.Errorf("input mutated: %v", v)
+	}
+
+	// A number is written as its decimal string.
+	norm, un = f.Normalize(map[string]any{"cost_impact": map[string]any{"status": "yes_known", "value": 1500.5}}, nil)
+	if v := norm["cost_impact"].(map[string]any)["value"]; v != "1500.5" || len(un) != 0 {
+		t.Errorf("numeric value = %v, unresolved %+v", v, un)
+	}
+}
+
+func TestNormalize_DropsWrongTypesAndMapsReasons(t *testing.T) {
+	f := New()
+	payload := map[string]any{
+		"subject":          float64(5),
+		"question_body":    "Q",
+		"location_id":      "77",
+		"private":          "no",
+		"due_date":         nil,
+		"cost_impact":      map[string]any{"status": "maybe"},
+		"schedule_impact":  map[string]any{"status": "no", "extra": true},
+		"made_up_field":    "x",
+		"distribution_ids": []any{float64(3), "4", nil},
+	}
+	un := []pipeline.Unresolved{
+		{Field: "assignee_ids", Reason: "weird"},
+		{Field: "location_id", Reason: pipeline.ReasonNotFound},
+	}
+	out, got := f.Normalize(payload, un)
+
+	want := map[string]any{
+		"question_body":    "Q",
+		"location_id":      float64(77),
+		"due_date":         nil,
+		"schedule_impact":  map[string]any{"status": "no"},
+		"distribution_ids": []any{float64(3), float64(4)},
+	}
+	if b1, b2 := mustJSON(t, out), mustJSON(t, want); b1 != b2 {
+		t.Errorf("payload = %s, want %s", b1, b2)
+	}
+	if len(got) != 3 || got[0].Reason != pipeline.ReasonAmbiguous || got[1].Reason != pipeline.ReasonNotFound ||
+		got[2].Field != "cost_impact" || got[2].Reason != pipeline.ReasonInvalidValue || got[2].Message != "invalid cost impact status" {
+		t.Errorf("unresolved = %+v", got)
+	}
+	if un[0].Reason != "weird" {
+		t.Error("input unresolved mutated")
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func usersWith(ids ...int64) map[pipeline.LookupKind]pipeline.LookupSet {
 	rows := []pipeline.LookupRow{}
 	for _, id := range ids {

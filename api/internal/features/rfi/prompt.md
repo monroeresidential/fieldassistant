@@ -39,6 +39,7 @@ Field notes:
 - Never use `tbd`. When the speaker did not address an impact, omit it.
 - "Holding up", "holding us up" or "we're stopped" means `schedule_impact.status = yes_unknown`.
 - A spoken dollar amount sets `cost_impact` to `{"status": "yes_known", "value": "<amount>"}`.
+- `value` is a plain number: dollars for cost, days for schedule; no symbols or words. "About two thousand dollars" is `"2000"`; "two weeks" of delay is `"14"`. When the amount cannot be written as a number, use `yes_unknown` and omit `value`.
 
 # Other fields
 

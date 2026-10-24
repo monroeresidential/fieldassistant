@@ -195,7 +195,7 @@ func TestRunSubmit_ImpactValueNotNumber_FailsWithoutPosting(t *testing.T) {
 		t.Fatalf("draft = status %q error %+v", got.Status, got.Error)
 	}
 	if len(got.Unresolved) != 1 || got.Unresolved[0].Field != "schedule_impact" ||
-		got.Unresolved[0].Reason != ReasonProcoreValidation || got.Unresolved[0].Message != "value must be a number" {
+		got.Unresolved[0].Reason != ReasonInvalidValue || got.Unresolved[0].Message != ImpactValueMessage {
 		t.Errorf("unresolved = %+v", got.Unresolved)
 	}
 }

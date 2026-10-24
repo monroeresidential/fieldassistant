@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -247,7 +245,8 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 		return nil, nil, err
 	}
 	today, loc := d.now(), RailsZone(project.TimeZone)
-	validated, unresolved := Validate(f, payload, nil, sets, today, loc)
+	normalized, flagged := f.Normalize(payload, nil)
+	validated, unresolved := Validate(f, normalized, flagged, sets, today, loc)
 	for _, u := range cur.Unresolved {
 		if isEmptyValue(validated[u.Field]) {
 			unresolved = append(unresolved, u)
@@ -804,10 +803,10 @@ func rfiCreate(raw json.RawMessage) (procore.RFICreate, []Unresolved, error) {
 		}
 		out := &procore.RFIImpact{Status: in.Status}
 		if s := strings.TrimSpace(in.Value); s != "" {
-			v, err := strconv.ParseFloat(s, 64)
-			if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			v, ok := ParseAmount(s)
+			if !ok {
 				invalid = append(invalid, Unresolved{
-					Field: field, Reason: ReasonProcoreValidation, Message: "value must be a number", Candidates: []LookupRow{},
+					Field: field, Reason: ReasonInvalidValue, Message: ImpactValueMessage, Candidates: []LookupRow{},
 				})
 				return nil
 			}

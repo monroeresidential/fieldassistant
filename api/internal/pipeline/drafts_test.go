@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -42,7 +43,48 @@ func (draftsFeature) PayloadFields() []string {
 func (draftsFeature) Prompt() llm.Prompt {
 	return llm.Prompt{Text: "system prompt", Version: "abcdef012345"}
 }
-func (draftsFeature) OutputSchema() map[string]any { return map[string]any{"type": "object"} }
+func (draftsFeature) OutputSchema() map[string]any { return draftsSchema }
+func (f draftsFeature) Normalize(payload map[string]any, unresolved []Unresolved) (map[string]any, []Unresolved) {
+	return NormalizeToSchema(f, payload, unresolved)
+}
+
+// draftsSchema covers draftsFeature's payload fields in the shape of the RFI
+// tool schema.
+var draftsSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"payload": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"subject":        map[string]any{"type": "string"},
+				"question_body":  map[string]any{"type": "string"},
+				"assignee_ids":   map[string]any{"type": "array", "items": map[string]any{"type": "integer"}},
+				"rfi_manager_id": map[string]any{"type": "integer"},
+				"location_id":    map[string]any{"type": "integer"},
+				"due_date":       map[string]any{"type": "string"},
+				"schedule_impact": map[string]any{
+					"type":     "object",
+					"required": []string{"status"},
+					"properties": map[string]any{
+						"status": map[string]any{"type": "string", "enum": []string{"yes_known", "yes_unknown", "no", "tbd"}},
+						"value":  map[string]any{"type": "string"},
+					},
+				},
+				"draft": map[string]any{"type": "boolean"},
+			},
+		},
+		"unresolved": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reason": map[string]any{"type": "string", "enum": []string{"ambiguous", "not_found"}},
+				},
+			},
+		},
+	},
+}
+
 func (draftsFeature) UserMessage(ctx ExtractContext, transcript string) string {
 	return ctx.ProjectName + "|" + ctx.TimeZone + "|" + ctx.UserName + "|" + transcript
 }
@@ -181,6 +223,55 @@ func TestCreate_ExtractsValidatesAndAudits(t *testing.T) {
 	}
 	if len(ap.Turns) == 0 || ap.ToolCalls != 1 || len(ap.RawFinal) == 0 {
 		t.Errorf("audit payload = %s", evs[0].Payload)
+	}
+}
+
+// The API does not enforce the tool's input schema, so Create normalizes
+// what the model sent before defaults and validation and stores only
+// schema-shaped values.
+func TestCreate_NormalizesBadModelOutput(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.llm.Steps = []llmtest.Step{{Final: `{"payload":{"subject":5,"question_body":"Is it OK?","assignee_ids":["11",12.5],` +
+		`"rfi_manager_id":"42","schedule_impact":{"status":"maybe"},"draft":"yes","invented":"x"},` +
+		`"unresolved":[{"field":"location_id","reason":"weird","candidates":[]},{"field":7,"reason":"ambiguous"}],` +
+		`"confidence":{"subject":"high","question_body":1.7}}`}}
+	d, err := e.drafts.Create(context.Background(), e.input(uuid.New()))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	p := payloadMap(t, d)
+	for _, k := range []string{"subject", "schedule_impact", "invented"} {
+		if v, ok := p[k]; ok {
+			t.Errorf("%s = %v, want dropped", k, v)
+		}
+	}
+	// "11" coerces to the ID 11; 12.5 is no ID and Validate removes it.
+	if ids, _ := p["assignee_ids"].([]any); len(ids) != 1 || ids[0] != float64(11) {
+		t.Errorf("assignee_ids = %v, want [11]", p["assignee_ids"])
+	}
+	// "42" coerces; the wrong-typed draft is dropped and defaulted.
+	if p["rfi_manager_id"] != float64(42) || p["draft"] != true {
+		t.Errorf("rfi_manager_id %v draft %v", p["rfi_manager_id"], p["draft"])
+	}
+	want := map[string]Unresolved{
+		"location_id":     {Field: "location_id", Reason: ReasonAmbiguous, Candidates: []LookupRow{}},
+		"schedule_impact": {Field: "schedule_impact", Reason: ReasonInvalidValue, Message: "invalid schedule impact status", Candidates: []LookupRow{}},
+		"assignee_ids":    {Field: "assignee_ids", Reason: ReasonNotInLookup, Message: "A value was not in this project's lookup list", Candidates: []LookupRow{}},
+	}
+	if len(d.Unresolved) != len(want) {
+		t.Errorf("unresolved = %+v", d.Unresolved)
+	}
+	for _, u := range d.Unresolved {
+		if w, ok := want[u.Field]; !ok || !reflect.DeepEqual(u, w) {
+			t.Errorf("unresolved %s = %+v, want %+v", u.Field, u, w)
+		}
+	}
+	if !reflect.DeepEqual(d.Confidence, map[string]float64{"question_body": 1}) {
+		t.Errorf("confidence = %v", d.Confidence)
+	}
+	// What is stored reads back.
+	if got, err := e.drafts.Get(context.Background(), e.user, d.ID); err != nil || len(got.Unresolved) != len(want) {
+		t.Fatalf("Get = %+v, %v", got, err)
 	}
 }
 

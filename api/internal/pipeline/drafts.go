@@ -204,22 +204,13 @@ func (d *Drafts) create(ctx context.Context, in CreateInput) (Draft, error) {
 		return Draft{}, fmt.Errorf("%w: %w", ErrExtractFailed, err)
 	}
 
-	var final struct {
-		Payload    map[string]any     `json:"payload"`
-		Unresolved []Unresolved       `json:"unresolved"`
-		Confidence map[string]float64 `json:"confidence"`
-	}
-	if err := json.Unmarshal(res.Final, &final); err != nil {
+	final, err := decodeFinal(res.Final)
+	if err != nil {
 		return Draft{}, fmt.Errorf("%w: decode %s input: %w", ErrExtractFailed, FinalTool, err)
 	}
-	if final.Payload == nil {
-		final.Payload = map[string]any{}
-	}
-	if final.Confidence == nil {
-		final.Confidence = map[string]float64{}
-	}
-	payload, added := f.ApplyDefaults(ectx, final.Payload, final.Unresolved, sets)
-	unresolved := append(append([]Unresolved{}, final.Unresolved...), added...)
+	payload, unresolved := f.Normalize(final.Payload, final.Unresolved)
+	payload, added := f.ApplyDefaults(ectx, payload, unresolved, sets)
+	unresolved = append(unresolved, added...)
 	payload, unresolved = Validate(f, payload, unresolved, sets, ectx.Today, loc)
 
 	payloadJSON, err := json.Marshal(payload)
@@ -343,6 +334,45 @@ func (d *Drafts) SaveEdits(ctx context.Context, userID, id uuid.UUID, payload js
 		return Draft{}, err
 	}
 	return fromRow(row)
+}
+
+// finalInput is the decoded submit_draft tool input.
+type finalInput struct {
+	Payload    map[string]any
+	Unresolved []Unresolved
+	Confidence map[string]float64
+}
+
+// decodeFinal reads the submit_draft tool input leniently, since the API
+// does not enforce the tool's schema: a payload that is not an object is
+// empty, an unresolved entry that does not decode is skipped, and a
+// confidence that is not a number is dropped (numbers are clamped to 0..1).
+// Only input that is not a JSON object is an error.
+func decodeFinal(raw json.RawMessage) (finalInput, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return finalInput{}, err
+	}
+	out := finalInput{Payload: map[string]any{}, Unresolved: []Unresolved{}, Confidence: map[string]float64{}}
+	if json.Unmarshal(top["payload"], &out.Payload) != nil || out.Payload == nil {
+		out.Payload = map[string]any{}
+	}
+	var items []json.RawMessage
+	_ = json.Unmarshal(top["unresolved"], &items)
+	for _, item := range items {
+		var u Unresolved
+		if json.Unmarshal(item, &u) == nil && u.Field != "" {
+			out.Unresolved = append(out.Unresolved, u)
+		}
+	}
+	var conf map[string]any
+	_ = json.Unmarshal(top["confidence"], &conf)
+	for k, v := range conf {
+		if n, ok := v.(float64); ok {
+			out.Confidence[k] = min(max(n, 0), 1)
+		}
+	}
+	return out, nil
 }
 
 // isEmptyValue reports whether a payload value counts as unset: absent or

@@ -69,7 +69,7 @@ var impact = map[string]any{
 	"required":             []string{"status"},
 	"properties": map[string]any{
 		"status": map[string]any{"type": "string", "enum": []string{"yes_known", "yes_unknown", "no", "tbd"}},
-		"value":  str("Amount or duration as spoken, for yes_known."),
+		"value":  str("For yes_known only. A plain number: dollars for cost, days for schedule; no symbols or words, e.g. \"2000\"."),
 	},
 }
 

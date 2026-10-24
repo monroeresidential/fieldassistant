@@ -30,6 +30,9 @@ func (testFeature) UserMessage(ExtractContext, string) string { return "" }
 func (testFeature) ApplyDefaults(_ ExtractContext, p map[string]any, _ []Unresolved, _ map[LookupKind]LookupSet) (map[string]any, []Unresolved) {
 	return p, nil
 }
+func (testFeature) Normalize(p map[string]any, u []Unresolved) (map[string]any, []Unresolved) {
+	return p, u
+}
 
 var (
 	testToday = time.Date(2026, 10, 24, 15, 0, 0, 0, time.UTC)

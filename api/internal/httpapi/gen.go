@@ -174,6 +174,7 @@ func (e SubmitResponseStatus) Valid() bool {
 const (
 	Ambiguous         UnresolvedFieldReason = "ambiguous"
 	DateUnparseable   UnresolvedFieldReason = "date_unparseable"
+	InvalidValue      UnresolvedFieldReason = "invalid_value"
 	NotFound          UnresolvedFieldReason = "not_found"
 	NotInLookup       UnresolvedFieldReason = "not_in_lookup"
 	ProcoreValidation UnresolvedFieldReason = "procore_validation"
@@ -185,6 +186,8 @@ func (e UnresolvedFieldReason) Valid() bool {
 	case Ambiguous:
 		return true
 	case DateUnparseable:
+		return true
+	case InvalidValue:
 		return true
 	case NotFound:
 		return true

@@ -197,6 +197,53 @@ func TestGetDraft_OtherUser_404(t *testing.T) {
 	wantError(t, res, b, http.StatusNotFound, "not_found")
 }
 
+// The model's tool input is not schema-checked by the API. A wrong-typed
+// subject, an unknown reason, an impact status outside the enum and a
+// non-numeric confidence must not break the draft endpoints, and every
+// reason returned is in the contract's enum.
+func TestGetDraft_AfterBadModelOutput_200(t *testing.T) {
+	ts, token := newDraftServer(t)
+	ts.LLM.Steps = []llmtest.Step{{Final: `{"payload":{"subject":5,"question_body":"Is the column OK?","assignee_ids":[11],` +
+		`"schedule_impact":{"status":"maybe"},"cost_impact":{"status":"yes_known","value":"$2,000"},"invented":"x"},` +
+		`"unresolved":[{"field":"location_id","reason":"weird","candidates":[]}],"confidence":{"subject":"high","question_body":0.8}}`}}
+	id := uuid.New()
+	createDraft(t, ts.Server, token, id)
+
+	res, b := draftCall(t, ts.Server, http.MethodGet, "/v1/drafts/"+id.String(), token, draftCompany, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET: status %d; body %s", res.StatusCode, b)
+	}
+	got := decode[DraftResponse](t, b)
+	if got.Payload.Subject != nil {
+		t.Errorf("subject = %q, want dropped", *got.Payload.Subject)
+	}
+	if got.Payload.ScheduleImpact != nil {
+		t.Errorf("schedule_impact = %+v, want dropped", *got.Payload.ScheduleImpact)
+	}
+	if got.Payload.CostImpact == nil || got.Payload.CostImpact.Value == nil || *got.Payload.CostImpact.Value != "2000" {
+		t.Errorf("cost_impact = %+v, want value 2000", got.Payload.CostImpact)
+	}
+	valid := map[UnresolvedFieldReason]bool{Ambiguous: true, NotFound: true, NotInLookup: true, DateUnparseable: true, ProcoreValidation: true, InvalidValue: true}
+	reasons := map[string]UnresolvedFieldReason{}
+	for _, u := range got.Unresolved {
+		if !valid[u.Reason] {
+			t.Errorf("unresolved %s has reason %q outside the contract enum", u.Field, u.Reason)
+		}
+		reasons[u.Field] = u.Reason
+	}
+	if reasons["location_id"] != Ambiguous || reasons["schedule_impact"] != InvalidValue {
+		t.Errorf("unresolved = %+v", got.Unresolved)
+	}
+	if _, ok := got.Confidence["subject"]; ok || got.Confidence["question_body"] != 0.8 {
+		t.Errorf("confidence = %v", got.Confidence)
+	}
+
+	path := "/v1/drafts?project_id=" + strconv.FormatInt(draftProject, 10)
+	if res, b := draftCall(t, ts.Server, http.MethodGet, path, token, draftCompany, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("list: status %d; body %s", res.StatusCode, b)
+	}
+}
+
 func TestSaveDraft_StoresPayload(t *testing.T) {
 	ts, token := newDraftServer(t)
 	id := uuid.New()
