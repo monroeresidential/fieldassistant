@@ -14,6 +14,11 @@ import (
 // ErrNoFinal means the model ended its turn without calling the final tool.
 var ErrNoFinal = errors.New("llm: model stopped without calling the final tool")
 
+// ErrTruncated means a response stopped at max_tokens. Its tool_use input
+// may be cut off, so no block of that response is used; the returned error
+// wraps ErrTruncated and names the stop reason.
+var ErrTruncated = errors.New("llm: response truncated at max_tokens")
+
 // ErrToolBudget means the model kept calling lookup tools after the tool
 // call budget ran out, even when forced to call the final tool.
 var ErrToolBudget = errors.New("llm: tool call budget exhausted")

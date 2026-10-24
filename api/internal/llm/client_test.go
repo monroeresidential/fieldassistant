@@ -337,6 +337,91 @@ func TestClient_Extract_HandlerError_IsToolResultError(t *testing.T) {
 	}
 }
 
+func TestClient_Extract_ParallelOverBudgetCalls_ForceFinal(t *testing.T) {
+	parallel := `{"id":"msg_p","type":"message","role":"assistant","model":"claude-test-reported","content":[` +
+		`{"type":"tool_use","id":"toolu_a","name":"list_users","input":{"query":"a"}},` +
+		`{"type":"tool_use","id":"toolu_b","name":"list_users","input":{"query":"b"}},` +
+		`{"type":"tool_use","id":"toolu_c","name":"list_users","input":{"query":"c"}}],` +
+		`"stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":5}}`
+	f := newFakeAnthropic(t, parallel, toolUseResponse("toolu_d", "submit_draft", `{"subject":"x"}`))
+	handled := 0
+	handle := func(context.Context, ToolCall) (json.RawMessage, error) {
+		handled++
+		return json.RawMessage(`[]`), nil
+	}
+	req := testRequest()
+	req.MaxToolCalls = 1
+	res, err := newTestClient(f, 10*time.Second).Extract(context.Background(), req, handle)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if handled != 1 || res.ToolCalls != 1 {
+		t.Errorf("handler called %d times, ToolCalls = %d, want 1 and 1", handled, res.ToolCalls)
+	}
+	jsonEqual(t, res.Final, `{"subject":"x"}`)
+
+	reqs := f.requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	second := reqs[1]
+	blocks := lastMessageBlocks(t, second)
+	if len(blocks) != 3 {
+		t.Fatalf("second request last message = %v, want three tool_results", blocks)
+	}
+	for i, wantErr := range []bool{false, true, true} {
+		if blocks[i]["type"] != "tool_result" {
+			t.Errorf("block %d type = %v, want tool_result", i, blocks[i]["type"])
+		}
+		if isErr, _ := blocks[i]["is_error"].(bool); isErr != wantErr {
+			t.Errorf("block %d is_error = %v, want %v", i, isErr, wantErr)
+		}
+	}
+	tc, _ := second["tool_choice"].(map[string]any)
+	if tc["type"] != "tool" || tc["name"] != "submit_draft" {
+		t.Errorf("second tool_choice = %v, want tool submit_draft", second["tool_choice"])
+	}
+	tools, _ := second["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("second request tools = %v, want only submit_draft", tools)
+	}
+	if tool, _ := tools[0].(map[string]any); tool["name"] != "submit_draft" {
+		t.Errorf("second request tool = %v, want submit_draft", tools[0])
+	}
+}
+
+func TestClient_Extract_MaxTokens_ErrTruncated(t *testing.T) {
+	truncated := strings.Replace(toolUseResponse("toolu_1", "submit_draft", `{"subject":"x"}`),
+		`"stop_reason":"tool_use"`, `"stop_reason":"max_tokens"`, 1)
+	f := newFakeAnthropic(t, truncated)
+	handle := func(context.Context, ToolCall) (json.RawMessage, error) { return nil, nil }
+	res, err := newTestClient(f, 10*time.Second).Extract(context.Background(), testRequest(), handle)
+	if !errors.Is(err, ErrTruncated) {
+		t.Fatalf("err = %v, want ErrTruncated", err)
+	}
+	if len(res.Final) != 0 {
+		t.Errorf("Final = %s, want empty", res.Final)
+	}
+	if len(res.Turns) != 2 {
+		t.Errorf("Turns = %d, want 2 (kept for the audit row)", len(res.Turns))
+	}
+}
+
+func TestClient_Extract_EmptyHandlerOutput_SendsEmptyArray(t *testing.T) {
+	f := newFakeAnthropic(t,
+		toolUseResponse("toolu_1", "list_users", `{"query":"ben"}`),
+		toolUseResponse("toolu_2", "submit_draft", `{"subject":"x"}`),
+	)
+	handle := func(context.Context, ToolCall) (json.RawMessage, error) { return nil, nil }
+	if _, err := newTestClient(f, 10*time.Second).Extract(context.Background(), testRequest(), handle); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	blocks := lastMessageBlocks(t, f.requests()[1])
+	if len(blocks) != 1 || mustJSON(t, blocks[0]["content"]) != `[{"text":"[]","type":"text"}]` {
+		t.Errorf("tool_result = %v, want content text []", blocks)
+	}
+}
+
 func TestClient_Extract_Timeout(t *testing.T) {
 	f := newFakeAnthropic(t, toolUseResponse("toolu_1", "submit_draft", `{"subject":"x"}`))
 	f.mu.Lock()

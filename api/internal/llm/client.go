@@ -95,6 +95,11 @@ func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (
 		res.Turns = append(res.Turns, Turn{Role: "assistant", Content: rawContent(msg.Content)})
 		messages = append(messages, msg.ToParam())
 
+		if msg.StopReason == anthropic.StopReasonMaxTokens {
+			// The last block may be cut off mid-input; trust none of them.
+			return res, fmt.Errorf("%w (stop reason %q)", ErrTruncated, msg.StopReason)
+		}
+
 		for _, block := range msg.Content {
 			if block.Type == "tool_use" && block.Name == req.FinalTool {
 				res.Final = append(json.RawMessage(nil), block.Input...)
@@ -102,12 +107,15 @@ func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (
 			}
 		}
 
+		// Snapshot so that several over-budget calls in one (parallel) message
+		// all get an error result and then one forced final turn follows.
+		wasForced := forced
 		var results []anthropic.ContentBlockParamUnion
 		for _, block := range msg.Content {
 			if block.Type != "tool_use" {
 				continue
 			}
-			if forced {
+			if wasForced {
 				return res, ErrToolBudget
 			}
 			if res.ToolCalls >= req.MaxToolCalls {
@@ -123,6 +131,9 @@ func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (
 			if herr != nil {
 				results = append(results, anthropic.NewToolResultBlock(block.ID, herr.Error(), true))
 				continue
+			}
+			if len(out) == 0 {
+				out = json.RawMessage("[]") // the API rejects an empty text block
 			}
 			results = append(results, anthropic.NewToolResultBlock(block.ID, string(out), false))
 		}
