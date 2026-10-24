@@ -78,6 +78,7 @@ final class AppState {
         )
         let client = Client(
             serverURL: baseURL,
+            configuration: .fieldAssistant,
             transport: transport ?? URLSessionTransport(),
             middlewares: [middleware, IfNoneMatchMiddleware()]
         )

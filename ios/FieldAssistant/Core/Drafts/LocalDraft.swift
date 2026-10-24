@@ -104,14 +104,7 @@ final class LocalDraft {
     static var decoder: JSONDecoder {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
-            let text = try decoder.singleValueContainer().decode(String.self)
-            if let date = try? Date(text, strategy: .iso8601.year().month().day().time(includingFractionalSeconds: true)) {
-                return date
-            }
-            if let date = try? Date(text, strategy: .iso8601) {
-                return date
-            }
-            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not an ISO 8601 date: \(text)"))
+            try LenientISO8601DateTranscoder().decode(decoder.singleValueContainer().decode(String.self))
         }
         return decoder
     }
@@ -120,7 +113,7 @@ final class LocalDraft {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .custom { date, encoder in
             var container = encoder.singleValueContainer()
-            try container.encode(date.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: true)))
+            try container.encode(LenientISO8601DateTranscoder().encode(date))
         }
         return encoder
     }

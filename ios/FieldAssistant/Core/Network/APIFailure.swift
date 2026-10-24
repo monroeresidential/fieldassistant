@@ -10,6 +10,8 @@ enum APIFailure: Error, Equatable {
     case reauthRequired
     /// The device could not reach the server.
     case offline
+    /// The server refused the request as it stands (a 400 on a draft route), with its message to show.
+    case validation(String)
     /// Anything else, with a message to show.
     case server(String)
 
@@ -47,6 +49,15 @@ enum APIFailure: Error, Equatable {
             case 403: self = .permissionDenied(message)
             default: self = .server(message)
             }
+        }
+    }
+
+    /// Maps a 400 from a draft route: `bad_request` carries a message the review screen shows as is.
+    init(badRequest response: Components.Responses._Error) {
+        if let payload = try? response.body.json, payload.code == "bad_request" {
+            self = .validation(payload.message)
+        } else {
+            self = APIFailure(statusCode: 400, response: response)
         }
     }
 

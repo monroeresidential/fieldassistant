@@ -157,7 +157,7 @@ struct APIFailureView: View {
             } actions: {
                 actionButton("Retry", action: retry)
             }
-        case .server(let message):
+        case .validation(let message), .server(let message):
             ContentUnavailableView {
                 Label("Couldn't load \(subject)", systemImage: "exclamationmark.triangle")
             } description: {

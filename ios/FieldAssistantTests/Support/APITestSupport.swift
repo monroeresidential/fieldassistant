@@ -80,6 +80,33 @@ enum APIStub {
         return (response, HTTPBody("{" + fields.joined(separator: ",") + "}"))
     }
 
+    /// A 200 RFI `DraftResponse`. Dates are passed verbatim so tests can use either RFC 3339 form.
+    static func draft(
+        id: UUID,
+        status: String = "extracted",
+        subject: String = "Header height at grid C",
+        createdAt: String = "2026-10-24T17:45:12.123456Z",
+        updatedAt: String = "2026-10-24T17:45:12Z"
+    ) -> (HTTPResponse, HTTPBody?) {
+        json(.ok, #"""
+        {"id":"\#(id.uuidString.lowercased())","feature":"rfi","project_id":99,"status":"\#(status)",\#
+        "payload":{"subject":"\#(subject)","assignee_ids":[],"distribution_ids":[],"private":false,"draft":false},\#
+        "unresolved":[],"confidence":{},"transcript":"Need header height","created_at":"\#(createdAt)",\#
+        "updated_at":"\#(updatedAt)"}
+        """#)
+    }
+
+    /// A 200 `JobStatus` for a submit job.
+    static func job(id: String = "job-1", draftID: UUID, status: String) -> (HTTPResponse, HTTPBody?) {
+        json(.ok, #"{"id":"\#(id)","draft_id":"\#(draftID.uuidString.lowercased())","status":"\#(status)"}"#)
+    }
+
+    /// A `SubmitResponse`: 200 when already submitted, 202 when queued.
+    static func submit(_ status: HTTPResponse.Status, jobID: String = "job-1", draftID: UUID) -> (HTTPResponse, HTTPBody?) {
+        let state = status == .ok ? "submitted" : "submitting"
+        return json(status, #"{"job_id":"\#(jobID)","draft_id":"\#(draftID.uuidString.lowercased())","status":"\#(state)"}"#)
+    }
+
     /// Decodes a recorded JSON request body into a string dictionary.
     static func jsonObject(_ bytes: [UInt8]?) throws -> [String: Any] {
         let data = Data(bytes ?? [])

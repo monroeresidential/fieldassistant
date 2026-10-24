@@ -57,7 +57,7 @@ final class ScopeServiceTests: XCTestCase {
 }
 
 func makeClient(_ transport: ClientTransport, middlewares: [ClientMiddleware] = []) -> Client {
-    Client(serverURL: APIStub.baseURL, transport: transport, middlewares: middlewares)
+    Client(serverURL: APIStub.baseURL, configuration: .fieldAssistant, transport: transport, middlewares: middlewares)
 }
 
 /// `ClientTransport` that always fails with the given error, as URLSession does when offline.

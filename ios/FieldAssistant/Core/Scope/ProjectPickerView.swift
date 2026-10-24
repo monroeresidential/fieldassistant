@@ -206,7 +206,7 @@ struct ProjectPickerView: View {
 
     private static func message(for failure: APIFailure) -> String {
         switch failure {
-        case .permissionDenied(let message), .server(let message): message
+        case .permissionDenied(let message), .validation(let message), .server(let message): message
         case .reauthRequired: "Your session expired. Sign in again."
         case .offline: "You're offline."
         }
