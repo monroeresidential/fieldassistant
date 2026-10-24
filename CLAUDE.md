@@ -65,7 +65,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 | `api/internal/jobs` | River client and the idempotent submit worker. |
 | `api/internal/store` | Postgres access: migrations, sqlc queries and generated code in `db/`. |
 | `api/internal/store/storetest` | Shared test helper: migrates and truncates the test database. |
-| `ios/FieldAssistant/App` | App entry, root view, app state, build-time config. |
+| `ios/FieldAssistant/App` | App entry, root view, Home and Settings screens, app state, build-time config. |
 | `ios/FieldAssistant/Core/Auth` | Sign-in flow, Keychain session store, token refresh. |
 | `ios/FieldAssistant/Core/Network` | API client wrapper, auth middleware, failure mapping. |
 | `ios/FieldAssistant/Core/Scope` | Company and project selection and its persistence. |
@@ -73,7 +73,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 | `ios/FieldAssistant/Core/Drafts` | Local draft store, submit and resend sync, reconcile on launch. |
 | `ios/FieldAssistant/Core/Lookups` | Lookup lists fetched from the backend and cached locally for review pickers. |
 | `ios/FieldAssistant/Core/Review` | Review screen rows, lookup picker, unresolved-field rows, footer. |
-| `ios/FieldAssistant/Features/RFI` | RFI list model and view. |
+| `ios/FieldAssistant/Features/RFI` | RFI list, capture, review and result screens; review model. |
 | `ios/Packages/FieldAssistantAPI` | Generated Swift client package; holds a synced copy of the contract. |
 | `deploy/` | Droplet Compose file, Caddyfile, backup script, runbook. |
 | `.github/workflows/` | `api.yml` and `ios.yml` (CI), `deploy-api.yml` (droplet deploy). |

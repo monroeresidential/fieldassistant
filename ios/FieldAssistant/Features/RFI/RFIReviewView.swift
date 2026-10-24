@@ -152,6 +152,9 @@ struct RFIReviewView: View {
     @State private var failure: APIFailure?
     @State private var saveNote: String?
     @State private var scrollTarget: RFIField?
+    /// Bumped to scroll to the header, where a message from Procore not tied to a row shows.
+    @State private var scrollToTopRequest = 0
+    private static let topID = "top"
 
     private static let sendingMessage = "Sending to Procore. It will update automatically."
 
@@ -176,6 +179,7 @@ struct RFIReviewView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     header
+                        .id(Self.topID)
                     VStack(spacing: 0) {
                         primaryRows
                         moreGroup
@@ -191,9 +195,24 @@ struct RFIReviewView: View {
                 withAnimation { proxy.scrollTo(target, anchor: .top) }
                 scrollTarget = nil
             }
+            .onChange(of: scrollToTopRequest) {
+                withAnimation { proxy.scrollTo(Self.topID, anchor: .top) }
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
+                if let formMessage = model.formMessage {
+                    // Repeated by the footer so it stays in view while the rows scroll.
+                    Label(formMessage, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        .background(.bar)
+                        .accessibilityLabel("Procore says: \(formMessage)")
+                }
                 if let saveNote {
                     Text(saveNote)
                         .font(.footnote)
@@ -562,7 +581,7 @@ struct RFIReviewView: View {
         }
         if Task.isCancelled { return }
         if failure == .offline {
-            saveNote = "Saved on this phone. It syncs when you have signal."
+            saveNote = "Saved on this phone. Sent the next time you save or submit with signal."
         } else {
             self.failure = failure
         }
@@ -578,7 +597,12 @@ struct RFIReviewView: View {
         case .needsFixes:
             let flagged = (RFIField.primary + RFIField.more).first { model.unresolved(for: $0) != nil }
             if let flagged, RFIField.more.contains(flagged) { model.moreExpanded = true }
-            scrollTarget = flagged
+            if let flagged {
+                scrollTarget = flagged
+            } else if model.formMessage != nil {
+                // Only a form-level message: show the header callout.
+                scrollToTopRequest += 1
+            }
         case .pending(let message):
             pendingMessage = message
         case .failed(let failure):

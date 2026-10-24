@@ -83,7 +83,7 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(outcome, .submitted(number: "214", url: "https://sandbox.procore.com/rfis/501"))
         XCTAssertEqual(local.status, .submitted)
         XCTAssertEqual(local.resultNumber, "214")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: leftover.path()), "files are removed once Procore has the RFI")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: leftover.path(percentEncoded: false)), "files are removed once Procore has the RFI")
         XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .post, .get, .get])
         XCTAssertEqual(transport.requests.map(\.request.path), [
             draftPath, draftPath + "/submit", "/jobs/job-5", draftPath,
@@ -323,7 +323,7 @@ final class RFIReviewModelTests: XCTestCase {
 
         XCTAssertEqual(outcome, .submitted(number: "214", url: nil))
         XCTAssertEqual(local.status, .submitted)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: leftover.path()))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: leftover.path(percentEncoded: false)))
         XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .get], "no second POST")
     }
 
