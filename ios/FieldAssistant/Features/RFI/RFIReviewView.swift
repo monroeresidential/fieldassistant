@@ -59,7 +59,7 @@ struct ReviewScreen: View {
 
     private func start() async {
         guard case .loading = load else { return }
-        guard let draft = appState.drafts.draft(id: draftID) else {
+        guard let draft = appState.ownedDraft(id: draftID) else {
             load = .missing
             return
         }

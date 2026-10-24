@@ -357,7 +357,8 @@ final class RFIReviewModel {
         }
     }
 
-    /// Whether a field holds a value. Toggles count as set when on.
+    /// Whether a field holds a value, for opening "More". `private` counts when on; the `draft`
+    /// toggle never does, since it is on by default.
     private func isSet(_ field: RFIField) -> Bool {
         switch field {
         case .subject: payload.subject != nil
@@ -374,7 +375,7 @@ final class RFIReviewModel {
         case .responsibleContractorId: payload.responsible_contractor_id != nil
         case .costCodeId: payload.cost_code_id != nil
         case .private: payload._private
-        case .draft: payload.draft
+        case .draft: false
         }
     }
 

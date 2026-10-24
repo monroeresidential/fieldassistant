@@ -71,6 +71,8 @@ struct CaptureView: View {
     @State private var photoError: String?
     @State private var buildError: String?
     @State private var leavesAfterError = false
+    /// Set once the draft is made from the model; photos that finish loading later are dropped.
+    @State private var draftMade = false
     #if DEBUG
     @State private var showsTyping = false
     @State private var typedText = ""
@@ -106,6 +108,9 @@ struct CaptureView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
         .task(id: ObjectIdentifier(model)) { await model.start() }
+        // Leaving by any route (sign-out swaps the root, a path change) must not leave the mic on.
+        // Stop, not discard: a successful Build also leaves this screen and owns the files now.
+        .onDisappear { if model.state == .recording { model.stop() } }
         .onChange(of: pickedPhotos) { _, items in
             guard !items.isEmpty else { return }
             Task { await addPicked(items) }
@@ -286,9 +291,12 @@ struct CaptureView: View {
                                 Button("Remove photo", systemImage: "trash", role: .destructive) {
                                     model.removePhoto(photo)
                                 }
+                                .disabled(isBuilding)
                             }
                             .accessibilityLabel("Photo")
-                            .accessibilityAction(named: "Remove photo") { model.removePhoto(photo) }
+                            .accessibilityAction(named: "Remove photo") {
+                                if !isBuilding { model.removePhoto(photo) }
+                            }
                     }
                     PhotosPicker(selection: $pickedPhotos, matching: .images) {
                         Self.addTile(systemImage: "photo.on.rectangle")
@@ -336,6 +344,7 @@ struct CaptureView: View {
     }
 
     private func add(_ image: UIImage) {
+        guard !draftMade else { return }
         do {
             try model.addPhoto(image)
         } catch {
@@ -411,7 +420,14 @@ struct CaptureView: View {
             return
         }
 
-        let draft = model.makeDraft(companyID: companyID, projectID: projectID)
+        guard let owner = appState.draftOwnerID else {
+            buildPhase = .idle
+            leavesAfterError = false
+            buildError = APIFailure.reauthRequired.userMessage
+            return
+        }
+        draftMade = true
+        let draft = model.makeDraft(companyID: companyID, projectID: projectID, owner: owner)
         do {
             try appState.drafts.insert(draft)
         } catch {

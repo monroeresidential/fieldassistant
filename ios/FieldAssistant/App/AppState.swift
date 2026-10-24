@@ -21,6 +21,7 @@ final class AppState {
         static let deviceID = "deviceID"
         static let selectedCompanyID = "selectedCompanyID"
         static let selectedProjectID = "selectedProjectID"
+        static let draftOwnerID = "draftOwnerProcoreUserID"
     }
 
     /// What happened when a captured draft was sent for extraction.
@@ -43,6 +44,12 @@ final class AppState {
     /// Advances each time a session is (re)established, after `/me` has loaded. Screens key their
     /// load tasks on it so they reload after "Sign in again" or a successful offline retry.
     private(set) var sessionGeneration = 0
+
+    /// The Procore user whose drafts this phone shows and sends. Kept in `UserDefaults` so an
+    /// offline launch, which has no `/me`, still shows that user's drafts; `nil` when signed out.
+    private(set) var draftOwnerID: Int64? {
+        didSet { Self.persist(draftOwnerID, forKey: Keys.draftOwnerID, in: defaults) }
+    }
 
     var selectedCompanyID: Int64? {
         didSet { Self.persist(selectedCompanyID, forKey: Keys.selectedCompanyID, in: defaults) }
@@ -85,6 +92,7 @@ final class AppState {
         settings = Settings(defaults: defaults)
         selectedCompanyID = Self.storedID(forKey: Keys.selectedCompanyID, in: defaults)
         selectedProjectID = Self.storedID(forKey: Keys.selectedProjectID, in: defaults)
+        draftOwnerID = Self.storedID(forKey: Keys.draftOwnerID, in: defaults)
 
         let middleware = AuthMiddleware(
             store: store,
@@ -152,6 +160,11 @@ final class AppState {
         endSession()
     }
 
+    /// The signed-in user's draft with this id, or `nil` if it is missing or someone else's.
+    func ownedDraft(id: UUID) -> LocalDraft? {
+        draftOwnerID.flatMap { drafts.draft(id: id, owner: $0) }
+    }
+
     /// Sends a stored draft's transcript for extraction. The draft's id makes a resend idempotent.
     func send(_ draft: LocalDraft) async -> SendOutcome {
         do {
@@ -163,6 +176,8 @@ final class AppState {
             return .sent
         } catch {
             let failure = APIFailure(error)
+            // Backing out of the screen cancels the send; that is not a failure to record.
+            if Task.isCancelled { return .failed(failure.userMessage) }
             if failure == .offline {
                 sendingWaitsForSignal = true
                 return .waiting
@@ -175,7 +190,8 @@ final class AppState {
 
     /// Sends every waiting draft of a project, oldest first, stopping at the first one that finds no connection.
     func sendWaiting(projectID: Int64) async {
-        for draft in drafts.drafts(withStatus: .waiting) where draft.projectID == projectID {
+        guard let owner = draftOwnerID else { return }
+        for draft in drafts.drafts(withStatus: .waiting, owner: owner) where draft.projectID == projectID {
             if await send(draft) == .waiting { return }
         }
     }
@@ -209,6 +225,7 @@ final class AppState {
             }
             if selectedCompanyID == nil, let id = user.last_company_id { selectedCompanyID = id }
             if selectedProjectID == nil, let id = user.last_project_id { selectedProjectID = id }
+            draftOwnerID = user.procore_user_id
             phase = .signedIn(user)
             prefetchLookups()
         case .unauthorized:
@@ -235,6 +252,9 @@ final class AppState {
         lookups.clearAll()
         selectedCompanyID = nil
         selectedProjectID = nil
+        // Drafts stay on the phone (a forced re-sign-in must not lose field work); they are hidden
+        // until their owner signs in again.
+        draftOwnerID = nil
         phase = .signedOut
     }
 

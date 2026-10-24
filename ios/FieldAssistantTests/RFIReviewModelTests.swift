@@ -27,6 +27,30 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(model.payload.cost_code_id, 401)
     }
 
+    func testMoreStaysClosedWhenOnlyTheDraftToggleIsOn() throws {
+        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let store = DraftStore(context: container.mainContext)
+        let client = makeClient(StubTransport())
+        let body = draftBody(status: "extracted", unresolved: "[]", draft: true)
+            .replacingOccurrences(of: #""cost_code_id":401,"#, with: "")
+        let response = try LocalDraft.decoder.decode(DraftResponse.self, from: Data(body.utf8))
+        let local = LocalDraft(id: draftID, companyID: 7, projectID: 99, transcript: "t")
+        try store.insert(local)
+        local.apply(response)
+
+        let model = RFIReviewModel(
+            draft: local,
+            response: response,
+            lookups: LookupStore(context: container.mainContext, service: LookupService(client: client)),
+            service: DraftService(client: client),
+            store: store,
+            submitAsDraftOverride: nil
+        )
+
+        XCTAssertTrue(model.payload.draft)
+        XCTAssertFalse(model.moreExpanded, "the draft toggle is on by default and does not open More")
+    }
+
     func testChoosingCandidateClearsFlagAndSetsID() throws {
         let (model, _, _) = try makeModel(StubTransport())
         let candidate = try XCTUnwrap(model.unresolved(for: .assigneeIds)?.candidates.first { $0.id == 12 })

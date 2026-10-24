@@ -9,7 +9,7 @@ struct ResultScreen: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        if let draft = appState.drafts.draft(id: draftID) {
+        if let draft = appState.ownedDraft(id: draftID) {
             RFIResultView(draft: draft, onNewRFI: onNewRFI, onDone: onDone)
         } else {
             ContentUnavailableView("Draft not found", systemImage: "doc.questionmark", description: Text("This draft is no longer on the phone."))

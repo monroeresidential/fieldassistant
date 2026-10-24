@@ -11,14 +11,27 @@ final class FakeTranscriber: Transcriber {
     private(set) var stopCount = 0
     /// When false, `stop()` leaves the stream open so the test can deliver a final result after it.
     var finishesOnStop: Bool
+    /// When true, `requestAuthorization` waits until `releaseAuthorization()`, like a permission prompt left up.
+    private let holdsAuthorization: Bool
+    private var pendingAuthorization: CheckedContinuation<Void, Never>?
+    var isHoldingAuthorization: Bool { pendingAuthorization != nil }
 
-    init(authorization: TranscriberAuthorization = .granted, finishesOnStop: Bool = true) {
+    init(authorization: TranscriberAuthorization = .granted, finishesOnStop: Bool = true, holdsAuthorization: Bool = false) {
         self.authorization = authorization
         self.finishesOnStop = finishesOnStop
+        self.holdsAuthorization = holdsAuthorization
     }
 
     func requestAuthorization() async -> TranscriberAuthorization {
-        authorization
+        if holdsAuthorization {
+            await withCheckedContinuation { pendingAuthorization = $0 }
+        }
+        return authorization
+    }
+
+    func releaseAuthorization() {
+        pendingAuthorization?.resume()
+        pendingAuthorization = nil
     }
 
     func start(audioFile: URL) throws -> AsyncThrowingStream<String, Error> {

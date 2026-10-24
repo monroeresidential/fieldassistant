@@ -105,10 +105,11 @@ final class CaptureModelTests: XCTestCase {
         XCTAssertNotNil(UIImage(contentsOfFile: keptURL.path(percentEncoded: false)), "the photo is a readable JPEG on disk")
 
         let before = Date.now
-        let draft = model.makeDraft(companyID: 7, projectID: 99)
+        let draft = model.makeDraft(companyID: 7, projectID: 99, owner: 42)
 
         XCTAssertEqual(draft.id, model.draftID)
         XCTAssertEqual(draft.companyID, 7)
+        XCTAssertEqual(draft.ownerProcoreUserID, 42)
         XCTAssertEqual(draft.projectID, 99)
         XCTAssertEqual(draft.feature, "rfi")
         XCTAssertEqual(draft.status, .waiting)
@@ -164,7 +165,38 @@ final class CaptureModelTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: DraftFiles.audioURL(for: model.draftID).deletingLastPathComponent().path))
     }
 
+    func testDiscardDuringPermissionPromptNeverStartsMic() async {
+        let transcriber = FakeTranscriber(holdsAuthorization: true)
+        let model = makeModel(transcriber: transcriber)
+
+        let starting = Task { await model.start() }
+        await waitUntil { model.state == .requestingPermission && transcriber.isHoldingAuthorization }
+        model.discard()
+        transcriber.releaseAuthorization()
+        await starting.value
+
+        XCTAssertNil(transcriber.startedAudioFile, "the microphone never opens")
+        XCTAssertNotEqual(model.state, .recording)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: DraftFiles.audioURL(for: model.draftID).deletingLastPathComponent().path))
+    }
+
     #if DEBUG
+    func testTypedTranscriptDuringPromptWins() async {
+        let transcriber = FakeTranscriber(holdsAuthorization: true)
+        let model = makeModel(transcriber: transcriber)
+
+        let starting = Task { await model.start() }
+        await waitUntil { model.state == .requestingPermission && transcriber.isHoldingAuthorization }
+        model.setTypedTranscript("Typed while the prompt was up")
+        transcriber.releaseAuthorization()
+        await starting.value
+
+        XCTAssertNil(transcriber.startedAudioFile)
+        XCTAssertEqual(model.state, .stopped)
+        XCTAssertEqual(model.transcript, "Typed while the prompt was up")
+        XCTAssertTrue(model.canBuild)
+    }
+
     func testTypedTranscriptWhileRecordingStopsTheMicAndWins() async throws {
         let transcriber = FakeTranscriber(finishesOnStop: false)
         let model = makeModel(transcriber: transcriber)

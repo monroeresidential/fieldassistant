@@ -24,24 +24,29 @@ final class DraftStore {
         return try? context.fetch(descriptor).first
     }
 
-    /// A project's drafts, newest capture first.
-    func recent(projectID: Int64, limit: Int = 50) -> [LocalDraft] {
+    /// One owner's drafts in a project, newest capture first.
+    func recent(projectID: Int64, owner: Int64, limit: Int = 50) -> [LocalDraft] {
         var descriptor = FetchDescriptor<LocalDraft>(
-            predicate: #Predicate { $0.projectID == projectID },
+            predicate: #Predicate { $0.projectID == projectID && $0.ownerProcoreUserID == owner },
             sortBy: [SortDescriptor(\.capturedAt, order: .reverse)]
         )
         descriptor.fetchLimit = limit
         return (try? context.fetch(descriptor)) ?? []
     }
 
-    /// Every draft in one status, across projects, oldest capture first.
-    func drafts(withStatus status: LocalDraftStatus) -> [LocalDraft] {
+    /// One owner's drafts in one status, across projects, oldest capture first.
+    func drafts(withStatus status: LocalDraftStatus, owner: Int64) -> [LocalDraft] {
         let raw = status.rawValue
         let descriptor = FetchDescriptor<LocalDraft>(
-            predicate: #Predicate { $0.statusRaw == raw },
+            predicate: #Predicate { $0.statusRaw == raw && $0.ownerProcoreUserID == owner },
             sortBy: [SortDescriptor(\.capturedAt)]
         )
         return (try? context.fetch(descriptor)) ?? []
+    }
+
+    /// A draft by id, only if `owner` captured it.
+    func draft(id: UUID, owner: Int64) -> LocalDraft? {
+        draft(id: id).flatMap { $0.ownerProcoreUserID == owner ? $0 : nil }
     }
 
     func save() throws {

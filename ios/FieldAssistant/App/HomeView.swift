@@ -26,7 +26,7 @@ struct HomeView: View {
             List {
                 recordSection
                 Section("Recent") {
-                    RecentDraftsView(projectID: projectID) { path.append($0) }
+                    RecentDraftsView(projectID: projectID, owner: appState.draftOwnerID ?? -1) { path.append($0) }
                 }
                 Section {
                     Button {
@@ -167,8 +167,8 @@ struct HomeView: View {
     /// Offline at launch, or a draft is waiting because the last send found no connection.
     private var showsNoSignalBanner: Bool {
         if appState.phase == .offline { return true }
-        guard appState.sendingWaitsForSignal else { return false }
-        return !appState.drafts.drafts(withStatus: .waiting).isEmpty
+        guard appState.sendingWaitsForSignal, let owner = appState.draftOwnerID else { return false }
+        return !appState.drafts.drafts(withStatus: .waiting, owner: owner).isEmpty
     }
 
     private var noSignalBanner: some View {

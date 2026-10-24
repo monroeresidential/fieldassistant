@@ -36,6 +36,9 @@ final class LocalDraft {
     @Attribute(.unique) var id: UUID
     var companyID: Int64
     var projectID: Int64
+    /// The Procore user who captured it; only that user sees or sends the draft. The default lets
+    /// SwiftData migrate stores made before the field existed (those drafts then show to nobody).
+    var ownerProcoreUserID: Int64 = 0
     var feature: String
     /// The status's raw value. SwiftData predicates on iOS 17 cannot compare enum properties, so
     /// the string is what is stored and queried; `status` is the typed view of it.
@@ -57,6 +60,7 @@ final class LocalDraft {
         id: UUID = UUID(),
         companyID: Int64,
         projectID: Int64,
+        ownerProcoreUserID: Int64 = 0,
         feature: String = "rfi",
         status: LocalDraftStatus = .waiting,
         transcript: String,
@@ -68,6 +72,7 @@ final class LocalDraft {
         self.id = id
         self.companyID = companyID
         self.projectID = projectID
+        self.ownerProcoreUserID = ownerProcoreUserID
         self.feature = feature
         statusRaw = status.rawValue
         self.transcript = transcript

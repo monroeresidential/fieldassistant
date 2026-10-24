@@ -9,26 +9,41 @@ final class DraftStoreTests: XCTestCase {
     func testInsertAndRecentOrdersNewestFirst() throws {
         let (store, _) = try makeStore()
         let start = Date(timeIntervalSince1970: 1_800_000_000)
-        let older = LocalDraft(companyID: 7, projectID: 99, transcript: "older", capturedAt: start)
-        let newer = LocalDraft(companyID: 7, projectID: 99, transcript: "newer", capturedAt: start.addingTimeInterval(60))
-        let otherProject = LocalDraft(companyID: 7, projectID: 100, transcript: "other", capturedAt: start.addingTimeInterval(120))
+        let older = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "older", capturedAt: start)
+        let newer = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "newer", capturedAt: start.addingTimeInterval(60))
+        let otherProject = LocalDraft(companyID: 7, projectID: 100, ownerProcoreUserID: 42, transcript: "other", capturedAt: start.addingTimeInterval(120))
 
         try store.insert(older)
         try store.insert(newer)
         try store.insert(otherProject)
 
-        XCTAssertEqual(store.recent(projectID: 99).map(\.transcript), ["newer", "older"])
-        XCTAssertEqual(store.recent(projectID: 99, limit: 1).map(\.transcript), ["newer"])
+        XCTAssertEqual(store.recent(projectID: 99, owner: 42).map(\.transcript), ["newer", "older"])
+        XCTAssertEqual(store.recent(projectID: 99, owner: 42, limit: 1).map(\.transcript), ["newer"])
         XCTAssertEqual(store.draft(id: older.id)?.transcript, "older")
         XCTAssertNil(store.draft(id: UUID()))
-        XCTAssertEqual(store.drafts(withStatus: .waiting).count, 3)
-        XCTAssertTrue(store.drafts(withStatus: .draft).isEmpty)
+        XCTAssertEqual(store.drafts(withStatus: .waiting, owner: 42).count, 3)
+        XCTAssertTrue(store.drafts(withStatus: .draft, owner: 42).isEmpty)
+    }
+
+    @MainActor
+    func testRecentDraftsExcludeOtherOwners() throws {
+        let (store, _) = try makeStore()
+        let mine = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "mine")
+        let theirs = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 43, transcript: "theirs")
+        try store.insert(mine)
+        try store.insert(theirs)
+
+        XCTAssertEqual(store.recent(projectID: 99, owner: 42).map(\.transcript), ["mine"])
+        XCTAssertEqual(store.recent(projectID: 99, owner: 43).map(\.transcript), ["theirs"])
+        XCTAssertEqual(store.drafts(withStatus: .waiting, owner: 42).map(\.transcript), ["mine"])
+        XCTAssertEqual(store.draft(id: mine.id, owner: 42)?.transcript, "mine")
+        XCTAssertNil(store.draft(id: theirs.id, owner: 42), "another user's draft is not loadable by id")
     }
 
     @MainActor
     func testApplyServerResponseMapsStatusAndResult() throws {
         let (store, container) = try makeStore()
-        let draft = LocalDraft(companyID: 7, projectID: 99, transcript: "Need the slab edge detail")
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "Need the slab edge detail")
         try store.insert(draft)
         let response = try decodeResponse(
             id: draft.id,
@@ -48,7 +63,7 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(stored.server?.result?.procore_id, 501)
         XCTAssertEqual(stored.server?.payload.subject, "Slab edge detail at grid C")
         XCTAssertEqual(stored.server?.updated_at, response.updated_at, "the stored copy round-trips fractional seconds")
-        XCTAssertEqual(store.drafts(withStatus: .submitted).map(\.id), [draft.id])
+        XCTAssertEqual(store.drafts(withStatus: .submitted, owner: 42).map(\.id), [draft.id])
         XCTAssertFalse(container.mainContext.hasChanges)
     }
 

@@ -54,6 +54,11 @@ final class CaptureModel {
         guard state == .idle else { return }
         state = .requestingPermission
         let authorization = await transcriber.requestAuthorization()
+        // While the prompt was up the capture may have been discarded, typed instead, or left.
+        guard !ignoresRecognizer, state == .requestingPermission, !Task.isCancelled else {
+            if state == .requestingPermission { state = ignoresRecognizer ? .stopped : .idle }
+            return
+        }
         guard authorization == .granted else {
             state = .denied(authorization)
             return
@@ -97,10 +102,12 @@ final class CaptureModel {
         timer.cancel()
     }
 
-    /// Abandons the capture: stops the microphone and deletes the audio and photos on disk.
+    /// Abandons the capture: stops the microphone and deletes the audio and photos on disk. A
+    /// `start()` still waiting on the permission prompt returns without opening the microphone.
     func discard() {
         ignoresRecognizer = true
         if state == .recording { transcriber.stop() }
+        if state == .requestingPermission || state == .recording { state = .stopped }
         timerTask?.cancel()
         photos = []
         DraftFiles.removeAll(for: draftID)
@@ -115,11 +122,13 @@ final class CaptureModel {
         try? FileManager.default.removeItem(at: DraftFiles.photoURL(draftID: draftID, fileName: photo.fileName))
     }
 
-    func makeDraft(companyID: Int64, projectID: Int64) -> LocalDraft {
+    /// The draft to store, owned by the signed-in Procore user so other accounts on the phone never see it.
+    func makeDraft(companyID: Int64, projectID: Int64, owner: Int64) -> LocalDraft {
         LocalDraft(
             id: draftID,
             companyID: companyID,
             projectID: projectID,
+            ownerProcoreUserID: owner,
             status: .waiting,
             transcript: transcript,
             capturedAt: .now,

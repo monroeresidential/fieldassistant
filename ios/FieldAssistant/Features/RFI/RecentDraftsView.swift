@@ -8,10 +8,11 @@ struct RecentDraftsView: View {
     let onOpen: (Route) -> Void
     @Query private var drafts: [LocalDraft]
 
-    init(projectID: Int64, limit: Int = 20, onOpen: @escaping (Route) -> Void) {
+    /// `owner` is the signed-in Procore user; other users' drafts on the phone never show.
+    init(projectID: Int64, owner: Int64, limit: Int = 20, onOpen: @escaping (Route) -> Void) {
         self.onOpen = onOpen
         var descriptor = FetchDescriptor<LocalDraft>(
-            predicate: #Predicate { $0.projectID == projectID },
+            predicate: #Predicate { $0.projectID == projectID && $0.ownerProcoreUserID == owner },
             sortBy: [SortDescriptor(\.capturedAt, order: .reverse)]
         )
         descriptor.fetchLimit = limit
@@ -131,14 +132,14 @@ struct DraftStatusChip: View {
 
 #Preview {
     let container = try! AppContainer.makeModelContainer(inMemory: true)
-    let waiting = LocalDraft(companyID: 1, projectID: 7, transcript: "Twisted column", capturedAt: .now.addingTimeInterval(-300))
-    let submitted = LocalDraft(companyID: 1, projectID: 7, status: .submitted, transcript: "Header size")
+    let waiting = LocalDraft(companyID: 1, projectID: 7, ownerProcoreUserID: 42, transcript: "Twisted column", capturedAt: .now.addingTimeInterval(-300))
+    let submitted = LocalDraft(companyID: 1, projectID: 7, ownerProcoreUserID: 42, status: .submitted, transcript: "Header size")
     submitted.subject = "Header size over garage door"
     submitted.resultNumber = "214"
     container.mainContext.insert(waiting)
     container.mainContext.insert(submitted)
     return List {
-        Section("Recent") { RecentDraftsView(projectID: 7) { _ in } }
+        Section("Recent") { RecentDraftsView(projectID: 7, owner: 42) { _ in } }
     }
     .modelContainer(container)
 }
