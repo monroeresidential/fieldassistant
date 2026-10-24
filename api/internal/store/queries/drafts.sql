@@ -17,9 +17,6 @@ where user_id = $1 and project_id = $2
 order by created_at desc
 limit $3;
 
--- name: SetDraftUserPayload :exec
-update drafts set user_payload = $2, updated_at = now() where id = $1;
-
 -- name: SetDraftStatus :exec
 update drafts set status = $2, updated_at = now() where id = $1;
 
@@ -51,11 +48,14 @@ select count(*) from drafts where user_id = $1 and status = 'submitted';
 
 -- name: SaveDraftEdits :one
 -- Stores the reviewer's payload and its revalidated unresolved list unless
--- the draft is being or has been submitted; no row means it is locked.
+-- the draft is being or has been submitted; no row means it is locked. A
+-- failed draft's error is cleared, since the edit supersedes it.
 update drafts
 set user_payload = $2,
     unresolved = $3,
     status = 'reviewed',
+    error_code = null,
+    error_message = null,
     updated_at = now()
 where id = $1 and status not in ('submitting', 'submitted')
 returning *;

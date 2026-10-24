@@ -278,8 +278,9 @@ func (d *Drafts) Get(ctx context.Context, userID, id uuid.UUID) (Draft, error) {
 }
 
 // SaveEdits stores the reviewer's payload after validating its IDs and dates
-// against the lookups again. The draft becomes reviewed, its unresolved list
-// is replaced by the validation result, and an edited audit event records the
+// against the lookups again. The draft becomes reviewed and loses any failure
+// error. Its unresolved list becomes the validation result plus the earlier
+// entries for fields still empty, and an edited audit event records the
 // payload before and after. A submitting or submitted draft is ErrDraftLocked.
 func (d *Drafts) SaveEdits(ctx context.Context, userID, id uuid.UUID, payload json.RawMessage) (Draft, error) {
 	cur, err := d.Get(ctx, userID, id)
@@ -305,7 +306,18 @@ func (d *Drafts) SaveEdits(ctx context.Context, userID, id uuid.UUID, payload js
 	if err != nil {
 		return Draft{}, err
 	}
-	validated, unresolved := Validate(f, edited, nil, sets, d.now(), RailsZone(project.TimeZone))
+	today, loc := d.now(), RailsZone(project.TimeZone)
+	validated, unresolved := Validate(f, edited, nil, sets, today, loc)
+	// Keep earlier flags for fields the reviewer left empty, so a flag only
+	// the model or a Procore 422 raised is not lost. Validate's own entries
+	// come first and win; a second pass drops unknown fields and stale
+	// candidates from the carried-over entries.
+	for _, u := range cur.Unresolved {
+		if isEmptyValue(validated[u.Field]) {
+			unresolved = append(unresolved, u)
+		}
+	}
+	validated, unresolved = Validate(f, validated, unresolved, sets, today, loc)
 
 	after, err := json.Marshal(validated)
 	if err != nil {
@@ -335,6 +347,20 @@ func (d *Drafts) SaveEdits(ctx context.Context, userID, id uuid.UUID, payload js
 		return Draft{}, err
 	}
 	return fromRow(row)
+}
+
+// isEmptyValue reports whether a payload value counts as unset: absent or
+// null, a blank string, or an empty array.
+func isEmptyValue(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(x) == ""
+	case []any:
+		return len(x) == 0
+	}
+	return false
 }
 
 // List returns the user's drafts in a project, newest first. limit is

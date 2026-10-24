@@ -48,8 +48,8 @@ func TestDrafts_RoundTrip(t *testing.T) {
 		t.Fatalf("InsertDraft: %v", err)
 	}
 
-	if err := s.Q.SetDraftUserPayload(ctx, db.SetDraftUserPayloadParams{ID: pid, UserPayload: []byte(`{"subject":"y"}`)}); err != nil {
-		t.Fatalf("SetDraftUserPayload: %v", err)
+	if _, err := s.Q.SaveDraftEdits(ctx, db.SaveDraftEditsParams{ID: pid, UserPayload: []byte(`{"subject":"y"}`), Unresolved: []byte(`[]`)}); err != nil {
+		t.Fatalf("SaveDraftEdits: %v", err)
 	}
 	if err := s.Q.SetDraftSubmitted(ctx, db.SetDraftSubmittedParams{
 		ID:                  pid,

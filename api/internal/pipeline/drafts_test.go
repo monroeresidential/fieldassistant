@@ -338,7 +338,10 @@ func TestSaveEdits_ValidatesAndAudits(t *testing.T) {
 	if p["subject"] != "Twisted column C4" {
 		t.Errorf("subject = %v", p["subject"])
 	}
-	if len(d.Unresolved) != 1 || d.Unresolved[0].Field != "assignee_ids" || d.Unresolved[0].Reason != ReasonNotInLookup {
+	// The new bad assignee is flagged first; the extraction's location_id
+	// flag stays because the edit left location_id empty.
+	if len(d.Unresolved) != 2 || d.Unresolved[0].Field != "assignee_ids" || d.Unresolved[0].Reason != ReasonNotInLookup ||
+		d.Unresolved[1].Field != "location_id" {
 		t.Errorf("unresolved = %+v", d.Unresolved)
 	}
 	if string(d.LLMOutput) != string(created.LLMOutput) {
@@ -362,6 +365,53 @@ func TestSaveEdits_ValidatesAndAudits(t *testing.T) {
 
 	if _, err := e.drafts.SaveEdits(ctx, newDBUser(t, e.st, 11, "Ben West"), id, edit); !errors.Is(err, ErrNotFound) {
 		t.Errorf("other user's SaveEdits err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSaveEdits_KeepsFlagsForStillEmptyFields(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.llm.Steps = []llmtest.Step{{Final: `{"payload":{"subject":"Twisted column","assignee_ids":[11]},` +
+		`"unresolved":[{"field":"rfi_manager_id","reason":"not_found","candidates":[]},{"field":"_form","reason":"not_found","candidates":[]}],"confidence":{}}`}}
+	id := uuid.New()
+	ctx := context.Background()
+	created, err := e.drafts.Create(ctx, e.input(id))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(created.Unresolved) != 1 || created.Unresolved[0].Field != "rfi_manager_id" {
+		t.Fatalf("created unresolved = %+v", created.Unresolved)
+	}
+	pid := pgtype.UUID{Bytes: id, Valid: true}
+	if err := e.st.Q.SetDraftFailed(ctx, db.SetDraftFailedParams{
+		ID: pid, ErrorCode: pgtype.Text{String: "procore_validation", Valid: true},
+		ErrorMessage: pgtype.Text{String: "rfi_manager_id can't be blank", Valid: true},
+		Unresolved:   []byte(`[{"field":"rfi_manager_id","reason":"procore_validation","message":"can't be blank","candidates":[]}]`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// rfi_manager_id still empty: the flag stays, and the failure is cleared.
+	d, err := e.drafts.SaveEdits(ctx, e.user, id, json.RawMessage(`{"subject":"Twisted column","assignee_ids":[11],"rfi_manager_id":null}`))
+	if err != nil {
+		t.Fatalf("first SaveEdits: %v", err)
+	}
+	if len(d.Unresolved) != 1 || d.Unresolved[0].Field != "rfi_manager_id" || d.Unresolved[0].Reason != ReasonProcoreValidation {
+		t.Errorf("unresolved after empty save = %+v", d.Unresolved)
+	}
+	if d.Status != StatusReviewed || d.Error != nil {
+		t.Errorf("status %q error %+v, want reviewed and no error", d.Status, d.Error)
+	}
+
+	// rfi_manager_id set to a user in the directory: the flag is gone.
+	d, err = e.drafts.SaveEdits(ctx, e.user, id, json.RawMessage(`{"subject":"Twisted column","assignee_ids":[11],"rfi_manager_id":42}`))
+	if err != nil {
+		t.Fatalf("second SaveEdits: %v", err)
+	}
+	if len(d.Unresolved) != 0 {
+		t.Errorf("unresolved after filling = %+v, want none", d.Unresolved)
+	}
+	if p := payloadMap(t, d); p["rfi_manager_id"] != float64(42) {
+		t.Errorf("rfi_manager_id = %v, want 42", p["rfi_manager_id"])
 	}
 }
 

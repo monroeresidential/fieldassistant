@@ -217,7 +217,10 @@ func TestSaveDraft_StoresPayload(t *testing.T) {
 	if len(saved.Payload.AssigneeIds) != 1 || saved.Payload.AssigneeIds[0] != 11 {
 		t.Errorf("assignee_ids = %v, want [11]", saved.Payload.AssigneeIds)
 	}
-	if len(saved.Unresolved) != 1 || saved.Unresolved[0].Field != "assignee_ids" || saved.Unresolved[0].Reason != NotInLookup {
+	// The new bad assignee is flagged; the extraction's location_id flag stays
+	// because the edit left location_id empty.
+	if len(saved.Unresolved) != 2 || saved.Unresolved[0].Field != "assignee_ids" || saved.Unresolved[0].Reason != NotInLookup ||
+		saved.Unresolved[1].Field != "location_id" {
 		t.Errorf("unresolved = %+v", saved.Unresolved)
 	}
 

@@ -230,6 +230,8 @@ update drafts
 set user_payload = $2,
     unresolved = $3,
     status = 'reviewed',
+    error_code = null,
+    error_message = null,
     updated_at = now()
 where id = $1 and status not in ('submitting', 'submitted')
 returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at
@@ -242,7 +244,8 @@ type SaveDraftEditsParams struct {
 }
 
 // Stores the reviewer's payload and its revalidated unresolved list unless
-// the draft is being or has been submitted; no row means it is locked.
+// the draft is being or has been submitted; no row means it is locked. A
+// failed draft's error is cleared, since the edit supersedes it.
 func (q *Queries) SaveDraftEdits(ctx context.Context, arg SaveDraftEditsParams) (Draft, error) {
 	row := q.db.QueryRow(ctx, saveDraftEdits, arg.ID, arg.UserPayload, arg.Unresolved)
 	var i Draft
@@ -355,19 +358,5 @@ func (q *Queries) SetDraftSubmitted(ctx context.Context, arg SetDraftSubmittedPa
 		arg.ProcoreRecordNumber,
 		arg.ProcoreUrl,
 	)
-	return err
-}
-
-const setDraftUserPayload = `-- name: SetDraftUserPayload :exec
-update drafts set user_payload = $2, updated_at = now() where id = $1
-`
-
-type SetDraftUserPayloadParams struct {
-	ID          pgtype.UUID
-	UserPayload []byte
-}
-
-func (q *Queries) SetDraftUserPayload(ctx context.Context, arg SetDraftUserPayloadParams) error {
-	_, err := q.db.Exec(ctx, setDraftUserPayload, arg.ID, arg.UserPayload)
 	return err
 }
