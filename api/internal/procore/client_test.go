@@ -284,7 +284,7 @@ func TestClient_ListRFIs_DecodesNumberForms(t *testing.T) {
 	f := newFakeProcore(t, map[string]http.HandlerFunc{
 		"/rest/v1.0/projects/55/rfis": func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 200, `[
-				{"id":1,"number":12,"subject":"Beam size","status":"open","due_date":"2026-11-01","assignees":[{"id":9,"name":"Pat"}]},
+				{"id":1,"number":12,"subject":"Beam size","status":"open","due_date":"2026-11-01","assignees":[{"id":9,"name":"Pat"}],"created_at":"2026-10-24T15:04:05Z","created_by":{"id":42,"name":"Pat Field","login":"pat@example.com"}},
 				{"id":2,"number":"A-3","subject":"Door","status":"closed","due_date":null,"assignees":[]}
 			]`)
 		},
@@ -304,6 +304,9 @@ func TestClient_ListRFIs_DecodesNumberForms(t *testing.T) {
 	}
 	if len(got[0].Assignees) != 1 || got[0].Assignees[0] != (Person{ID: 9, Name: "Pat"}) {
 		t.Errorf("assignees = %+v", got[0].Assignees)
+	}
+	if got[0].CreatedAt != "2026-10-24T15:04:05Z" || got[0].CreatedBy != (Person{ID: 42, Name: "Pat Field"}) {
+		t.Errorf("created = %q by %+v", got[0].CreatedAt, got[0].CreatedBy)
 	}
 	if got[0].Subject != "Beam size" || got[0].Status != "open" {
 		t.Errorf("rfi[0] = %+v", got[0])

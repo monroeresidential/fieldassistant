@@ -34,6 +34,9 @@ func (e *draftsEnv) submittable(t *testing.T, final string) Draft {
 	return d
 }
 
+// pat is the draft user's Procore account in draftsEnv.
+var pat = procore.Person{ID: 42, Name: "Pat Field"}
+
 // enqueuer is a fake job queue that hands out job IDs and records drafts.
 type enqueuer struct {
 	next   int64
@@ -279,8 +282,8 @@ func TestRunSubmit_LostResponse_FindsExistingRFI(t *testing.T) {
 	e.fp.Err["CreateRFI"] = fmt.Errorf("post rfi: %w", procore.ErrUnavailable)
 	now := e.clock.Now()
 	e.fp.RFIs = []procore.RFI{
-		{ID: 400, Number: "100", Subject: "Twisted column", CreatedAt: now.Add(-48 * time.Hour).Format(time.RFC3339)},
-		{ID: 501, Number: "214", Subject: "Twisted column", CreatedAt: now.Add(2 * time.Second).Format(time.RFC3339)},
+		{ID: 400, Number: "100", Subject: "Twisted column", CreatedBy: pat, CreatedAt: now.Add(-48 * time.Hour).Format(time.RFC3339)},
+		{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: now.Add(2 * time.Second).Format(time.RFC3339)},
 		{ID: 502, Number: "215", Subject: "Something else", CreatedAt: now.Format(time.RFC3339)},
 	}
 	d := e.submittable(t, twistedFinal)
@@ -311,7 +314,7 @@ func TestRunSubmit_LostResponse_NoMatch_ReturnsErrorForRetry(t *testing.T) {
 	now := e.clock.Now()
 	e.fp.RFIs = []procore.RFI{
 		// Same subject but created well before this attempt: an older RFI.
-		{ID: 400, Number: "100", Subject: "Twisted column", CreatedAt: now.Add(-5 * time.Minute).Format(time.RFC3339)},
+		{ID: 400, Number: "100", Subject: "Twisted column", CreatedBy: pat, CreatedAt: now.Add(-5 * time.Minute).Format(time.RFC3339)},
 		{ID: 502, Number: "215", Subject: "Twisted column at C5", CreatedAt: now.Format(time.RFC3339)},
 	}
 	d := e.submittable(t, twistedFinal)
@@ -345,7 +348,7 @@ func TestRunSubmit_RetryAfterUnknownOutcome_FindsRFIBeforePosting(t *testing.T) 
 	// The retry must find it instead of posting again.
 	delete(e.fp.Err, "CreateRFI")
 	e.fp.Created = procore.RFICreated{ID: 999}
-	e.fp.RFIs = []procore.RFI{{ID: 501, Number: "214", Subject: "Twisted column", CreatedAt: e.clock.Now().Format(time.RFC3339)}}
+	e.fp.RFIs = []procore.RFI{{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: e.clock.Now().Format(time.RFC3339)}}
 	e.clock.Advance(2 * time.Minute)
 
 	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
@@ -376,7 +379,7 @@ func TestRunSubmit_ResubmitAfterRetriesRanOut_FindsRFIBeforePosting(t *testing.T
 
 	delete(e.fp.Err, "CreateRFI")
 	e.fp.Created = procore.RFICreated{ID: 999}
-	e.fp.RFIs = []procore.RFI{{ID: 501, Number: "214", Subject: "Twisted column", CreatedAt: e.clock.Now().Format(time.RFC3339)}}
+	e.fp.RFIs = []procore.RFI{{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: e.clock.Now().Format(time.RFC3339)}}
 	e.clock.Advance(10 * time.Minute)
 	e.submit(t, d)
 	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
@@ -490,10 +493,14 @@ func TestFailSubmit_MarksSubmittingDraftUnavailable(t *testing.T) {
 		t.Fatalf("FailSubmit: %v", err)
 	}
 	got := e.mustGet(t, d.ID)
-	if got.Status != StatusFailed || got.Error == nil || got.Error.Code != "procore_unavailable" || !strings.Contains(got.Error.Message, "503") {
+	if got.Status != StatusFailed || got.Error == nil || got.Error.Code != "procore_unavailable" ||
+		got.Error.Message != "Procore could not be reached. Try submitting again." {
 		t.Fatalf("draft = status %q error %+v", got.Status, got.Error)
 	}
-	lastAudit(t, e, d.ID, AuditFailed)
+	// The cause is audited, not shown to the user.
+	if ev := lastAudit(t, e, d.ID, AuditFailed); !strings.Contains(string(ev.ProcoreResponse), "503") {
+		t.Errorf("failed audit response = %s, want the cause", ev.ProcoreResponse)
+	}
 }
 
 func TestFailSubmit_LeavesSubmittedDraft(t *testing.T) {

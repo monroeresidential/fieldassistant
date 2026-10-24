@@ -225,6 +225,56 @@ func (q *Queries) ListDraftsForUserProject(ctx context.Context, arg ListDraftsFo
 	return items, nil
 }
 
+const markDraftSubmitting = `-- name: MarkDraftSubmitting :one
+update drafts
+set status = 'submitting',
+    job_id = null,
+    updated_at = now()
+where id = $1
+  and status not in ('submitting', 'submitted')
+  and updated_at = $2
+returning id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, created_at, updated_at
+`
+
+type MarkDraftSubmittingParams struct {
+	ID        pgtype.UUID
+	UpdatedAt pgtype.Timestamptz
+}
+
+// Moves a draft to submitting and clears any earlier job, but only if it is
+// not already submitting or submitted and is unchanged since the caller
+// validated it (updated_at = $2). No row means another submit or an edit won.
+func (q *Queries) MarkDraftSubmitting(ctx context.Context, arg MarkDraftSubmittingParams) (Draft, error) {
+	row := q.db.QueryRow(ctx, markDraftSubmitting, arg.ID, arg.UpdatedAt)
+	var i Draft
+	err := row.Scan(
+		&i.ID,
+		&i.CompanyID,
+		&i.ProjectID,
+		&i.UserID,
+		&i.Feature,
+		&i.Status,
+		&i.Transcript,
+		&i.CapturedAt,
+		&i.LlmOutput,
+		&i.UserPayload,
+		&i.Unresolved,
+		&i.Confidence,
+		&i.ModelVersion,
+		&i.PromptVersion,
+		&i.ExtractMs,
+		&i.ProcoreRecordID,
+		&i.ProcoreRecordNumber,
+		&i.ProcoreUrl,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.JobID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const saveDraftEdits = `-- name: SaveDraftEdits :one
 update drafts
 set user_payload = $2,

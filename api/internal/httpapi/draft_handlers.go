@@ -16,6 +16,7 @@ import (
 var (
 	errDraftNotFound = &APIError{Status: http.StatusNotFound, Code: "not_found", Message: "draft not found"}
 	errDraftLocked   = &APIError{Status: http.StatusBadRequest, Code: "bad_request", Message: "draft is submitted or being submitted"}
+	errDraftChanged  = &APIError{Status: http.StatusBadRequest, Code: "bad_request", Message: "draft changed while submitting; try again"}
 	// errExtractFailed uses procore_unavailable because the error code set has
 	// no LLM-specific code; the message tells the two apart.
 	errExtractFailed = &APIError{Status: http.StatusBadGateway, Code: "procore_unavailable", Message: "extraction failed"}
@@ -29,6 +30,8 @@ func (s *Server) draftFailure(op string, err error) error {
 		return errDraftNotFound
 	case errors.Is(err, pipeline.ErrDraftLocked):
 		return errDraftLocked
+	case errors.Is(err, pipeline.ErrDraftChanged):
+		return errDraftChanged
 	case errors.Is(err, pipeline.ErrExtractFailed):
 		s.logger().Warn("draft extraction failed", "op", op, "error", err)
 		return errExtractFailed

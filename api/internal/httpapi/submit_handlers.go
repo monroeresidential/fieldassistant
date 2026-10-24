@@ -49,9 +49,10 @@ func (s *Server) SubmitDraft(ctx context.Context, req SubmitDraftRequestObject) 
 }
 
 // GetJob reports a submit job of one of the user's drafts in the company.
-// A finished job takes its outcome from the draft: a job whose draft failed
-// (a Procore 422, a lost sign-in) is failed even though River completed it,
-// and result and error come from the draft.
+// When it is the draft's current job, a finished job takes its outcome from
+// the draft: a job whose draft failed (a Procore 422, a lost sign-in) is
+// failed even though River completed it, and result and error come from
+// the draft. Any other job reports River's state alone.
 func (s *Server) GetJob(ctx context.Context, req GetJobRequestObject) (GetJobResponseObject, error) {
 	jobID, err := strconv.ParseInt(req.JobId, 10, 64)
 	if err != nil {
@@ -72,16 +73,20 @@ func (s *Server) GetJob(ctx context.Context, req GetJobRequestObject) (GetJobRes
 		return nil, err
 	}
 
-	status := JobStatusStatus(js.Status)
+	out := JobStatus{Id: req.JobId, DraftId: d.ID, Status: JobStatusStatus(js.Status)}
+	if d.JobID != jobID {
+		// An earlier submission's job, or one whose ID the draft has not
+		// stored yet: the draft's outcome is not this job's.
+		return GetJob200JSONResponse(out), nil
+	}
 	if js.Status == jobs.StatusSucceeded && d.Status == pipeline.StatusFailed {
-		status = JobStatusStatusFailed
+		out.Status = JobStatusStatusFailed
 	}
 	dr, err := draftResponse(d)
 	if err != nil {
 		return nil, err
 	}
-	out := JobStatus{Id: req.JobId, DraftId: d.ID, Status: status}
-	switch status {
+	switch out.Status {
 	case JobStatusStatusSucceeded:
 		out.Result = dr.Result
 	case JobStatusStatusFailed:

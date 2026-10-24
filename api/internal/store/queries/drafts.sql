@@ -59,3 +59,16 @@ set user_payload = $2,
     updated_at = now()
 where id = $1 and status not in ('submitting', 'submitted')
 returning *;
+
+-- name: MarkDraftSubmitting :one
+-- Moves a draft to submitting and clears any earlier job, but only if it is
+-- not already submitting or submitted and is unchanged since the caller
+-- validated it (updated_at = $2). No row means another submit or an edit won.
+update drafts
+set status = 'submitting',
+    job_id = null,
+    updated_at = now()
+where id = $1
+  and status not in ('submitting', 'submitted')
+  and updated_at = $2
+returning *;

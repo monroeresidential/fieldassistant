@@ -47,6 +47,8 @@ var (
 	ErrExtractFailed = errors.New("pipeline: extraction failed")
 	// ErrDraftLocked means the draft is being or has been submitted.
 	ErrDraftLocked = errors.New("pipeline: draft is submitted or being submitted")
+	// ErrDraftChanged means the draft kept changing while Submit validated it.
+	ErrDraftChanged = errors.New("pipeline: draft changed during submit")
 )
 
 // Draft is one capture moving through extract, review and submit.
@@ -111,6 +113,10 @@ type Drafts struct {
 	now       func() time.Time
 	log       *slog.Logger
 	flight    singleflight.Group
+
+	// beforeMarkSubmitting, when set by a test, runs in Submit between
+	// validation and the transition to submitting.
+	beforeMarkSubmitting func()
 }
 
 // NewDrafts builds a Drafts. pc and tokens post submitted drafts to Procore

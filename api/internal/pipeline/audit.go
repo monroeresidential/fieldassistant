@@ -18,6 +18,8 @@ const (
 	AuditEdited    = "edited"
 	AuditSubmitted = "submitted"
 	AuditFailed    = "failed"
+	// AuditAttempt is written just before each submit POST.
+	AuditAttempt = "attempt"
 )
 
 // auditTurn is one conversation message in the extracted audit payload.

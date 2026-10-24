@@ -202,6 +202,43 @@ func TestGetJob_422_FailedWithDraftError(t *testing.T) {
 	}
 }
 
+// After a rejected submit and a successful resubmit, the first job reports
+// River's state alone, not the draft's later outcome.
+func TestGetJob_EarlierJob_NoDraftOverlay(t *testing.T) {
+	ts, token := newSubmitServer(t)
+	ts.Procore.With(func(f *fakeProcore) {
+		f.RFICreateResponse = func([]byte) (int, string) {
+			return http.StatusUnprocessableEntity, `{"errors":{"base":["Workflow not configured"]}}`
+		}
+	})
+	id, first := submitted(t, ts, token)
+	if first.Status != JobStatusStatusFailed {
+		t.Fatalf("first job = %+v", first)
+	}
+
+	ts.Procore.With(func(f *fakeProcore) {
+		f.RFICreateResponse = func([]byte) (int, string) {
+			return http.StatusCreated, `{"id":501,"number":214}`
+		}
+	})
+	res, b := submitCall(t, ts.Server, token, id, id.String())
+	if res.StatusCode != http.StatusAccepted {
+		t.Fatalf("resubmit: status %d; body %s", res.StatusCode, b)
+	}
+	sr := decode[SubmitResponse](t, b)
+	if sr.JobId == first.Id {
+		t.Fatalf("resubmit reused job %s", sr.JobId)
+	}
+	if second := waitJob(t, ts.Server, token, sr.JobId); second.Status != JobStatusStatusSucceeded || second.Result == nil {
+		t.Fatalf("second job = %+v", second)
+	}
+
+	again := waitJob(t, ts.Server, token, first.Id)
+	if again.Status != JobStatusStatusSucceeded || again.Result != nil || again.Error != nil {
+		t.Errorf("first job now = %+v, want River's completed state with no draft outcome", again)
+	}
+}
+
 func TestGetJob_OtherUser_404(t *testing.T) {
 	ts, token := newSubmitServer(t)
 	ts.Procore.With(func(f *fakeProcore) {

@@ -41,6 +41,8 @@ type RFI struct {
 	DueDate   *string  `json:"due_date"`
 	Assignees []Person `json:"assignees"`
 	CreatedAt string   `json:"created_at"`
+	// CreatedBy is the Procore user who created the RFI.
+	CreatedBy Person `json:"created_by"`
 }
 
 // UnmarshalJSON accepts Procore's RFI number as either a JSON number or string.

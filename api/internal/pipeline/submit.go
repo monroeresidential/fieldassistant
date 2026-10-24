@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
@@ -45,7 +46,14 @@ const (
 	// same subject may have been created and still count as that attempt's
 	// record, to absorb clock skew between this server and Procore.
 	recoveryWindow = time.Minute
+	// postWriteTimeout bounds the store and audit writes after a POST,
+	// which run detached from the job's context.
+	postWriteTimeout = 15 * time.Second
 )
+
+// UnavailableMessage is the error message a draft stores when its submit
+// ran out of attempts; the cause is logged and audited, never shown.
+const UnavailableMessage = "Procore could not be reached. Try submitting again."
 
 // ErrUnresolved means the draft still has fields the reviewer must settle.
 type ErrUnresolved struct {
@@ -68,58 +76,83 @@ type SubmitOutcome struct {
 // returns AlreadySubmitted; a submitting draft returns its job. Otherwise the
 // payload is validated against freshly warmed lookups, and any unresolved
 // field, including an earlier flag on a field that is still empty, fails
-// with *ErrUnresolved and leaves the draft as it was. A valid draft becomes
-// submitting, enqueue is called and the job ID stored.
+// with *ErrUnresolved and leaves the draft as it was.
 //
-// enqueue must be idempotent per draft (the River queue dedupes by draft ID),
-// since two concurrent calls may both reach it.
+// A valid draft moves to submitting only if it is unchanged since it was
+// validated and no other Submit got there first (MarkDraftSubmitting); then
+// enqueue is called and the job ID stored. When the transition loses, the
+// draft is read again: a concurrent Submit's outcome is returned, and a
+// concurrent edit is validated once more. A draft edited again during that
+// second pass is ErrDraftChanged.
+//
+// enqueue must be idempotent per draft (the River queue dedupes by draft ID):
+// a Submit that finds the draft submitting before its job ID is stored
+// enqueues again to learn the job.
 func (d *Drafts) Submit(ctx context.Context, userID, id uuid.UUID, enqueue func(ctx context.Context, draftID uuid.UUID) (int64, error)) (SubmitOutcome, error) {
-	cur, err := d.Get(ctx, userID, id)
-	if err != nil {
-		return SubmitOutcome{}, err
-	}
-	switch {
-	case cur.Status == StatusSubmitted:
-		return SubmitOutcome{JobID: cur.JobID, Draft: cur, AlreadySubmitted: true}, nil
-	case cur.Status == StatusSubmitting && cur.JobID != 0:
-		return SubmitOutcome{JobID: cur.JobID, Draft: cur}, nil
-	}
-
-	var payload map[string]any
-	if raw := cur.Payload(); len(raw) > 0 {
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return SubmitOutcome{}, fmt.Errorf("pipeline: decode payload: %w", err)
-		}
-	}
-	_, unresolved, err := d.revalidate(ctx, userID, cur, payload)
-	if err != nil {
-		return SubmitOutcome{}, err
-	}
-	if len(unresolved) > 0 {
-		fields := make([]string, 0, len(unresolved))
-		for _, u := range unresolved {
-			fields = append(fields, u.Field)
-		}
-		return SubmitOutcome{}, &ErrUnresolved{Fields: fields}
-	}
-
 	pid := pgtype.UUID{Bytes: id, Valid: true}
-	// Clear an earlier submission's job so a concurrent Submit never
-	// returns it for this one.
-	err = d.st.WithTx(ctx, func(q *db.Queries) error {
-		if err := q.SetDraftJob(ctx, db.SetDraftJobParams{ID: pid}); err != nil {
-			return err
+	for pass := 0; ; pass++ {
+		cur, err := d.Get(ctx, userID, id)
+		if err != nil {
+			return SubmitOutcome{}, err
 		}
-		return q.SetDraftStatus(ctx, db.SetDraftStatusParams{ID: pid, Status: StatusSubmitting})
-	})
-	if err != nil {
-		return SubmitOutcome{}, fmt.Errorf("pipeline: mark submitting: %w", err)
+		switch {
+		case cur.Status == StatusSubmitted:
+			return SubmitOutcome{JobID: cur.JobID, Draft: cur, AlreadySubmitted: true}, nil
+		case cur.Status == StatusSubmitting && cur.JobID != 0:
+			return SubmitOutcome{JobID: cur.JobID, Draft: cur}, nil
+		case cur.Status == StatusSubmitting:
+			// Another Submit marked it and has not stored its job yet, or
+			// crashed before enqueueing. Enqueueing is idempotent per draft.
+			return d.enqueueSubmit(ctx, id, enqueue, "")
+		case pass == 2:
+			return SubmitOutcome{}, ErrDraftChanged
+		}
+
+		var payload map[string]any
+		if raw := cur.Payload(); len(raw) > 0 {
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				return SubmitOutcome{}, fmt.Errorf("pipeline: decode payload: %w", err)
+			}
+		}
+		_, unresolved, err := d.revalidate(ctx, userID, cur, payload)
+		if err != nil {
+			return SubmitOutcome{}, err
+		}
+		if len(unresolved) > 0 {
+			fields := make([]string, 0, len(unresolved))
+			for _, u := range unresolved {
+				fields = append(fields, u.Field)
+			}
+			return SubmitOutcome{}, &ErrUnresolved{Fields: fields}
+		}
+		if d.beforeMarkSubmitting != nil {
+			d.beforeMarkSubmitting()
+		}
+
+		_, err = d.st.Q.MarkDraftSubmitting(ctx, db.MarkDraftSubmittingParams{
+			ID: pid, UpdatedAt: pgtype.Timestamptz{Time: cur.UpdatedAt, Valid: true},
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue // another Submit or an edit won; look again
+		}
+		if err != nil {
+			return SubmitOutcome{}, fmt.Errorf("pipeline: mark submitting: %w", err)
+		}
+		return d.enqueueSubmit(ctx, id, enqueue, cur.Status)
 	}
+}
+
+// enqueueSubmit enqueues the submitting draft's job and stores its ID. If
+// enqueue fails and restore is set, the draft goes back to that status so
+// the user can edit or retry.
+func (d *Drafts) enqueueSubmit(ctx context.Context, id uuid.UUID, enqueue func(ctx context.Context, draftID uuid.UUID) (int64, error), restore string) (SubmitOutcome, error) {
+	pid := pgtype.UUID{Bytes: id, Valid: true}
 	jobID, err := enqueue(ctx, id)
 	if err != nil {
-		// Put the draft back so the user can edit or retry.
-		if rerr := d.st.Q.SetDraftStatus(ctx, db.SetDraftStatusParams{ID: pid, Status: cur.Status}); rerr != nil {
-			d.log.Error("restore draft status after enqueue failure", "draft_id", id, "error", rerr)
+		if restore != "" {
+			if rerr := d.st.Q.SetDraftStatus(ctx, db.SetDraftStatusParams{ID: pid, Status: restore}); rerr != nil {
+				d.log.Error("restore draft status after enqueue failure", "draft_id", id, "error", rerr)
+			}
 		}
 		return SubmitOutcome{}, fmt.Errorf("pipeline: enqueue submit: %w", err)
 	}
@@ -166,16 +199,22 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 // the outcome is unknown and a retry may succeed; River retries the job then.
 //
 //   - A submitted draft is left alone, so a retried job never posts twice.
-//   - On success the draft becomes submitted with Procore's id, number and link.
+//   - Before posting, an attempt audit event is written; if that write fails
+//     the attempt stops without posting. A crash or a lost write after the
+//     POST therefore always leaves evidence for the next attempt.
+//   - When the latest audit events are attempts with an unknown outcome (a
+//     retry, a resubmit after the retries ran out, or a crash mid-POST),
+//     Procore's RFI list is read before posting and a matching RFI (see
+//     findCreated) is adopted instead of posting. Several matches, or a list
+//     that cannot be read, stop the attempt without posting.
+//   - On success the draft becomes submitted with Procore's id, number and
+//     link. Writes after the POST outlive the job's context, so a deadline
+//     cannot lose a created RFI.
 //   - A 422 maps Procore's field errors onto unresolved entries and fails the
 //     draft with procore_validation. A lost token, a 401 or a 403 fails it
 //     with reauth_required or procore_permission_denied. None are retried.
-//   - Any other error may hide a created RFI, so Procore's RFI list is read
-//     and an RFI with the same subject created since this attempt began (less
-//     recoveryWindow) is taken as this draft's record.
-//   - When the latest attempts ended with an unknown outcome (a retry, or a
-//     resubmit after the retries ran out), the list is read before posting,
-//     since those attempts began, so an RFI listed late is not posted twice.
+//   - Any other error may hide a created RFI, so the list is read and a
+//     single matching RFI created since this attempt began is adopted.
 func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 	cur, err := d.load(ctx, draftID)
 	if errors.Is(err, ErrNotFound) {
@@ -195,75 +234,100 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 	}
 	f, ok := d.features[cur.Feature]
 	if !ok {
-		return d.failSubmit(ctx, cur, CodeInternal, fmt.Sprintf("unknown feature %q", cur.Feature), nil, nil, 0)
+		return d.failSubmit(ctx, cur, CodeInternal, fmt.Sprintf("unknown feature %q", cur.Feature), nil, nil, nil, 0)
 	}
 
 	body, invalid, err := rfiCreate(cur.Payload())
 	if err != nil {
-		d.log.Error("build procore rfi", "draft_id", cur.ID, "error", err)
-		return d.failSubmit(ctx, cur, CodeInternal, "The draft could not be prepared for Procore.", nil, nil, 0)
+		return d.failSubmit(ctx, cur, CodeInternal, "The draft could not be prepared for Procore.", err, nil, nil, 0)
 	}
 	if len(invalid) > 0 {
-		return d.failSubmit(ctx, cur, CodeProcoreValidation, "Fix the flagged fields and submit again.", invalid, nil, 0)
+		return d.failSubmit(ctx, cur, CodeProcoreValidation, "Fix the flagged fields and submit again.", nil, invalid, nil, 0)
 	}
 	request, err := json.Marshal(map[string]procore.RFICreate{"rfi": body})
 	if err != nil {
 		return fmt.Errorf("pipeline: encode rfi: %w", err)
 	}
+	user, err := d.st.Q.GetUser(ctx, pgtype.UUID{Bytes: cur.UserID, Valid: true})
+	if err != nil {
+		return fmt.Errorf("pipeline: load draft user: %w", err)
+	}
 
 	token, err := d.tokens.AccessToken(ctx, cur.UserID)
 	if errors.Is(err, auth.ErrReauthRequired) {
-		return d.failSubmit(ctx, cur, CodeReauthRequired, "Sign in to Procore again, then submit.", nil, nil, 0)
+		return d.failSubmit(ctx, cur, CodeReauthRequired, "Sign in to Procore again, then submit.", err, nil, nil, 0)
 	}
 	if err != nil {
 		d.auditAttemptFailed(ctx, cur, nil, err, 0)
 		return fmt.Errorf("pipeline: access token: %w", err)
 	}
 
-	// A retry, or a resubmit after the retries ran out, looks again before
-	// posting: an earlier attempt's RFI may only now be listed.
-	if since, retrying, err := d.unknownOutcomeSince(ctx, cur.ID); err != nil {
+	prior, err := d.priorAttempts(ctx, cur.ID)
+	if err != nil {
 		return err
-	} else if retrying {
-		if rfi, ok := d.findCreated(ctx, token, cur, body.Subject, since); ok {
-			d.log.Info("found rfi from an earlier attempt before retrying", "draft_id", cur.ID, "procore_id", rfi.ID)
-			resp := map[string]any{"recovered": true, "before_retry": true, "rfi": rfi}
+	}
+	if prior.unknown {
+		rfi, n, err := d.findCreated(ctx, token, cur, user.ProcoreUserID, body.Subject, prior.since)
+		switch {
+		case err != nil:
+			d.auditAttemptFailed(ctx, cur, nil, err, 0)
+			return fmt.Errorf("pipeline: look for an earlier attempt's rfi: %w", err)
+		case n == 1:
+			d.log.Info("found rfi from an earlier attempt before posting", "draft_id", cur.ID, "procore_id", rfi.ID)
+			resp := map[string]any{"recovered": true, "before_post": true, "rfi": rfi}
 			return d.markSubmitted(ctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number}, nil, resp, 0)
+		case n > 1:
+			err := fmt.Errorf("pipeline: %d rfis could be an earlier attempt's; not posting again", n)
+			d.auditAttemptFailed(ctx, cur, nil, err, 0)
+			return err
 		}
 	}
 
 	attemptStart := d.now()
+	if err := d.writeAttempt(ctx, cur, prior.attempts+1, attemptStart); err != nil {
+		return err
+	}
 	start := time.Now()
 	created, err := d.procore.CreateRFI(ctx, token, cur.CompanyID, cur.ProjectID, body)
 	ms := int(time.Since(start).Milliseconds())
+
+	// Record the outcome even if the job's context is done.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postWriteTimeout)
+	defer cancel()
 	if err == nil {
-		return d.markSubmitted(ctx, cur, Result{ProcoreID: created.ID, Number: created.Number, URL: created.Link}, request, created, ms)
+		return d.markSubmitted(wctx, cur, Result{ProcoreID: created.ID, Number: created.Number, URL: created.Link}, request, created, ms)
 	}
 
 	var ve *procore.ValidationError
 	switch {
 	case errors.As(err, &ve):
-		return d.failSubmit(ctx, cur, CodeProcoreValidation, "Procore rejected the RFI. Fix the flagged fields and submit again.",
-			procoreFieldErrors(f, ve), request, ms)
+		return d.failSubmit(wctx, cur, CodeProcoreValidation, "Procore rejected the RFI. Fix the flagged fields and submit again.",
+			err, procoreFieldErrors(f, ve), request, ms)
 	case errors.Is(err, auth.ErrReauthRequired), errors.Is(err, procore.ErrUnauthorized):
-		return d.failSubmit(ctx, cur, CodeReauthRequired, "Sign in to Procore again, then submit.", nil, request, ms)
+		return d.failSubmit(wctx, cur, CodeReauthRequired, "Sign in to Procore again, then submit.", err, nil, request, ms)
 	case errors.Is(err, procore.ErrPermissionDenied):
-		return d.failSubmit(ctx, cur, CodePermissionDenied, "Your Procore account cannot create RFIs in this project.", nil, request, ms)
+		return d.failSubmit(wctx, cur, CodePermissionDenied, "Your Procore account cannot create RFIs in this project.", err, nil, request, ms)
 	}
 
 	// The outcome is unknown: Procore may have created the RFI and the
 	// response been lost.
-	if rfi, ok := d.findCreated(ctx, token, cur, body.Subject, attemptStart); ok {
+	rfi, n, lerr := d.findCreated(wctx, token, cur, user.ProcoreUserID, body.Subject, attemptStart)
+	if lerr == nil && n == 1 {
 		d.log.Info("recovered submitted rfi after lost response", "draft_id", cur.ID, "procore_id", rfi.ID, "error", err)
 		resp := map[string]any{"recovered": true, "error": err.Error(), "rfi": rfi}
-		return d.markSubmitted(ctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number}, request, resp, ms)
+		return d.markSubmitted(wctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number}, request, resp, ms)
 	}
-	d.auditAttemptFailed(ctx, cur, request, err, ms)
+	if lerr != nil {
+		d.log.Warn("list rfis for lost-response recovery", "draft_id", cur.ID, "error", lerr)
+	}
+	d.auditAttemptFailed(wctx, cur, request, err, ms)
 	return err
 }
 
 // FailSubmit marks a submitting draft failed with procore_unavailable after
-// its job has used every attempt. A draft in any other state is left alone.
+// its job has used every attempt. The draft stores a fixed message; the
+// cause goes to the log and the audit event only. A draft in any other state
+// is left alone.
 func (d *Drafts) FailSubmit(ctx context.Context, draftID uuid.UUID, cause error) error {
 	cur, err := d.load(ctx, draftID)
 	if err != nil {
@@ -272,35 +336,37 @@ func (d *Drafts) FailSubmit(ctx context.Context, draftID uuid.UUID, cause error)
 	if cur.Status != StatusSubmitting {
 		return nil
 	}
-	return d.failSubmit(ctx, cur, CodeProcoreUnavailable, cause.Error(), nil, nil, 0)
+	return d.failSubmit(ctx, cur, CodeProcoreUnavailable, UnavailableMessage, cause, nil, nil, 0)
 }
 
-// findCreated looks in the project's RFIs for one with subject created at or
-// after attemptStart less recoveryWindow, preferring the newest. A failed
-// list counts as no match.
-func (d *Drafts) findCreated(ctx context.Context, token string, cur Draft, subject string, attemptStart time.Time) (procore.RFI, bool) {
+// findCreated looks in the project's RFIs for ones that could be this
+// draft's: same subject exactly, created by the draft user's Procore account
+// (creatorID), at or after since less recoveryWindow. It returns the match
+// and how many there are; only exactly one may be adopted. A list error is
+// returned as is.
+func (d *Drafts) findCreated(ctx context.Context, token string, cur Draft, creatorID int64, subject string, since time.Time) (procore.RFI, int, error) {
 	rfis, err := d.procore.ListRFIs(ctx, token, cur.CompanyID, cur.ProjectID)
 	if err != nil {
-		d.log.Warn("list rfis for lost-response recovery", "draft_id", cur.ID, "error", err)
-		return procore.RFI{}, false
+		return procore.RFI{}, 0, err
 	}
-	since := attemptStart.Add(-recoveryWindow)
-	var best procore.RFI
-	var bestAt time.Time
-	found := false
+	from := since.Add(-recoveryWindow)
+	var match procore.RFI
+	n := 0
 	for _, r := range rfis {
-		if r.Subject != subject {
+		if r.Subject != subject || r.CreatedBy.ID != creatorID {
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, r.CreatedAt)
-		if err != nil || at.Before(since) {
+		if err != nil || at.Before(from) {
 			continue
 		}
-		if !found || at.After(bestAt) {
-			best, bestAt, found = r, at, true
-		}
+		match = r
+		n++
 	}
-	return best, found
+	if n > 1 {
+		d.log.Warn("several rfis match a submit; adopting none", "draft_id", cur.ID, "matches", n)
+	}
+	return match, n, nil
 }
 
 // markSubmitted stores the Procore record and a submitted audit event.
@@ -322,11 +388,11 @@ func (d *Drafts) markSubmitted(ctx context.Context, cur Draft, res Result, reque
 	return err
 }
 
-// failSubmit marks the draft failed with code and message and writes a failed
-// audit event. Entries in invalid replace earlier unresolved entries for the
-// same field; the rest are kept. It returns nil once stored, so the job is
-// not retried, or the store error.
-func (d *Drafts) failSubmit(ctx context.Context, cur Draft, code, message string, invalid []Unresolved, request json.RawMessage, ms int) error {
+// failSubmit marks the draft failed with code and the user-facing message
+// and writes a failed audit event carrying cause. Entries in invalid replace
+// earlier unresolved entries for the same field; the rest are kept. It
+// returns nil once stored, so the job is not retried, or the store error.
+func (d *Drafts) failSubmit(ctx context.Context, cur Draft, code, message string, cause error, invalid []Unresolved, request json.RawMessage, ms int) error {
 	unresolved := append([]Unresolved{}, invalid...)
 	replaced := map[string]bool{}
 	for _, u := range invalid {
@@ -342,6 +408,9 @@ func (d *Drafts) failSubmit(ctx context.Context, cur Draft, code, message string
 		return fmt.Errorf("pipeline: encode unresolved: %w", err)
 	}
 	response := map[string]any{"error": message}
+	if cause != nil {
+		response["cause"] = cause.Error()
+	}
 	if code == CodeProcoreUnavailable {
 		response["unknown_outcome"] = true
 	}
@@ -363,7 +432,23 @@ func (d *Drafts) failSubmit(ctx context.Context, cur Draft, code, message string
 		d.log.Error("store failed draft", "draft_id", cur.ID, "code", code, "error", err)
 		return err
 	}
-	d.log.Info("draft submit failed", "draft_id", cur.ID, "code", code)
+	d.log.Info("draft submit failed", "draft_id", cur.ID, "code", code, "cause", cause)
+	return nil
+}
+
+// attemptAudit is the payload of an attempt audit event, written just before
+// a POST.
+type attemptAudit struct {
+	Attempt int       `json:"attempt"`
+	At      time.Time `json:"at"`
+}
+
+// writeAttempt records that attempt n is about to post. An error stops the
+// attempt before the POST.
+func (d *Drafts) writeAttempt(ctx context.Context, cur Draft, n int, at time.Time) error {
+	if err := insertAudit(ctx, d.st.Q, cur.CompanyID, cur.ID, AuditAttempt, attemptAudit{Attempt: n, At: at}, 0); err != nil {
+		return fmt.Errorf("pipeline: write submit attempt marker: %w", err)
+	}
 	return nil
 }
 
@@ -375,27 +460,55 @@ type unknownOutcome struct {
 	UnknownOutcome bool   `json:"unknown_outcome"`
 }
 
-// unknownOutcomeSince reports whether the draft's latest audit events are
-// failed attempts with an unknown outcome, and if so when the earliest of
-// that run began: its event time less its duration. Any other event, such as
-// an edit, ends the run.
-func (d *Drafts) unknownOutcomeSince(ctx context.Context, draftID uuid.UUID) (time.Time, bool, error) {
+// attemptHistory summarises a draft's audit trail for RunSubmit.
+type attemptHistory struct {
+	// attempts counts every attempt marker the draft has.
+	attempts int
+	// unknown is true when the latest audit events are attempt markers and
+	// failures with an unknown outcome, i.e. an earlier POST may have
+	// created an RFI; since is when the earliest of that run began.
+	unknown bool
+	since   time.Time
+}
+
+// priorAttempts reads the draft's audit trail. A run of unknown-outcome
+// events ends at any other event, such as a 422 failure or an edit.
+func (d *Drafts) priorAttempts(ctx context.Context, draftID uuid.UUID) (attemptHistory, error) {
 	evs, err := d.st.Q.ListAuditEvents(ctx, pgtype.UUID{Bytes: draftID, Valid: true})
 	if err != nil {
-		return time.Time{}, false, fmt.Errorf("pipeline: list audit events: %w", err)
+		return attemptHistory{}, fmt.Errorf("pipeline: list audit events: %w", err)
 	}
-	var since time.Time
-	found := false
+	var h attemptHistory
+	for _, ev := range evs {
+		if ev.Kind == AuditAttempt {
+			h.attempts++
+		}
+	}
 	for i := len(evs) - 1; i >= 0; i-- {
 		ev := evs[i]
-		var r unknownOutcome
-		if ev.Kind != AuditFailed || json.Unmarshal(ev.ProcoreResponse, &r) != nil || !r.UnknownOutcome {
-			break
+		var at time.Time
+		switch ev.Kind {
+		case AuditAttempt:
+			var a attemptAudit
+			if json.Unmarshal(ev.Payload, &a) != nil || a.At.IsZero() {
+				a.At = ev.CreatedAt.Time
+			}
+			at = a.At
+		case AuditFailed:
+			var r unknownOutcome
+			if json.Unmarshal(ev.ProcoreResponse, &r) != nil || !r.UnknownOutcome {
+				return h, nil
+			}
+			at = ev.CreatedAt.Time.Add(-time.Duration(ev.DurationMs.Int32) * time.Millisecond)
+		default:
+			return h, nil
 		}
-		since = ev.CreatedAt.Time.Add(-time.Duration(ev.DurationMs.Int32) * time.Millisecond)
-		found = true
+		if !h.unknown || at.Before(h.since) {
+			h.since = at
+		}
+		h.unknown = true
 	}
-	return since, found, nil
+	return h, nil
 }
 
 // auditAttemptFailed records an attempt that will be retried. The draft

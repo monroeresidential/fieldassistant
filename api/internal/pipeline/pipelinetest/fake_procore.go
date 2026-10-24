@@ -40,6 +40,9 @@ type FakeProcore struct {
 	// ErrForToken scripts an error for one access token and method, and wins
 	// over Err. Use it to give different users different outcomes.
 	ErrForToken map[string]map[string]error
+	// OnCreateRFI, when set, runs at the start of each CreateRFI call,
+	// outside the lock, so a test can observe state at the moment of the POST.
+	OnCreateRFI func()
 
 	mu    sync.Mutex
 	calls []Call
@@ -138,6 +141,9 @@ func (f *FakeProcore) ListRFIs(_ context.Context, token string, companyID, proje
 }
 
 func (f *FakeProcore) CreateRFI(_ context.Context, token string, companyID, projectID int64, body procore.RFICreate) (procore.RFICreated, error) {
+	if f.OnCreateRFI != nil {
+		f.OnCreateRFI()
+	}
 	if err := f.record(Call{Method: "CreateRFI", AccessToken: token, CompanyID: companyID, ProjectID: projectID, RFI: &body}); err != nil {
 		return procore.RFICreated{}, err
 	}
