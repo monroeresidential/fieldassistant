@@ -105,7 +105,101 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertTrue(assignee.blocking)
         XCTAssertNotNil(model.unresolved(for: .rfiManagerId))
         XCTAssertEqual(model.unresolvedCount, 2)
-        XCTAssertNotEqual(local.status, .submitting)
+        XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .post])
+        // The server's `reviewed` folds into the local `.draft`; nothing was queued.
+        XCTAssertEqual(local.status, .draft)
+    }
+
+    func testSubmit400FormAndUnknownNamesDoNotAddRows() async throws {
+        let message = "draft has unresolved fields: _form, mystery_field"
+        let transport = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.error(.badRequest, code: "bad_request", message: message),
+        ])
+        let (model, _, _) = try makeModel(transport)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .needsFixes)
+        XCTAssertEqual(model.formMessage, message)
+        XCTAssertTrue(model.unresolved.isEmpty)
+    }
+
+    func testSubmitIgnoredWhileSubmitting() async throws {
+        let gate = GateTransport(StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.submit(.ok, draftID: draftID),
+            draftJSON(status: "submitted", unresolved: "[]", result: #"{"procore_id":501,"number":"214"}"#),
+        ]))
+        let (model, _, _) = try makeModel(gate)
+        let first = Task { await model.submit() }
+        try await gate.waitUntilHeld()
+
+        let second = await model.submit()
+        let saved = await model.saveDraft()
+
+        guard case .pending = second else { return XCTFail("expected pending, got \(second)") }
+        XCTAssertNil(saved)
+        XCTAssertEqual(gate.inner.requests.count, 0, "the second calls send nothing")
+        gate.release()
+        let outcome = await first.value
+        XCTAssertEqual(outcome, .submitted(number: "214", url: nil))
+        XCTAssertEqual(gate.inner.requests.map(\.request.method), [.patch, .post, .get])
+    }
+
+    func testEditDuringSaveIsKept() async throws {
+        let gate = GateTransport(StubTransport([draftJSON(status: "reviewed")]))
+        let (model, local, _) = try makeModel(gate)
+        let save = Task { await model.saveDraft() }
+        try await gate.waitUntilHeld()
+
+        model.setText("Header height at grid D", for: .subject)
+        model.setID(13, for: .assigneeIds)
+        gate.release()
+        let failure = await save.value
+
+        XCTAssertNil(failure)
+        XCTAssertEqual(model.payload.subject, "Header height at grid D", "the server echoed the old subject")
+        XCTAssertEqual(model.payload.assignee_ids, [13])
+        XCTAssertNil(model.unresolved(for: .assigneeIds), "a field edited in flight drops the server's flag")
+        XCTAssertNotNil(model.unresolved(for: .locationId), "untouched fields take the server's flags")
+        XCTAssertEqual(model.payload.cost_code_id, 401)
+        XCTAssertEqual(local.server?.payload.subject, "Header height at grid D")
+    }
+
+    func testFailedSaveKeepsEditsLocally() async throws {
+        let (model, _, container) = try makeModel(FailingTransport(error: URLError(.notConnectedToInternet)))
+        model.setText("Edited offline", for: .subject)
+
+        let failure = await model.saveDraft()
+
+        XCTAssertEqual(failure, .offline)
+        let id = draftID
+        let reloaded = try XCTUnwrap(ModelContext(container).fetch(FetchDescriptor<LocalDraft>(predicate: #Predicate { $0.id == id })).first)
+        XCTAssertEqual(reloaded.server?.payload.subject, "Edited offline")
+        XCTAssertEqual(reloaded.subject, "Edited offline")
+    }
+
+    func testCancelledSubmitLeavesDraftSubmitting() async throws {
+        let transport = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.submit(.accepted, draftID: draftID),
+            APIStub.job(draftID: draftID, status: "running"),
+        ])
+        let (model, local, _) = try makeModel(transport)
+        let submit = Task { await model.submit() }
+        // Once the first job poll is in, the wait is sleeping before the next poll.
+        for _ in 0..<500 where transport.requests.count < 3 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(transport.requests.count, 3)
+
+        submit.cancel()
+        let outcome = await submit.value
+
+        guard case .pending = outcome else { return XCTFail("expected pending, got \(outcome)") }
+        XCTAssertEqual(local.status, .submitting)
+        XCTAssertFalse(model.isSubmitting)
     }
 
     func testSubmitAsDraftOverrideAppliedOnSave() async throws {
@@ -184,7 +278,7 @@ final class RFIReviewModelTests: XCTestCase {
     }
 
     private func makeModel(
-        _ transport: StubTransport,
+        _ transport: ClientTransport,
         unresolved: String? = nil,
         draft: Bool = false,
         submitAsDraftOverride: Bool? = nil
@@ -208,5 +302,55 @@ final class RFIReviewModelTests: XCTestCase {
             submitAsDraftOverride: submitAsDraftOverride
         )
         return (model, local, container)
+    }
+}
+
+/// `ClientTransport` that holds every request until `release()`, then forwards it to `inner`, so a
+/// test can act while a request is in flight.
+final class GateTransport: ClientTransport, @unchecked Sendable {
+    let inner: StubTransport
+    private let lock = NSLock()
+    private var released = false
+    private var held = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(_ inner: StubTransport) {
+        self.inner = inner
+    }
+
+    /// Returns once a request is waiting at the gate, or fails after about five seconds.
+    func waitUntilHeld() async throws {
+        for _ in 0..<500 {
+            if lock.withLock({ held > 0 }) { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("no request reached the gate")
+    }
+
+    func release() {
+        let pending = lock.withLock {
+            released = true
+            defer { waiters = [] }
+            return waiters
+        }
+        pending.forEach { $0.resume() }
+    }
+
+    func send(
+        _ request: HTTPRequest,
+        body: HTTPBody?,
+        baseURL: URL,
+        operationID: String
+    ) async throws -> (HTTPResponse, HTTPBody?) {
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock {
+                held += 1
+                if released { return true }
+                waiters.append(continuation)
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+        return try await inner.send(request, body: body, baseURL: baseURL, operationID: operationID)
     }
 }

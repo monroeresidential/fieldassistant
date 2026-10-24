@@ -10,8 +10,13 @@ import Observation
 final class RFIReviewModel {
     enum SubmitOutcome: Equatable {
         case submitted(number: String?, url: String?)
-        /// Blocking flags remain; the rows (and `formMessage`) say what to fix.
+        /// Procore refused the RFI; the flagged rows and `formMessage` say what to fix. A failure
+        /// that only carries a `_form` message also lands here with no blocking flags: Submit stays
+        /// enabled and the screen shows the message.
         case needsFixes
+        /// The submit is queued but Procore has not confirmed it (the job poll timed out or was
+        /// cancelled). The draft stays `submitting` and is reconciled later.
+        case pending(message: String)
         case failed(APIFailure)
     }
 
@@ -41,6 +46,8 @@ final class RFIReviewModel {
     private static let formField = "_form"
     /// The prefix of the backend's 400 when submit finds unresolved fields.
     private static let unresolvedPrefix = "draft has unresolved fields:"
+    private static let pendingMessage = "Procore has not confirmed the RFI yet; it will update automatically."
+    private static let alreadySendingMessage = "This RFI is already being saved or sent."
 
     init(
         draft: LocalDraft,
@@ -154,26 +161,23 @@ final class RFIReviewModel {
 
     // MARK: - Saving and submitting
 
-    /// Stores the payload on the server and locally, then takes the server's revalidated payload
-    /// and flags. Returns the failure, or `nil` on success.
+    /// Stores the payload on the phone, then on the server, and takes the server's revalidated
+    /// payload and flags. Returns the failure, or `nil` on success. Does nothing while a save or
+    /// submit is already running.
     func saveDraft() async -> APIFailure? {
+        guard !isSaving, !isSubmitting else { return nil }
         isSaving = true
         defer { isSaving = false }
-        if let submitAsDraftOverride { payload.draft = submitAsDraftOverride }
-        do {
-            let response = try await service.save(id: draft.id, companyID: draft.companyID, payload: payload)
-            take(response)
-            return nil
-        } catch {
-            return APIFailure(error)
-        }
+        return await persist()
     }
 
-    /// Saves (the server validates again), queues the submit and waits for the job.
+    /// Saves (the server validates again), queues the submit and waits for the job. Does nothing
+    /// while a save or submit is already running.
     func submit() async -> SubmitOutcome {
+        guard !isSubmitting, !isSaving else { return .pending(message: Self.alreadySendingMessage) }
         isSubmitting = true
         defer { isSubmitting = false }
-        if let failure = await saveDraft() { return .failed(failure) }
+        if let failure = await persist() { return .failed(failure) }
 
         let previous = draft.status
         draft.status = .submitting
@@ -201,7 +205,8 @@ final class RFIReviewModel {
                 response = try await service.waitForJob(id: jobID, draftID: draft.id, companyID: draft.companyID)
             } catch {
                 // The job is queued: the draft stays `submitting` and is reconciled on relaunch.
-                return .failed(Task.isCancelled || error is CancellationError ? APIFailure(CancellationError()) : APIFailure(error))
+                if Task.isCancelled || error is CancellationError { return .pending(message: Self.pendingMessage) }
+                return .failed(APIFailure(error))
             }
         }
 
@@ -215,7 +220,7 @@ final class RFIReviewModel {
         case .failed:
             return .failed(.server(response.error?.message ?? "Procore did not accept this RFI."))
         case .submitting:
-            return .failed(.server("Procore has not confirmed this RFI yet. It stays in Sending and is checked again later."))
+            return .pending(message: Self.pendingMessage)
         case .extracted, .reviewed:
             return .failed(.server("The RFI was not sent. Try again."))
         }
@@ -223,26 +228,67 @@ final class RFIReviewModel {
 
     // MARK: - Private
 
-    /// Applies a server response here and to the local draft, and saves the local draft.
-    private func take(_ response: DraftResponse) {
-        payload = response.payload
-        unresolved = response.unresolved.filter { $0.field != Self.formField }
+    /// Writes the payload to the phone, then PATCHes it. The local copy goes first so a failed
+    /// request (offline is the normal jobsite case) still keeps the edits on the phone.
+    private func persist() async -> APIFailure? {
+        if let submitAsDraftOverride { payload.draft = submitAsDraftOverride }
+        storeLocally()
+        let sent = payload
+        do {
+            let response = try await service.save(id: draft.id, companyID: draft.companyID, payload: sent)
+            take(response, sent: sent)
+            return nil
+        } catch {
+            return APIFailure(error)
+        }
+    }
+
+    /// Applies a server response here and to the local draft, and saves the local draft. With
+    /// `sent`, fields the user changed after that payload was sent keep the user's value and lose
+    /// any server flag; the server's value wins only for fields unchanged since.
+    private func take(_ response: DraftResponse, sent: RFIDraftPayload? = nil) {
+        var merged = response.payload
+        var edited: Set<String> = []
+        if let sent {
+            for access in Self.fieldAccess where access.differs(sent, payload) {
+                access.copy(payload, &merged)
+                edited.insert(access.field.rawValue)
+            }
+        }
+        payload = merged
+        unresolved = response.unresolved.filter { $0.field != Self.formField && !edited.contains($0.field) }
         formMessage = response.unresolved.first { $0.field == Self.formField }?.message
         rememberCandidates(response.unresolved)
         draft.apply(response)
+        if !edited.isEmpty { storeLocally() }
         try? store.save()
     }
 
-    /// Flags the fields a submit 400 lists, with the server's message as the reason. Returns
-    /// `false` when the message names no fields.
+    /// Writes the current payload into the local draft's stored server copy and saves it.
+    private func storeLocally() {
+        guard var server = draft.server else { return }
+        server.payload = payload
+        draft.server = server
+        draft.subject = payload.subject
+        try? store.save()
+    }
+
+    /// Flags the fields a submit 400 lists, with the server's message as the reason. `_form` sets
+    /// `formMessage`; names with no review row are skipped, since nothing could clear them.
+    /// Returns `false` when the message flags nothing.
     private func flagFields(from message: String) -> Bool {
         guard message.hasPrefix(Self.unresolvedPrefix) else { return false }
         let names = message.dropFirst(Self.unresolvedPrefix.count)
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        guard !names.isEmpty else { return false }
+        var flagged = false
         for name in names {
+            if name == Self.formField {
+                formMessage = message
+                flagged = true
+                continue
+            }
+            guard RFIField(serverField: name) != nil else { continue }
             let candidates = unresolved.first { $0.field == name }?.candidates ?? []
             unresolved.removeAll { $0.field == name }
             unresolved.append(UnresolvedField(
@@ -252,8 +298,44 @@ final class RFIReviewModel {
                 candidates: candidates,
                 blocking: true
             ))
+            flagged = true
         }
-        return true
+        return flagged
+    }
+
+    /// Compares and copies one payload field, for merging a save response with later edits.
+    private struct FieldAccess {
+        let field: RFIField
+        let differs: (RFIDraftPayload, RFIDraftPayload) -> Bool
+        let copy: (RFIDraftPayload, inout RFIDraftPayload) -> Void
+
+        init<Value: Equatable>(_ field: RFIField, _ keyPath: WritableKeyPath<RFIDraftPayload, Value>) {
+            self.field = field
+            differs = { $0[keyPath: keyPath] != $1[keyPath: keyPath] }
+            copy = { source, target in target[keyPath: keyPath] = source[keyPath: keyPath] }
+        }
+    }
+
+    private static var fieldAccess: [FieldAccess] {
+        RFIField.allCases.map { field in
+            switch field {
+            case .subject: FieldAccess(field, \.subject)
+            case .questionBody: FieldAccess(field, \.question_body)
+            case .assigneeIds: FieldAccess(field, \.assignee_ids)
+            case .rfiManagerId: FieldAccess(field, \.rfi_manager_id)
+            case .locationId: FieldAccess(field, \.location_id)
+            case .specificationSectionId: FieldAccess(field, \.specification_section_id)
+            case .dueDate: FieldAccess(field, \.due_date)
+            case .drawingNumber: FieldAccess(field, \.drawing_number)
+            case .scheduleImpact: FieldAccess(field, \.schedule_impact)
+            case .costImpact: FieldAccess(field, \.cost_impact)
+            case .distributionIds: FieldAccess(field, \.distribution_ids)
+            case .responsibleContractorId: FieldAccess(field, \.responsible_contractor_id)
+            case .costCodeId: FieldAccess(field, \.cost_code_id)
+            case .private: FieldAccess(field, \._private)
+            case .draft: FieldAccess(field, \.draft)
+            }
+        }
     }
 
     private func rememberCandidates(_ flags: [UnresolvedField]) {
