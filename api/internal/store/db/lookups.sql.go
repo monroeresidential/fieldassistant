@@ -40,7 +40,7 @@ func (q *Queries) GetLookup(ctx context.Context, arg GetLookupParams) (LookupCac
 
 const upsertLookup = `-- name: UpsertLookup :exec
 insert into lookup_cache (company_id, project_id, kind, etag, body, unavailable, reason, fetched_at)
-values ($1, $2, $3, $4, $5, $6, $7, now())
+values ($1, $2, $3, $4, $5, $6, $7, $8)
 on conflict (company_id, project_id, kind) do update
 set etag = excluded.etag,
     body = excluded.body,
@@ -57,6 +57,7 @@ type UpsertLookupParams struct {
 	Body        []byte
 	Unavailable bool
 	Reason      pgtype.Text
+	FetchedAt   pgtype.Timestamptz
 }
 
 func (q *Queries) UpsertLookup(ctx context.Context, arg UpsertLookupParams) error {
@@ -68,6 +69,7 @@ func (q *Queries) UpsertLookup(ctx context.Context, arg UpsertLookupParams) erro
 		arg.Body,
 		arg.Unavailable,
 		arg.Reason,
+		arg.FetchedAt,
 	)
 	return err
 }

@@ -133,7 +133,7 @@ func TestLookups_Upsert(t *testing.T) {
 	ctx := context.Background()
 	s := storetest.New(t)
 
-	p := db.UpsertLookupParams{CompanyID: 1, ProjectID: 2, Kind: "people", Etag: "e1", Body: []byte(`[1]`)}
+	p := db.UpsertLookupParams{CompanyID: 1, ProjectID: 2, Kind: "people", Etag: "e1", Body: []byte(`[1]`), FetchedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}
 	if err := s.Q.UpsertLookup(ctx, p); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}

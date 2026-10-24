@@ -1,6 +1,6 @@
 -- name: UpsertLookup :exec
 insert into lookup_cache (company_id, project_id, kind, etag, body, unavailable, reason, fetched_at)
-values ($1, $2, $3, $4, $5, $6, $7, now())
+values ($1, $2, $3, $4, $5, $6, $7, $8)
 on conflict (company_id, project_id, kind) do update
 set etag = excluded.etag,
     body = excluded.body,
