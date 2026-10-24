@@ -552,7 +552,12 @@ struct RFIReviewView: View {
         guard !isLocked else { return }
         saveNote = nil
         guard let failure = await model.saveDraft() else {
-            saveNote = "Draft saved"
+            // The server may say an earlier submit got through after all.
+            switch draft.status {
+            case .submitted: onSubmitted()
+            case .submitting: pendingMessage = Self.sendingMessage
+            case .waiting, .draft, .failed: saveNote = "Draft saved"
+            }
             return
         }
         if Task.isCancelled { return }

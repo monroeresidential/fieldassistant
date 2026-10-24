@@ -14,8 +14,9 @@ final class RFIReviewModel {
         /// that only carries a `_form` message also lands here with no blocking flags: Submit stays
         /// enabled and the screen shows the message.
         case needsFixes
-        /// The submit is queued but Procore has not confirmed it (the job poll timed out or was
-        /// cancelled). The draft stays `submitting` and is reconciled later.
+        /// The submit is or may be queued but Procore has not confirmed it: the job poll timed out,
+        /// failed or was cancelled, or the connection dropped before the server answered the POST.
+        /// The draft stays `submitting` and Check or the sync settles it from the server.
         case pending(message: String)
         case failed(APIFailure)
     }
@@ -29,8 +30,9 @@ final class RFIReviewModel {
     private(set) var isSaving = false
     private(set) var isSubmitting = false
 
-    /// Flags that stop submit until settled.
-    var unresolvedCount: Int { unresolved.filter(\.blocking).count }
+    /// Flags that stop submit until settled. Only flags on a review row count: a blocking flag on a
+    /// field the phone has no row for could never be cleared, so it must not disable Submit.
+    var unresolvedCount: Int { unresolved.filter { $0.blocking && RFIField(serverField: $0.field) != nil }.count }
     /// Flags shown on their rows that do not stop submit.
     var advisoryCount: Int { unresolved.filter { !$0.blocking }.count }
 
@@ -47,6 +49,9 @@ final class RFIReviewModel {
     /// The prefix of the backend's 400 when submit finds unresolved fields.
     private static let unresolvedPrefix = "draft has unresolved fields:"
     private static let pendingMessage = "Procore has not confirmed the RFI yet; it will update automatically."
+    private static let connectionLostMessage = "The connection dropped while sending. Tap Check to see whether Procore has the RFI."
+    /// The backend's 400 for a save on a draft that is submitting or submitted (`ErrDraftLocked`).
+    private static let lockedMessage = "draft is submitted or being submitted"
     private static let alreadySendingMessage = "This RFI is already being saved or sent."
 
     init(
@@ -178,6 +183,15 @@ final class RFIReviewModel {
         isSubmitting = true
         defer { isSubmitting = false }
         if let failure = await persist() { return .failed(failure) }
+        // The save found the draft already sent (a submit whose answer was lost); report where it stands.
+        switch draft.status {
+        case .submitted:
+            return .submitted(number: draft.resultNumber, url: draft.resultURL)
+        case .submitting:
+            return .pending(message: Self.pendingMessage)
+        case .waiting, .draft, .failed:
+            break
+        }
 
         let previous = draft.status
         draft.status = .submitting
@@ -189,13 +203,19 @@ final class RFIReviewModel {
         do {
             start = try await service.submit(id: draft.id, companyID: draft.companyID)
         } catch {
-            // Nothing was queued, so the draft goes back to where it was.
-            draft.status = previous
-            try? store.save()
-            if case .validation(let message) = APIFailure(error), flagFields(from: message) {
-                return .needsFixes
+            let failure = APIFailure(error)
+            switch failure {
+            case .validation, .permissionDenied, .reauthRequired:
+                // The server answered and refused: nothing was queued, so the draft goes back.
+                draft.status = previous
+                try? store.save()
+                if case .validation(let message) = failure, flagFields(from: message) { return .needsFixes }
+                return .failed(failure)
+            case .offline, .server:
+                // No definitive answer: the POST may have reached the server and queued the submit.
+                // The draft stays `submitting`; Check or the sync settles it from the server.
+                return .pending(message: Self.connectionLostMessage)
             }
-            return .failed(APIFailure(error))
         }
 
         let response: DraftResponse
@@ -206,9 +226,9 @@ final class RFIReviewModel {
             do {
                 response = try await service.waitForJob(id: jobID, draftID: draft.id, companyID: draft.companyID)
             } catch {
-                // The job is queued: the draft stays `submitting` and is reconciled on relaunch.
-                if Task.isCancelled || error is CancellationError { return .pending(message: Self.pendingMessage) }
-                return .failed(APIFailure(error))
+                // The job is queued, so a failed poll says nothing about the RFI: the draft stays
+                // `submitting` and Check or the sync settles it.
+                return .pending(message: Self.pendingMessage)
             }
         }
 
@@ -239,6 +259,22 @@ final class RFIReviewModel {
         do {
             let response = try await service.save(id: draft.id, companyID: draft.companyID, payload: sent)
             take(response, sent: sent)
+            return nil
+        } catch {
+            let failure = APIFailure(error)
+            guard failure == .validation(Self.lockedMessage) else { return failure }
+            return await refreshLocked()
+        }
+    }
+
+    /// The server refused a save because the draft is already submitting or submitted (an earlier
+    /// submit got through but its answer was lost). Takes the server's copy, which moves the local
+    /// status on, instead of failing every save from now on.
+    private func refreshLocked() async -> APIFailure? {
+        do {
+            let response = try await service.get(id: draft.id, companyID: draft.companyID)
+            take(response)
+            if draft.status == .submitted { DraftFiles.removeAll(for: draft.id) }
             return nil
         } catch {
             return APIFailure(error)

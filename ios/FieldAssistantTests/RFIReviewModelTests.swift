@@ -267,6 +267,87 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(RFIField(serverField: "cost_code_id"), .costCodeId)
     }
 
+    func testSubmitTransportFailureKeepsSubmittingAndPending() async throws {
+        let transport = ScriptedTransport([
+            .response(draftJSON(status: "reviewed", unresolved: "[]")),
+            .failure(URLError(.networkConnectionLost)),
+        ])
+        let (model, local, _) = try makeModel(transport)
+
+        let outcome = await model.submit()
+
+        guard case .pending = outcome else { return XCTFail("expected pending, got \(outcome)") }
+        XCTAssertEqual(local.status, .submitting, "the POST may have landed; only the server can say")
+        XCTAssertEqual(transport.requests.map(\.method), [.patch, .post])
+        XCTAssertFalse(model.isSubmitting)
+    }
+
+    func testDefinitiveSubmitRefusalRevertsToDraft() async throws {
+        let transport = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.error(.forbidden, code: "procore_permission_denied", message: "No RFI access"),
+        ])
+        let (model, local, _) = try makeModel(transport)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .failed(.permissionDenied("No RFI access")))
+        XCTAssertEqual(local.status, .draft)
+    }
+
+    func testLockedSaveRefreshesFromServer() async throws {
+        let transport = StubTransport([
+            APIStub.error(.badRequest, code: "bad_request", message: "draft is submitted or being submitted"),
+            draftJSON(status: "submitting", unresolved: "[]"),
+        ])
+        let (model, local, _) = try makeModel(transport)
+
+        let failure = await model.saveDraft()
+
+        XCTAssertNil(failure, "no alert: the draft is already on its way")
+        XCTAssertEqual(local.status, .submitting)
+        XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .get])
+        XCTAssertEqual(transport.requests.last?.request.path, draftPath)
+    }
+
+    func testLockedSubmitReportsServerStatusWithoutPosting() async throws {
+        let transport = StubTransport([
+            APIStub.error(.badRequest, code: "bad_request", message: "draft is submitted or being submitted"),
+            draftJSON(status: "submitted", unresolved: "[]", result: #"{"procore_id":501,"number":"214"}"#),
+        ])
+        let (model, local, _) = try makeModel(transport)
+        let leftover = try DraftFiles.directory(for: draftID).appending(path: "audio.m4a")
+        try Data("audio".utf8).write(to: leftover)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .submitted(number: "214", url: nil))
+        XCTAssertEqual(local.status, .submitted)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: leftover.path()))
+        XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .get], "no second POST")
+    }
+
+    func testPollErrorAfterQueuedIsPending() async throws {
+        let transport = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.submit(.accepted, jobID: "job-5", draftID: draftID),
+            APIStub.error(.badGateway, code: "procore_unavailable", message: "Procore is down"),
+        ])
+        let (model, local, _) = try makeModel(transport)
+
+        let outcome = await model.submit()
+
+        guard case .pending = outcome else { return XCTFail("expected pending, got \(outcome)") }
+        XCTAssertEqual(local.status, .submitting)
+    }
+
+    func testUnknownBlockingFieldDoesNotCountAsUnresolved() throws {
+        let unresolved = #"[{"field":"mystery_field","reason":"procore_validation","candidates":[],"blocking":true}]"#
+        let (model, _, _) = try makeModel(StubTransport(), unresolved: unresolved)
+
+        XCTAssertEqual(model.unresolvedCount, 0, "nothing on screen could clear it")
+    }
+
     // MARK: - Fixtures
 
     private let defaultUnresolved = #"""
