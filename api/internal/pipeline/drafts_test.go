@@ -37,7 +37,7 @@ func (draftsFeature) IDFields() []IDField {
 }
 func (draftsFeature) DateFields() []string { return []string{"due_date"} }
 func (draftsFeature) PayloadFields() []string {
-	return []string{"subject", "question_body", "assignee_ids", "rfi_manager_id", "location_id", "due_date", "draft"}
+	return []string{"subject", "question_body", "assignee_ids", "rfi_manager_id", "location_id", "due_date", "schedule_impact", "draft"}
 }
 func (draftsFeature) Prompt() llm.Prompt {
 	return llm.Prompt{Text: "system prompt", Version: "abcdef012345"}
@@ -66,20 +66,21 @@ type draftsEnv struct {
 	fp     *pipelinetest.FakeProcore
 	st     *store.Store
 	clock  *testClock
+	tokens *testTokens
 	user   uuid.UUID
 }
 
 func newDraftsEnv(t *testing.T) *draftsEnv {
 	t.Helper()
-	l, fp, clock, st := newLookups(t)
+	l, fp, clock, st, tokens := newLookupsWithTokens(t)
 	fp.Users = []procore.ProjectUser{
 		{ID: 11, Name: "Ben West", JobTitle: "Architect"},
 		{ID: 42, Name: "Pat Field", JobTitle: "Superintendent"},
 	}
 	fp.Project = procore.ProjectDetail{ID: testProject, Name: "Tower", DisplayName: "Tower One", TimeZone: "Central Time (US & Canada)"}
 	scripted := &llmtest.Scripted{Model: "claude-test-model"}
-	d := NewDrafts(st, l, scripted, map[string]Feature{"rfi": draftsFeature{}}, "claude-configured", clock.Now, nil)
-	return &draftsEnv{drafts: d, llm: scripted, fp: fp, st: st, clock: clock, user: newDBUser(t, st, 42, "Pat Field")}
+	d := NewDrafts(st, l, scripted, fp, tokens, map[string]Feature{"rfi": draftsFeature{}}, "claude-configured", clock.Now, nil)
+	return &draftsEnv{drafts: d, llm: scripted, fp: fp, st: st, clock: clock, tokens: tokens, user: newDBUser(t, st, 42, "Pat Field")}
 }
 
 func newDBUser(t *testing.T, st *store.Store, procoreID int64, name string) uuid.UUID {

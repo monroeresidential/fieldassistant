@@ -14,6 +14,8 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver used for migrations
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/store/db"
 )
@@ -47,10 +49,25 @@ func (s *Store) Close() {
 	s.Pool.Close()
 }
 
-// Migrate applies all pending up migrations. It uses its own short-lived
-// database/sql connection, separate from the query pool, and releases it
-// before returning.
-func (s *Store) Migrate(ctx context.Context) (err error) {
+// Migrate applies all pending up migrations: the app's own, then River's job
+// queue tables. The app migrations use their own short-lived database/sql
+// connection, separate from the query pool, and release it before River's
+// run on the pool.
+func (s *Store) Migrate(ctx context.Context) error {
+	if err := s.migrateApp(ctx); err != nil {
+		return err
+	}
+	migrator, err := rivermigrate.New(riverpgxv5.New(s.Pool), nil)
+	if err != nil {
+		return fmt.Errorf("store: river migrator: %w", err)
+	}
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+		return fmt.Errorf("store: river migrate up: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) migrateApp(ctx context.Context) (err error) {
 	sqlDB, err := sql.Open("pgx", s.url)
 	if err != nil {
 		return fmt.Errorf("store: open migration db: %w", err)

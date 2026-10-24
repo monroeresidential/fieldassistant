@@ -16,6 +16,8 @@ import (
 const (
 	AuditExtracted = "extracted"
 	AuditEdited    = "edited"
+	AuditSubmitted = "submitted"
+	AuditFailed    = "failed"
 )
 
 // auditTurn is one conversation message in the extracted audit payload.
@@ -66,6 +68,27 @@ func insertAudit(ctx context.Context, q *db.Queries, companyID int64, draftID uu
 		Kind:       kind,
 		Payload:    body,
 		DurationMs: pgtype.Int4{Int32: int32(durationMS), Valid: durationMS > 0},
+	})
+	if err != nil {
+		return fmt.Errorf("pipeline: insert %s audit: %w", kind, err)
+	}
+	return nil
+}
+
+// insertProcoreAudit writes a submitted or failed audit event carrying the
+// Procore request body and response. A nil request is stored as null.
+func insertProcoreAudit(ctx context.Context, q *db.Queries, companyID int64, draftID uuid.UUID, kind string, request json.RawMessage, response any, durationMS int) error {
+	resp, err := json.Marshal(response)
+	if err != nil {
+		return fmt.Errorf("pipeline: encode %s audit response: %w", kind, err)
+	}
+	_, err = q.InsertAuditEvent(ctx, db.InsertAuditEventParams{
+		CompanyID:       companyID,
+		DraftID:         pgtype.UUID{Bytes: draftID, Valid: true},
+		Kind:            kind,
+		ProcoreRequest:  request,
+		ProcoreResponse: resp,
+		DurationMs:      pgtype.Int4{Int32: int32(durationMS), Valid: durationMS > 0},
 	})
 	if err != nil {
 		return fmt.Errorf("pipeline: insert %s audit: %w", kind, err)

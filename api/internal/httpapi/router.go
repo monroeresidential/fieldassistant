@@ -7,6 +7,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 	"github.com/monroeresidential/fieldassistant/api/internal/config"
@@ -29,8 +31,10 @@ type Deps struct {
 	Companies *auth.CompanyCache
 	// Lookups serves project lookup lists from the Postgres-backed cache.
 	Lookups *pipeline.Lookups
-	// Drafts extracts, stores and revalidates drafts.
+	// Drafts extracts, stores, revalidates and submits drafts.
 	Drafts *pipeline.Drafts
+	// Jobs is the River client that queues submit jobs and reports on them.
+	Jobs *river.Client[pgx.Tx]
 }
 
 // NewRouter builds the HTTP handler for the API.

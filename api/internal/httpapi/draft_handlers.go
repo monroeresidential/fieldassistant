@@ -233,13 +233,3 @@ func draftResponse(d pipeline.Draft) (DraftResponse, error) {
 	}
 	return out, nil
 }
-
-// SubmitDraft is not implemented yet.
-func (s *Server) SubmitDraft(context.Context, SubmitDraftRequestObject) (SubmitDraftResponseObject, error) {
-	return nil, errNotImplemented
-}
-
-// GetJob is not implemented yet.
-func (s *Server) GetJob(context.Context, GetJobRequestObject) (GetJobResponseObject, error) {
-	return nil, errNotImplemented
-}

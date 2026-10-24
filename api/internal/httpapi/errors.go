@@ -16,8 +16,6 @@ type APIError struct {
 
 func (e *APIError) Error() string { return e.Code + ": " + e.Message }
 
-var errNotImplemented = errors.New("not implemented")
-
 // writeError writes an Error JSON body with the given status.
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	w.Header().Set("Content-Type", "application/json")

@@ -63,9 +63,11 @@ type Draft struct {
 	Confidence                  map[string]float64
 	ModelVersion, PromptVersion string
 	ExtractMS                   int
-	Result                      *Result
-	Error                       *DraftError
-	CreatedAt, UpdatedAt        time.Time
+	// JobID is the submit job, once one is queued.
+	JobID                int64
+	Result               *Result
+	Error                *DraftError
+	CreatedAt, UpdatedAt time.Time
 }
 
 // Result is the Procore record a submitted draft created.
@@ -96,11 +98,14 @@ type CreateInput struct {
 	CapturedAt           time.Time
 }
 
-// Drafts runs extraction and stores drafts and their audit trail.
+// Drafts runs extraction and submission and stores drafts and their audit
+// trail.
 type Drafts struct {
 	st        *store.Store
 	lookups   *Lookups
 	extractor llm.Extractor
+	procore   ProcoreRFIs
+	tokens    AccessTokenSource
 	features  map[string]Feature
 	model     string
 	now       func() time.Time
@@ -108,13 +113,14 @@ type Drafts struct {
 	flight    singleflight.Group
 }
 
-// NewDrafts builds a Drafts. model is recorded when the extractor reports
-// none. A nil logger means slog.Default().
-func NewDrafts(st *store.Store, lookups *Lookups, extractor llm.Extractor, features map[string]Feature, model string, now func() time.Time, logger *slog.Logger) *Drafts {
+// NewDrafts builds a Drafts. pc and tokens post submitted drafts to Procore
+// as the draft's user. model is recorded when the extractor reports none. A
+// nil logger means slog.Default().
+func NewDrafts(st *store.Store, lookups *Lookups, extractor llm.Extractor, pc ProcoreRFIs, tokens AccessTokenSource, features map[string]Feature, model string, now func() time.Time, logger *slog.Logger) *Drafts {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Drafts{st: st, lookups: lookups, extractor: extractor, features: features, model: model, now: now, log: logger}
+	return &Drafts{st: st, lookups: lookups, extractor: extractor, procore: pc, tokens: tokens, features: features, model: model, now: now, log: logger}
 }
 
 // Create returns the draft with in.ID, extracting it first if it does not
@@ -290,34 +296,18 @@ func (d *Drafts) SaveEdits(ctx context.Context, userID, id uuid.UUID, payload js
 	if cur.Status == StatusSubmitting || cur.Status == StatusSubmitted {
 		return Draft{}, ErrDraftLocked
 	}
-	f, ok := d.features[cur.Feature]
-	if !ok {
-		return Draft{}, fmt.Errorf("pipeline: unknown feature %q", cur.Feature)
-	}
 	var edited map[string]any
 	if err := json.Unmarshal(payload, &edited); err != nil {
 		return Draft{}, fmt.Errorf("pipeline: decode payload: %w", err)
 	}
-	sets, err := d.lookups.Warm(ctx, userID, cur.CompanyID, cur.ProjectID, f.LookupKinds())
-	if err != nil {
-		return Draft{}, err
-	}
-	project, err := d.lookups.Project(ctx, userID, cur.CompanyID, cur.ProjectID)
-	if err != nil {
-		return Draft{}, err
-	}
-	today, loc := d.now(), RailsZone(project.TimeZone)
-	validated, unresolved := Validate(f, edited, nil, sets, today, loc)
-	// Keep earlier flags for fields the reviewer left empty, so a flag only
-	// the model or a Procore 422 raised is not lost. Validate's own entries
-	// come first and win; a second pass drops unknown fields and stale
+	// Earlier flags for fields the reviewer left empty are kept, so a flag
+	// only the model or a Procore 422 raised is not lost; the second
+	// Validate pass inside revalidate drops unknown fields and stale
 	// candidates from the carried-over entries.
-	for _, u := range cur.Unresolved {
-		if isEmptyValue(validated[u.Field]) {
-			unresolved = append(unresolved, u)
-		}
+	validated, unresolved, err := d.revalidate(ctx, userID, cur, edited)
+	if err != nil {
+		return Draft{}, err
 	}
-	validated, unresolved = Validate(f, validated, unresolved, sets, today, loc)
 
 	after, err := json.Marshal(validated)
 	if err != nil {
@@ -415,6 +405,7 @@ func fromRow(r db.Draft) (Draft, error) {
 		ModelVersion:  r.ModelVersion.String,
 		PromptVersion: r.PromptVersion.String,
 		ExtractMS:     int(r.ExtractMs.Int32),
+		JobID:         r.JobID.Int64,
 		CreatedAt:     r.CreatedAt.Time,
 		UpdatedAt:     r.UpdatedAt.Time,
 	}

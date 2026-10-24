@@ -21,6 +21,7 @@ import (
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 	"github.com/monroeresidential/fieldassistant/api/internal/config"
 	"github.com/monroeresidential/fieldassistant/api/internal/features/rfi"
+	"github.com/monroeresidential/fieldassistant/api/internal/jobs"
 	"github.com/monroeresidential/fieldassistant/api/internal/llm/llmtest"
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
@@ -372,6 +373,21 @@ func startTestServer(t *testing.T, scheme string) testServer {
 	lookups := pipeline.NewLookups(st, pc, tokens, 10*time.Minute, clock.now, logger)
 	scripted := &llmtest.Scripted{Model: "claude-test-model"}
 	features := map[string]pipeline.Feature{"rfi": rfi.New()}
+	drafts := pipeline.NewDrafts(st, lookups, scripted, pc, tokens, features, "claude-configured", clock.now, logger)
+	// The River client works submit jobs for the whole test; it stops
+	// before the database lock is released.
+	riverClient, err := jobs.NewClient(st.Pool, drafts, logger)
+	if err != nil {
+		t.Fatalf("river client: %v", err)
+	}
+	if err := riverClient.Start(context.Background()); err != nil {
+		t.Fatalf("start river: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := riverClient.Stop(context.Background()); err != nil {
+			t.Errorf("stop river: %v", err)
+		}
+	})
 
 	api.Config.Handler = NewRouter(Deps{
 		Logger:    logger,
@@ -383,7 +399,8 @@ func startTestServer(t *testing.T, scheme string) testServer {
 		Procore:   pc,
 		Companies: auth.NewCompanyCache(pc, tokens, 10*time.Minute, clock.now),
 		Lookups:   lookups,
-		Drafts:    pipeline.NewDrafts(st, lookups, scripted, features, "claude-configured", clock.now, logger),
+		Drafts:    drafts,
+		Jobs:      riverClient,
 	})
 	api.Start()
 	t.Cleanup(api.Close)
