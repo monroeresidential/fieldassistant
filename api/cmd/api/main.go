@@ -51,7 +51,9 @@ func main() {
 
 	// Jobs start before the server accepts requests and stop before the
 	// database pool closes (closeDeps is deferred above, so it runs last).
-	if err := deps.Jobs.Start(ctx); err != nil {
+	// River gets a context the signal never cancels: cancelling the Start
+	// context is a hard stop that skips the graceful drain.
+	if err := deps.Jobs.Start(context.Background()); err != nil {
 		slog.Error("starting jobs failed", "error", err)
 		closeDeps()
 		os.Exit(1)
@@ -61,7 +63,12 @@ func main() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := deps.Jobs.Stop(stopCtx); err != nil {
-			slog.Error("stopping jobs failed", "error", err)
+			slog.Warn("jobs did not drain in time, cancelling", "error", err)
+			cancelCtx, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelStop()
+			if err := deps.Jobs.StopAndCancel(cancelCtx); err != nil {
+				slog.Error("stopping jobs failed", "error", err)
+			}
 		}
 	}
 
