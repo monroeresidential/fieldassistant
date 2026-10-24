@@ -15,7 +15,13 @@ final class DraftStore {
 
     func insert(_ draft: LocalDraft) throws {
         context.insert(draft)
-        try context.save()
+        do {
+            try context.save()
+        } catch {
+            // Leave nothing half-inserted behind, so Build can try the same draft id again.
+            context.rollback()
+            throw error
+        }
     }
 
     func draft(id: UUID) -> LocalDraft? {

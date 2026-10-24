@@ -20,6 +20,9 @@ final class CaptureModel {
     private(set) var photos: [LocalPhoto] = []
     private(set) var elapsed: Duration = .zero
     private(set) var coordinate: CLLocationCoordinate2D?
+    /// Why recording ended on its own (a recognizer error, an interruption) while text was kept,
+    /// or `nil` when the user stopped it.
+    private(set) var notice: String?
 
     @ObservationIgnored private let transcriber: Transcriber
     @ObservationIgnored private let location: LocationOnce?
@@ -153,8 +156,8 @@ final class CaptureModel {
     #endif
 
     /// Takes every transcript the recognizer sends, including the final one that arrives after
-    /// `stop()`. An error only counts while still recording; after stop it is the recognizer
-    /// winding down (for example, no speech heard).
+    /// `stop()`. An error or the end of the stream only counts while still recording (after stop it
+    /// is the recognizer winding down, for example no speech heard); it then ends the recording.
     private func listen(to stream: AsyncThrowingStream<String, Error>) async {
         defer {
             listening = false
@@ -164,13 +167,25 @@ final class CaptureModel {
             for try await text in stream where !ignoresRecognizer {
                 transcript = text
             }
+            endedWhileRecording(reason: nil)
         } catch {
-            guard !ignoresRecognizer else { return }
-            if state == .recording {
-                transcriber.stop()
-                timerTask?.cancel()
-                state = .failed(error.localizedDescription)
-            }
+            endedWhileRecording(reason: error.localizedDescription)
+        }
+    }
+
+    /// The recognizer stopped by itself (an error, an interruption, or a stream that just ended)
+    /// while the user was still recording. The microphone stops. Text heard so far is kept and can
+    /// be built, with a notice; with nothing heard, the capture has failed.
+    private func endedWhileRecording(reason: String?) {
+        guard !ignoresRecognizer, state == .recording else { return }
+        transcriber.stop()
+        timerTask?.cancel()
+        let reason = reason ?? "The microphone stopped."
+        if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            state = .failed(reason)
+        } else {
+            notice = "Recording stopped: \(reason)"
+            state = .stopped
         }
     }
 

@@ -80,6 +80,72 @@ final class CaptureModelTests: XCTestCase {
         XCTAssertTrue(model.canBuild)
     }
 
+    func testRecognizerErrorWithTranscriptEndsStopped() async throws {
+        let transcriber = FakeTranscriber()
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        let continuation = try XCTUnwrap(transcriber.continuation)
+        continuation.yield("Need the slab edge detail at grid C")
+        await waitUntil { !model.transcript.isEmpty }
+        try model.addPhoto(Self.image())
+
+        continuation.finish(throwing: SpeechTranscriberError.interrupted)
+        await waitUntil { model.state != .recording }
+
+        XCTAssertEqual(model.state, .stopped)
+        XCTAssertEqual(model.transcript, "Need the slab edge detail at grid C")
+        XCTAssertEqual(model.notice, "Recording stopped: A call or another app took the microphone.")
+        XCTAssertTrue(model.canBuild, "the text heard so far can still be built")
+        XCTAssertEqual(transcriber.stopCount, 1, "the microphone is stopped")
+        XCTAssertEqual(model.photos.count, 1)
+        let photo = try XCTUnwrap(model.photos.first)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: DraftFiles.photoURL(draftID: model.draftID, fileName: photo.fileName).path(percentEncoded: false)))
+    }
+
+    func testRecognizerErrorWithoutTranscriptFails() async throws {
+        let transcriber = FakeTranscriber()
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+
+        try XCTUnwrap(transcriber.continuation).finish(throwing: SpeechTranscriberError.interrupted)
+        await waitUntil { model.state != .recording }
+
+        XCTAssertEqual(model.state, .failed("A call or another app took the microphone."))
+        XCTAssertNil(model.notice)
+        XCTAssertEqual(transcriber.stopCount, 1)
+    }
+
+    func testStreamEndWhileRecordingStops() async throws {
+        let transcriber = FakeTranscriber()
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        let continuation = try XCTUnwrap(transcriber.continuation)
+        continuation.yield("Header height at grid D")
+        await waitUntil { !model.transcript.isEmpty }
+
+        continuation.finish()
+        await waitUntil { model.state != .recording }
+
+        XCTAssertEqual(model.state, .stopped)
+        XCTAssertEqual(transcriber.stopCount, 1, "the microphone does not keep running")
+        XCTAssertEqual(model.notice, "Recording stopped: The microphone stopped.")
+        XCTAssertTrue(model.canBuild)
+    }
+
+    func testStopThenStreamEndHasNoNotice() async throws {
+        let transcriber = FakeTranscriber()
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        try XCTUnwrap(transcriber.continuation).yield("Header height")
+        await waitUntil { !model.transcript.isEmpty }
+
+        model.stop()
+        await model.waitForFinalTranscript()
+
+        XCTAssertEqual(model.state, .stopped)
+        XCTAssertNil(model.notice)
+    }
+
     func testMakeDraftCarriesPhotosAndLocation() async throws {
         let transcriber = FakeTranscriber()
         let coordinate = CLLocationCoordinate2D(latitude: 41.8781, longitude: -87.6298)

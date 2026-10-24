@@ -4,10 +4,12 @@ import Speech
 
 enum SpeechTranscriberError: LocalizedError {
     case unavailable
+    case interrupted
 
     var errorDescription: String? {
         switch self {
         case .unavailable: "Speech recognition is not available right now."
+        case .interrupted: "A call or another app took the microphone."
         }
     }
 }
@@ -20,6 +22,9 @@ final class SpeechTranscriber: Transcriber {
     private var engine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    /// The running stream's continuation, so an audio interruption can end it.
+    private var continuation: AsyncThrowingStream<String, Error>.Continuation?
+    private var interruptionObserver: NSObjectProtocol?
 
     func requestAuthorization() async -> TranscriberAuthorization {
         guard let recognizer, recognizer.supportsOnDeviceRecognition else { return .unsupported }
@@ -40,6 +45,12 @@ final class SpeechTranscriber: Transcriber {
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
+        // A call or another app holding the input leaves a format with no rate or channels, and a
+        // tap installed with it crashes.
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            throw SpeechTranscriberError.unavailable
+        }
         let file = try AVAudioFile(
             forWriting: audioFile,
             settings: [
@@ -72,12 +83,22 @@ final class SpeechTranscriber: Transcriber {
         }
         self.engine = engine
         self.request = request
+        self.continuation = continuation
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: session,
+            queue: .main,
+            using: Self.interruptionHandler { [weak self] in self?.interrupted() }
+        )
         return stream
     }
 
     /// Stops the microphone and asks the recognizer for its final result; the stream finishes when
     /// that arrives. Safe to call more than once.
     func stop() {
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+        interruptionObserver = nil
+        continuation = nil
         guard let engine else { return }
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
@@ -87,12 +108,34 @@ final class SpeechTranscriber: Transcriber {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
+    /// An interruption began (a call, Siri, another app's recording): the engine has already
+    /// stopped, so the recording ends here and the stream finishes with the reason.
+    private func interrupted() {
+        guard engine != nil else { return }
+        let continuation = self.continuation
+        stop()
+        task?.cancel()
+        task = nil
+        continuation?.finish(throwing: SpeechTranscriberError.interrupted)
+    }
+
     // The callbacks below run on audio and recognizer queues, so they are built in nonisolated
     // functions; a closure formed inside this main-actor class would trap when called off-main.
 
     private nonisolated static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
         await withCheckedContinuation { continuation in
             SFSpeechRecognizer.requestAuthorization { status in continuation.resume(returning: status) }
+        }
+    }
+
+    /// Delivered on the main queue (the observer asks for it); calls `onBegan` when an interruption starts.
+    private nonisolated static func interruptionHandler(
+        _ onBegan: @escaping @MainActor @Sendable () -> Void
+    ) -> @Sendable (Notification) -> Void {
+        { notification in
+            guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+            MainActor.assumeIsolated { onBegan() }
         }
     }
 

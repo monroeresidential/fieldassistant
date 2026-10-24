@@ -73,6 +73,7 @@ struct CaptureView: View {
     @State private var leavesAfterError = false
     /// Set once the draft is made from the model; photos that finish loading later are dropped.
     @State private var draftMade = false
+    @State private var confirmsDiscard = false
     #if DEBUG
     @State private var showsTyping = false
     @State private var typedText = ""
@@ -144,13 +145,22 @@ struct CaptureView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             Button("Cancel") {
-                model.discard()
-                onLeave()
+                if hasContent {
+                    confirmsDiscard = true
+                } else {
+                    discardAndLeave()
+                }
             }
             .frame(minWidth: 44, minHeight: 44)
             .disabled(isBuilding)
             .accessibilityLabel("Cancel recording")
             .accessibilityHint("Discards this recording and its photos")
+            .confirmationDialog("Discard this recording?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
+                Button("Discard", role: .destructive) { discardAndLeave() }
+                Button("Keep recording", role: .cancel) {}
+            } message: {
+                Text("The transcript and photos are deleted from this phone.")
+            }
         }
         ToolbarItem(placement: .principal) {
             statusLabel
@@ -166,6 +176,16 @@ struct CaptureView: View {
             .accessibilityLabel("Type instead")
         }
         #endif
+    }
+
+    /// Whether Cancel would throw away something the user made.
+    private var hasContent: Bool {
+        !model.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.photos.isEmpty
+    }
+
+    private func discardAndLeave() {
+        model.discard()
+        onLeave()
     }
 
     @ViewBuilder
@@ -204,6 +224,12 @@ struct CaptureView: View {
                     case .failed(let message):
                         failedMessage(message)
                     default:
+                        if let notice = model.notice, model.state == .stopped {
+                            Label(notice, systemImage: "exclamationmark.triangle")
+                                .font(.subheadline)
+                                .foregroundStyle(.orange)
+                                .accessibilityLabel(notice)
+                        }
                         if model.transcript.isEmpty {
                             Text("Start talking. Say what you need answered, where it is, and who should answer it.")
                                 .font(.title3)
@@ -431,6 +457,8 @@ struct CaptureView: View {
         do {
             try appState.drafts.insert(draft)
         } catch {
+            // Nothing was stored, so the capture stays open and can take photos and Build again.
+            draftMade = false
             buildPhase = .idle
             leavesAfterError = false
             buildError = "The draft could not be saved on this phone. \(error.localizedDescription)"
