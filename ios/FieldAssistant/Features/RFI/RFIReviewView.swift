@@ -418,6 +418,9 @@ struct RFIReviewView: View {
             TextEditor(text: textBinding(field))
                 .frame(minHeight: 120)
                 .scrollContentBackground(.hidden)
+                // TextEditor insets its text; pull it back so it lines up with the label and the other rows.
+                .padding(.horizontal, -5)
+                .padding(.vertical, -8)
                 .accessibilityLabel("Question")
         case .dueDate:
             DueDateControl(date: model.dueDate) { model.setDate($0) }
