@@ -140,9 +140,9 @@ All draft and job routes require the session and scope the draft to the caller's
 
 ### Configuration
 
-New: `ANTHROPIC_API_KEY`, `LLM_EXTRACT_MODEL` (no default; the deploy env files name the model explicitly), `LLM_TIMEOUT_SECONDS` (default 20), `PROCORE_WEB_URL` (`https://sandbox.procore.com` in dev and local, `https://app.procore.com` in prod) for the "Open in Procore" link. `.env.example` and the deploy examples gain all four.
+New: `ANTHROPIC_API_KEY`, `LLM_EXTRACT_MODEL` (no default; the deploy env files name the model explicitly), `LLM_TIMEOUT_SECONDS` (default 20). `.env.example` and the deploy examples gain all three. The "Open in Procore" link comes from the `link` field Procore returns on RFI create, so no web URL setting is needed (amended while planning).
 
-Sequencing: the API refuses to start without the required new variables, so before the config change merges to `develop`, `.env.dev` on the droplet must gain `ANTHROPIC_API_KEY`, `LLM_EXTRACT_MODEL` and `PROCORE_WEB_URL`, and the repository needs an `ANTHROPIC_API_KEY` secret for the eval job. The plan puts these as Drew steps ahead of that merge.
+Sequencing: the API refuses to start without the required new variables, so before the config change merges to `develop`, `.env.dev` on the droplet must gain `ANTHROPIC_API_KEY` and `LLM_EXTRACT_MODEL`, and the repository needs an `ANTHROPIC_API_KEY` secret for the eval job. The plan puts these as Drew steps ahead of that merge.
 
 Other builder defaults I accept: `POST /drafts` runs extraction synchronously with in-process single-flight on the draft ID; draft and lookup routes take the company from the existing `X-Company-Id` header; the project timezone comes from Procore's project record (a Rails zone name mapped to IANA); "Refresh people and locations" sends `Cache-Control: no-cache` to bypass the server cache; `procore_record_number` is nullable since Procore may leave draft RFIs unnumbered.
 
