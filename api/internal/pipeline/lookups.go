@@ -166,16 +166,17 @@ func NewLookups(st *store.Store, pc ProcoreLookups, tokens AccessTokenSource, tt
 // A stored row younger than the TTL is served unless force is set, but only
 // to a user who has proved within the TTL that they may read that kind: by
 // fetching the list with their own token, or by a probe (ProbeKind) made
-// before the row is served. A probe refused with a 403 is remembered as
-// that user's denial and the set is unavailable for them; a probe that
-// fails otherwise serves the row, since availability beats a probe failure,
-// while token errors surface.
+// before the row is served. A probe refused with a 403 or 404 is remembered
+// as that user's denial and the set is unavailable for them. Any other
+// probe failure fails closed: the error is returned, except that a user
+// verified before (now expired) is served the row with a Warn, and token
+// errors always surface.
 //
 // Otherwise the list is fetched from Procore with the user's token and
 // stored. A 403 on the list is remembered for that user only and returned as
 // an unavailable set; the shared row is left alone. Token errors surface.
-// Any other failure serves the stale row when there is one and returns the
-// error when there is not.
+// Any other failure serves the stale row only to a user verified before for
+// that kind, and returns the error to everyone else.
 func (l *Lookups) Get(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kind LookupKind, force bool) (LookupSet, error) {
 	if err := l.requireAccess(ctx, userID, companyID, projectID); err != nil {
 		return LookupSet{}, err
@@ -198,13 +199,15 @@ func (l *Lookups) Get(ctx context.Context, userID uuid.UUID, companyID, projectI
 		switch {
 		case perr == nil:
 			return stale, nil
-		case errors.Is(perr, procore.ErrPermissionDenied):
+		case isDenial(perr):
 			return l.deny(userID, companyID, projectID, kind, perr), nil
 		case LookupErrorFatal(perr):
 			return LookupSet{}, perr
-		default:
-			l.log.Warn("lookup kind probe failed; serving cached rows", "kind", kind, "company_id", companyID, "project_id", projectID, "error", perr)
+		case l.wasVerified(userID, companyID, projectID, kind):
+			l.log.Warn("lookup kind probe failed; serving cached rows to a previously verified user", "kind", kind, "company_id", companyID, "project_id", projectID, "error", perr)
 			return stale, nil
+		default:
+			return LookupSet{}, perr
 		}
 	}
 
@@ -217,8 +220,8 @@ func (l *Lookups) Get(ctx context.Context, userID uuid.UUID, companyID, projectI
 		return l.deny(userID, companyID, projectID, kind, fetchErr), nil
 	case errors.Is(fetchErr, auth.ErrReauthRequired), errors.Is(fetchErr, procore.ErrUnauthorized):
 		return LookupSet{}, fetchErr
-	case haveStale:
-		l.log.Warn("lookup refresh failed", "kind", kind, "company_id", companyID, "project_id", projectID, "error", fetchErr)
+	case haveStale && (stale.Unavailable || l.wasVerified(userID, companyID, projectID, kind)):
+		l.log.Warn("lookup refresh failed; serving stale rows to a previously verified user", "kind", kind, "company_id", companyID, "project_id", projectID, "error", fetchErr)
 		return stale, nil
 	default:
 		return LookupSet{}, fetchErr
@@ -264,6 +267,22 @@ func (l *Lookups) isVerified(userID uuid.UUID, companyID, projectID int64, kind 
 	defer l.mu.Unlock()
 	at, ok := l.verified[denyKey{userID, companyID, projectID, kind}]
 	return ok && l.now().Sub(at) < l.ttl
+}
+
+// wasVerified reports whether the user ever proved they may read kind, even
+// if that proof is older than the TTL. A denial removes the proof.
+func (l *Lookups) wasVerified(userID uuid.UUID, companyID, projectID int64, kind LookupKind) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.verified[denyKey{userID, companyID, projectID, kind}]
+	return ok
+}
+
+// isDenial reports whether a probe error means the user may not read the
+// kind: a 403, or a 404 for the kind's list.
+func isDenial(err error) bool {
+	var api *procore.APIError
+	return errors.Is(err, procore.ErrPermissionDenied) || (errors.As(err, &api) && api.Status == http.StatusNotFound)
 }
 
 // probe asks Procore, with the user's own token, whether they may read

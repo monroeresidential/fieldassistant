@@ -243,12 +243,83 @@ func TestLookups_SharedRowNotServedWithoutKindVerification(t *testing.T) {
 		}
 	}
 
-	// A probe that fails for another reason serves the cached row.
+	// A 404 on the probe is a denial too.
 	userC := uuid.New()
 	tokens.setToken(userC, "tok-c")
-	fp.ErrForToken["tok-c"] = map[string]error{"ProbeKind": fmt.Errorf("probe: %w", procore.ErrUnavailable)}
-	if c, err := l.Get(ctx, userC, testCompany, testProject, KindUsers, false); err != nil || len(c.Rows) != 2 {
-		t.Fatalf("user C after a failed probe = %+v, %v; want the cached rows", c, err)
+	fp.ErrForToken["tok-c"] = map[string]error{"ProbeKind": &procore.APIError{Status: 404, Body: "not found"}}
+	if c, err := l.Get(ctx, userC, testCompany, testProject, KindUsers, false); err != nil || !c.Unavailable || len(c.Rows) != 0 {
+		t.Fatalf("user C after a 404 probe = %+v, %v; want unavailable with no rows", c, err)
+	}
+}
+
+// A probe that fails for a reason other than a denial does not serve the
+// shared row to a user never verified for the kind: the error surfaces.
+func TestLookups_ProbeError_UnverifiedUser_FailsClosed(t *testing.T) {
+	l, fp, _, _, tokens := newLookupsWithTokens(t)
+	fp.Users = twoUsers()
+	userA, userB := uuid.New(), uuid.New()
+	tokens.setToken(userA, "tok-a")
+	tokens.setToken(userB, "tok-b")
+	ctx := context.Background()
+	if _, err := l.Get(ctx, userA, testCompany, testProject, KindUsers, false); err != nil {
+		t.Fatal(err)
+	}
+	for name, perr := range map[string]error{
+		"network": fmt.Errorf("probe: %w", procore.ErrUnavailable),
+		"5xx":     &procore.APIError{Status: 503, Body: "down"},
+	} {
+		fp.ErrForToken["tok-b"] = map[string]error{"ProbeKind": perr}
+		set, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false)
+		if err == nil {
+			t.Errorf("%s: user B = %+v, want the probe error and no rows", name, set)
+		}
+		if len(set.Rows) != 0 {
+			t.Errorf("%s: user B got %d shared rows", name, len(set.Rows))
+		}
+	}
+	tokens.setErr(userB, errors.New("refresh failed"))
+	if set, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false); !errors.Is(err, ErrLookupToken) || len(set.Rows) != 0 {
+		t.Errorf("token error: user B = %+v, %v; want ErrLookupToken and no rows", set, err)
+	}
+}
+
+// A user verified before, whose verification has expired, is served the
+// cached row on a transient probe failure; the same holds for the stale
+// row after a failed full fetch. A never-verified user gets neither.
+func TestLookups_ProbeError_PreviouslyVerified_ServesStale(t *testing.T) {
+	l, fp, clock, _, tokens := newLookupsWithTokens(t)
+	fp.Users = twoUsers()
+	userA, userB, userC := uuid.New(), uuid.New(), uuid.New()
+	tokens.setToken(userA, "tok-a")
+	tokens.setToken(userB, "tok-b")
+	tokens.setToken(userC, "tok-c")
+	ctx := context.Background()
+	if _, err := l.Get(ctx, userA, testCompany, testProject, KindUsers, false); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false); err != nil || len(b.Rows) != 2 {
+		t.Fatalf("user B first = %+v, %v", b, err) // probe succeeds: B is verified
+	}
+
+	// B's verification expires; A refetches so the shared row is fresh.
+	clock.Advance(testTTL + time.Second)
+	if _, err := l.Get(ctx, userA, testCompany, testProject, KindUsers, false); err != nil {
+		t.Fatal(err)
+	}
+	fp.ErrForToken["tok-b"] = map[string]error{"ProbeKind": fmt.Errorf("probe: %w", procore.ErrUnavailable)}
+	if b, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false); err != nil || len(b.Rows) != 2 {
+		t.Fatalf("previously verified B after a failed probe = %+v, %v; want the cached rows", b, err)
+	}
+
+	// The shared row goes stale and every refetch fails: B (verified
+	// before) gets the stale row, C (never verified) gets the error.
+	clock.Advance(testTTL + time.Second)
+	fp.Err["ListProjectUsers"] = fmt.Errorf("list: %w", procore.ErrUnavailable)
+	if b, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false); err != nil || len(b.Rows) != 2 {
+		t.Fatalf("previously verified B after a failed fetch = %+v, %v; want the stale rows", b, err)
+	}
+	if c, err := l.Get(ctx, userC, testCompany, testProject, KindUsers, false); !errors.Is(err, procore.ErrUnavailable) || len(c.Rows) != 0 {
+		t.Fatalf("never-verified C after a failed fetch = %+v, %v; want ErrUnavailable and no rows", c, err)
 	}
 }
 
@@ -450,14 +521,17 @@ func TestLookups_RefreshFailure_ServesStale(t *testing.T) {
 	l, fp, clock, _ := newLookups(t)
 	fp.Users = twoUsers()
 	ctx := context.Background()
+	// The stale row is served only to a user verified for the kind before;
+	// TestLookups_ProbeError_PreviouslyVerified_ServesStale covers the rest.
+	user := uuid.New()
 
-	if _, err := l.Get(ctx, uuid.New(), testCompany, testProject, KindUsers, false); err != nil {
+	if _, err := l.Get(ctx, user, testCompany, testProject, KindUsers, false); err != nil {
 		t.Fatal(err)
 	}
 	clock.Advance(testTTL + time.Second)
 	fp.Err["ListProjectUsers"] = procore.ErrUnavailable
 
-	set, err := l.Get(ctx, uuid.New(), testCompany, testProject, KindUsers, false)
+	set, err := l.Get(ctx, user, testCompany, testProject, KindUsers, false)
 	if err != nil {
 		t.Fatalf("Get with stale row: %v", err)
 	}
