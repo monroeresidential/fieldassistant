@@ -63,6 +63,12 @@ func (*Feature) IDFields() []pipeline.IDField {
 
 func (*Feature) DateFields() []string { return []string{"due_date"} }
 
+// RequiredFields are what Procore needs to create an RFI. A flag on any of
+// them blocks submit whatever its reason.
+func (*Feature) RequiredFields() []string {
+	return []string{"subject", "question_body", "assignee_ids", "rfi_manager_id"}
+}
+
 // PayloadFields are the payload property names in OutputSchema, sorted.
 func (*Feature) PayloadFields() []string {
 	props := OutputSchema["properties"].(map[string]any)["payload"].(map[string]any)["properties"].(map[string]any)

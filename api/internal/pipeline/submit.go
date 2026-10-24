@@ -95,11 +95,12 @@ const maxSubmitPasses = 3
 // Submit queues the user's draft for posting to Procore. A submitted draft
 // returns AlreadySubmitted; a submitting draft returns its job while that
 // job can still run. Otherwise the payload is validated against freshly
-// warmed lookups (see revalidate), and any unresolved field, including an
-// earlier flag on a field the reviewer has not changed, fails with
-// *ErrUnresolved. When that validation differs from what the draft stores,
-// it is stored first as SaveEdits would, so the draft shows the fields the
-// error names.
+// warmed lookups (see revalidate), and any blocking unresolved field (see
+// markBlocking), including an earlier flag on a field the reviewer has not
+// changed, fails with *ErrUnresolved. Advisory flags do not stop the submit
+// and stay on the draft. When that validation differs from what the draft
+// stores, it is stored first as SaveEdits would, so the draft shows the
+// fields the error names.
 //
 // A valid draft moves to submitting, its job is inserted and the job ID
 // stored in one transaction, so a draft is never submitting without a job
@@ -145,25 +146,25 @@ func (d *Drafts) Submit(ctx context.Context, userID, id uuid.UUID, q SubmitQueue
 		if err != nil {
 			return SubmitOutcome{}, err
 		}
-		if len(unresolved) > 0 {
+		if len(unresolved) > 0 && (!sameJSON(payload, validated) || !sameJSON(cur.Unresolved, unresolved)) {
 			// Store what this validation found (a due date that has since
 			// passed, an ID gone from the lookups), so the draft shows the
-			// fields the error names.
-			if !sameJSON(payload, validated) || !sameJSON(cur.Unresolved, unresolved) {
-				_, err := d.storeEdits(ctx, cur, validated, unresolved, true)
-				if errors.Is(err, pgx.ErrNoRows) {
-					continue // edited or submitted meanwhile; look again
-				}
-				if err != nil {
-					return SubmitOutcome{}, err
-				}
+			// fields the error names, and so a draft submitted with only
+			// advisory flags posts the payload those flags describe.
+			saved, err := d.storeEdits(ctx, cur, validated, unresolved, true)
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue // edited or submitted meanwhile; look again
 			}
-			fields := make([]string, 0, len(unresolved))
-			for _, u := range unresolved {
-				fields = append(fields, u.Field)
+			if err != nil {
+				return SubmitOutcome{}, err
 			}
+			cur = saved
+		}
+		if fields := blockingFields(unresolved); len(fields) > 0 {
 			return SubmitOutcome{}, &ErrUnresolved{Fields: fields}
 		}
+		// Advisory flags stay on the draft; the review screen still shows
+		// them after the submit.
 		if d.beforeMarkSubmitting != nil {
 			d.beforeMarkSubmitting()
 		}
@@ -289,7 +290,7 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 		}
 	}
 	validated, unresolved = Validate(f, validated, unresolved, sets, today, loc)
-	return validated, unresolved, nil
+	return validated, markBlocking(f, unresolved), nil
 }
 
 // RunSubmit is the submit job body: it posts a submitting draft to Procore
@@ -641,6 +642,9 @@ func (d *Drafts) failSubmit(ctx context.Context, cur Draft, fail submitFailure) 
 			unresolved = append(unresolved, u)
 		}
 	}
+	// procore_validation entries always block; a nil feature (unknown name)
+	// marks by reason only.
+	unresolved = markBlocking(d.features[cur.Feature], unresolved)
 	unresolvedJSON, err := json.Marshal(unresolved)
 	if err != nil {
 		return fmt.Errorf("pipeline: encode unresolved: %w", err)

@@ -677,3 +677,31 @@ func TestParseKind(t *testing.T) {
 		t.Error("ParseKind accepted unknown kind")
 	}
 }
+
+// A kind whose Procore tool is off answers its list with a 404 and an empty
+// body. That is a per-user denial like a 403, not a failure.
+func TestLookups_Fetch404_Unavailable(t *testing.T) {
+	l, fp, _, st := newLookups(t)
+	fp.Err["ListSpecSections"] = &procore.APIError{Status: 404}
+	ctx := context.Background()
+	user := uuid.New()
+
+	set, err := l.Get(ctx, user, testCompany, testProject, KindSpecSections, false)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !set.Unavailable || len(set.Rows) != 0 || set.Reason != "tool not enabled on this project" {
+		t.Fatalf("set = %+v, want unavailable with the tool-off reason and no rows", set)
+	}
+	if _, err := st.Q.GetLookup(ctx, db.GetLookupParams{CompanyID: testCompany, ProjectID: testProject, Kind: string(KindSpecSections)}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("shared row err = %v, want no row written", err)
+	}
+
+	again, err := l.Get(ctx, user, testCompany, testProject, KindSpecSections, false)
+	if err != nil || !again.Unavailable {
+		t.Fatalf("second Get = %+v, %v; want the remembered denial", again, err)
+	}
+	if n := fp.CallCount("ListSpecSections"); n != 1 {
+		t.Fatalf("calls = %d, want 1", n)
+	}
+}

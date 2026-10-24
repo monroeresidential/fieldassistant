@@ -149,6 +149,41 @@ func TestCreateDraft_ReturnsDraftResponse(t *testing.T) {
 	}
 }
 
+// Every unresolved entry carries blocking: true for a required field, false
+// for a not_found flag on an optional one, on create and on a later GET.
+func TestDraftResponse_UnresolvedBlocking(t *testing.T) {
+	ts, token := newDraftServer(t)
+	ts.LLM.Steps = []llmtest.Step{{Final: `{"payload":{"subject":"S","question_body":"Q","assignee_ids":[]},` +
+		`"unresolved":[{"field":"assignee_ids","reason":"not_found","candidates":[]},{"field":"location_id","reason":"not_found","candidates":[]}],"confidence":{}}`}}
+	id := uuid.New()
+	createDraft(t, ts.Server, token, id)
+
+	res, b := draftCall(t, ts.Server, http.MethodGet, "/v1/drafts/"+id.String(), token, draftCompany, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET: status %d; body %s", res.StatusCode, b)
+	}
+	var raw struct {
+		Unresolved []struct {
+			Field    string `json:"field"`
+			Blocking *bool  `json:"blocking"`
+		} `json:"unresolved"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("decode %s: %v", b, err)
+	}
+	want := map[string]bool{"assignee_ids": true, "location_id": false}
+	if len(raw.Unresolved) != len(want) {
+		t.Fatalf("unresolved = %s", b)
+	}
+	for _, u := range raw.Unresolved {
+		if u.Blocking == nil {
+			t.Errorf("%s has no blocking key: %s", u.Field, b)
+		} else if *u.Blocking != want[u.Field] {
+			t.Errorf("%s blocking = %v, want %v", u.Field, *u.Blocking, want[u.Field])
+		}
+	}
+}
+
 func TestCreateDraft_CompanyNotVisible_403(t *testing.T) {
 	ts, token := newDraftServer(t)
 	res, b := draftCall(t, ts.Server, http.MethodPost, "/v1/drafts", token, 8, createDraftBody(uuid.New()))

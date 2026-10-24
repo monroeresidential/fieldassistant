@@ -421,6 +421,8 @@ type TokenPair struct {
 
 // UnresolvedField defines model for UnresolvedField.
 type UnresolvedField struct {
+	// Blocking True when submit refuses until this field is settled: the field is required to create the record, or its value is wrong (not_in_lookup, invalid_value, procore_validation). False for an advisory flag (not_found, ambiguous, date_unparseable on an optional field), which is shown but does not block submit.
+	Blocking   bool                  `json:"blocking"`
 	Candidates []LookupRow           `json:"candidates"`
 	Field      string                `json:"field"`
 	Message    *string               `json:"message,omitempty"`

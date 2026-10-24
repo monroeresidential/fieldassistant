@@ -40,6 +40,9 @@ func (draftsFeature) DateFields() []string { return []string{"due_date"} }
 func (draftsFeature) PayloadFields() []string {
 	return []string{"subject", "question_body", "assignee_ids", "rfi_manager_id", "location_id", "due_date", "schedule_impact", "draft"}
 }
+func (draftsFeature) RequiredFields() []string {
+	return []string{"subject", "question_body", "assignee_ids", "rfi_manager_id"}
+}
 func (draftsFeature) Prompt() llm.Prompt {
 	return llm.Prompt{Text: "system prompt", Version: "abcdef012345"}
 }
@@ -255,8 +258,8 @@ func TestCreate_NormalizesBadModelOutput(t *testing.T) {
 	}
 	want := map[string]Unresolved{
 		"location_id":     {Field: "location_id", Reason: ReasonAmbiguous, Candidates: []LookupRow{}},
-		"schedule_impact": {Field: "schedule_impact", Reason: ReasonInvalidValue, Message: "invalid schedule impact status", Candidates: []LookupRow{}},
-		"assignee_ids":    {Field: "assignee_ids", Reason: ReasonNotInLookup, Message: "A value was not in this project's lookup list", Candidates: []LookupRow{}},
+		"schedule_impact": {Field: "schedule_impact", Reason: ReasonInvalidValue, Message: "invalid schedule impact status", Candidates: []LookupRow{}, Blocking: true},
+		"assignee_ids":    {Field: "assignee_ids", Reason: ReasonNotInLookup, Message: "A value was not in this project's lookup list", Candidates: []LookupRow{}, Blocking: true},
 	}
 	if len(d.Unresolved) != len(want) {
 		t.Errorf("unresolved = %+v", d.Unresolved)

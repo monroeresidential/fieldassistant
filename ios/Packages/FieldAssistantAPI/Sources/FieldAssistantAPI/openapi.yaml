@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Field Assistant API
-  version: 1.4.1
+  version: 1.4.2
 servers:
   - url: /v1
 security:
@@ -798,7 +798,7 @@ components:
           type: boolean
     UnresolvedField:
       type: object
-      required: [field, reason, candidates]
+      required: [field, reason, candidates, blocking]
       properties:
         field:
           type: string
@@ -811,6 +811,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LookupRow'
+        blocking:
+          type: boolean
+          description: >-
+            True when submit refuses until this field is settled: the field is
+            required to create the record, or its value is wrong
+            (not_in_lookup, invalid_value, procore_validation). False for an
+            advisory flag (not_found, ambiguous, date_unparseable on an
+            optional field), which is shown but does not block submit.
     DraftResult:
       type: object
       required: [procore_id]
