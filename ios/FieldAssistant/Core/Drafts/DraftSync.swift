@@ -21,6 +21,10 @@ final class DraftSync {
     /// Set when a trigger arrives during a pass; the pass then runs once more before it ends.
     private var passAgain = false
 
+    /// A `submitting` draft stamped this recently may be a submit still on its way to the server
+    /// (Review stamps it before the POST), so reconciliation skips it. Covers URLSession's 60 s timeout.
+    static let inFlightWindow: TimeInterval = 90
+
     init(
         store: DraftStore,
         service: @escaping @MainActor () -> DraftService,
@@ -101,8 +105,9 @@ final class DraftSync {
     /// Fetches each submitting draft and records where the server has it. A draft still
     /// `submitting` there is left as it is; `submitted` also deletes its files.
     private func reconcileSubmitting(owner: Int64) async {
+        let inFlightSince = Date.now.addingTimeInterval(-Self.inFlightWindow)
         for draft in store.drafts(withStatus: .submitting, owner: owner) {
-            guard draft.status == .submitting else { continue }
+            guard draft.status == .submitting, draft.updatedAt < inFlightSince else { continue }
             let response: DraftResponse
             do {
                 response = try await service().get(id: draft.id, companyID: draft.companyID)

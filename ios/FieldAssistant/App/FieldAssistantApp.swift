@@ -29,8 +29,8 @@ struct FieldAssistantApp: App {
                 .environment(appState)
                 .task { await appState.bootstrap() }
                 .onChange(of: scenePhase) { _, phase in
-                    // Coming back to the app is a chance to send waiting drafts and settle submitting ones.
-                    if phase == .active { Task { await appState.draftSync?.runOnce() } }
+                    // Coming back to the app is a chance to reconnect, send waiting drafts and settle submitting ones.
+                    if phase == .active { Task { await appState.becameActive() } }
                 }
         }
         .modelContainer(container)

@@ -76,7 +76,8 @@ final class DraftSyncTests: XCTestCase {
 
     @MainActor
     func testSubmittingDraftReconcilesOnLaunch() async throws {
-        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "t")
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "t",
+                               capturedAt: .now.addingTimeInterval(-600))
         let folder = try DraftFiles.directory(for: draft.id)
         try Data("audio".utf8).write(to: DraftFiles.audioURL(for: draft.id))
         let transport = ScriptedTransport([.response(APIStub.draft(id: draft.id, status: "submitted"))])
@@ -94,9 +95,9 @@ final class DraftSyncTests: XCTestCase {
     @MainActor
     func testSubmittingDraftReconcilesToFailedAndStillSubmittingIsLeftAlone() async throws {
         let failed = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "a",
-                                capturedAt: .now.addingTimeInterval(-120))
+                                capturedAt: .now.addingTimeInterval(-600))
         let running = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "b",
-                                 capturedAt: .now.addingTimeInterval(-60))
+                                 capturedAt: .now.addingTimeInterval(-300))
         let runningFolder = try DraftFiles.directory(for: running.id)
         defer { DraftFiles.removeAll(for: running.id) }
         let transport = ScriptedTransport([
@@ -111,6 +112,61 @@ final class DraftSyncTests: XCTestCase {
         XCTAssertEqual(running.status, .submitting)
         XCTAssertNil(running.subject, "a draft still submitting is left as it was")
         XCTAssertTrue(FileManager.default.fileExists(atPath: runningFolder.path(percentEncoded: false)))
+    }
+
+    @MainActor
+    func testReconcileSkipsDraftSubmittedMomentsAgo() async throws {
+        // Review marks the draft submitting (and stamps it) before its POST reaches the server; a
+        // pass in that window would GET `reviewed` and fold the live submit back to `draft`.
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "t",
+                               capturedAt: .now.addingTimeInterval(-600))
+        draft.updatedAt = .now
+        let transport = ScriptedTransport([.response(APIStub.draft(id: draft.id, status: "reviewed"))])
+        let (_, sync) = makeSync(transport: transport, drafts: [draft])
+
+        await sync.runOnce()
+
+        XCTAssertTrue(transport.requests.isEmpty, "an in-flight submit is not fetched")
+        XCTAssertEqual(draft.status, .submitting)
+    }
+
+    @MainActor
+    func testOfflineLaunchThenReachableSendsWaitingDrafts() async throws {
+        UserDefaults(suiteName: suiteName)!.set(NSNumber(value: Int64(42)), forKey: "draftOwnerProcoreUserID")
+        let transport = ScriptedTransport([.failure(URLError(.notConnectedToInternet))])
+        let reachability = FakeReachability(isReachable: false)
+        let state = makeState(transport: transport, reachability: reachability)
+        self.state = state
+        let draft = waitingDraft(transcript: "captured with no signal", minutesAgo: 1)
+        try state.drafts.insert(draft)
+
+        await state.bootstrap()
+        XCTAssertEqual(state.phase, .offline)
+        XCTAssertNil(state.draftSync)
+
+        transport.append(.response(APIStub.me(procoreUserID: 42)))
+        transport.append(.response(APIStub.draft(id: draft.id)))
+        reachability.set(true)
+        try await waitUntil { draft.status == .draft }
+
+        XCTAssertEqual(transport.requests.map(\.path), ["/me", "/me", "/drafts"])
+        XCTAssertEqual(transport.requests.last?.method, .post)
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+        XCTAssertNotNil(state.draftSync)
+    }
+
+    @MainActor
+    func testBecomingActiveWhileOfflineRetriesSignIn() async throws {
+        let transport = ScriptedTransport([.failure(URLError(.notConnectedToInternet)), .response(APIStub.me(procoreUserID: 42))])
+        let state = makeState(transport: transport, reachability: FakeReachability(isReachable: true))
+        self.state = state
+        await state.bootstrap()
+        XCTAssertEqual(state.phase, .offline)
+
+        await state.becameActive()
+
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+        XCTAssertNotNil(state.draftSync)
     }
 
     @MainActor
@@ -303,6 +359,10 @@ final class ScriptedTransport: ClientTransport, @unchecked Sendable {
 
     init(_ script: [Step]) {
         self.script = script
+    }
+
+    func append(_ step: Step) {
+        lock.withLock { script.append(step) }
     }
 
     var requests: [HTTPRequest] { lock.withLock { recorded } }

@@ -11,8 +11,8 @@ protocol ReachabilityProviding: AnyObject, Sendable {
     var updates: AsyncStream<Bool> { get }
 }
 
-/// `ReachabilityProviding` over `NWPathMonitor`, which reports on a background queue; the value is
-/// published on the main actor so views observe it.
+/// `ReachabilityProviding` over `NWPathMonitor`. The monitor reports on the main queue, so changes
+/// arrive in order and the value is published on the main actor for views to observe.
 @Observable
 @MainActor
 final class Reachability: ReachabilityProviding {
@@ -25,9 +25,9 @@ final class Reachability: ReachabilityProviding {
     init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let reachable = path.status == .satisfied
-            Task { @MainActor [weak self] in self?.update(reachable) }
+            MainActor.assumeIsolated { self?.update(reachable) }
         }
-        monitor.start(queue: DispatchQueue(label: "tools.fieldassistant.reachability"))
+        monitor.start(queue: .main)
     }
 
     deinit {

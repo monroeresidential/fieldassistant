@@ -181,6 +181,8 @@ final class RFIReviewModel {
 
         let previous = draft.status
         draft.status = .submitting
+        // Sync leaves a submit this recent alone: until the POST lands the server still says `reviewed`.
+        draft.updatedAt = .now
         try? store.save()
 
         let start: DraftService.SubmitStart

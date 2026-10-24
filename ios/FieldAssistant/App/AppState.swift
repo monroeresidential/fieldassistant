@@ -80,6 +80,8 @@ final class AppState {
     @ObservationIgnored let reachability: ReachabilityProviding
     /// Resends waiting drafts and reconciles submitting ones while a user is signed in; `nil` otherwise.
     @ObservationIgnored private(set) var draftSync: DraftSync?
+    /// While the session is `offline`, retries `/me` each time the network path comes back.
+    @ObservationIgnored private var offlineRetry: Task<Void, Never>?
 
     var draftService: DraftService { DraftService(client: client) }
 
@@ -195,6 +197,16 @@ final class AppState {
         }
     }
 
+    /// The app came to the foreground: retry the session if it is offline (a successful `/me`
+    /// starts the sync), otherwise run a sync pass.
+    func becameActive() async {
+        if phase == .offline {
+            await bootstrap()
+        } else {
+            await draftSync?.runOnce()
+        }
+    }
+
     // MARK: - Private
 
     private func loadMe() async {
@@ -207,14 +219,14 @@ final class AppState {
             return
         } catch {
             // Offline or transport failure: a field user must not be logged out for that.
-            phase = .offline
+            enterOffline()
             return
         }
 
         switch output {
         case .ok(let ok):
             guard let user = try? ok.body.json else {
-                phase = .offline
+                enterOffline()
                 return
             }
             if user.reauth_required {
@@ -226,13 +238,16 @@ final class AppState {
             if selectedProjectID == nil, let id = user.last_project_id { selectedProjectID = id }
             draftOwnerID = user.procore_user_id
             phase = .signedIn(user)
+            // Back online (by this retry or another path): the offline listener's job is done.
+            offlineRetry?.cancel()
+            offlineRetry = nil
             prefetchLookups()
             startDraftSync()
         case .unauthorized:
             try? store.clear()
             endSession()
         case .default:
-            phase = .offline
+            enterOffline()
         }
     }
 
@@ -249,6 +264,8 @@ final class AppState {
     /// The cached lookups belong to the signed-in user too, so they are deleted here as well.
     private func endSession() {
         cancelPrefetch()
+        offlineRetry?.cancel()
+        offlineRetry = nil
         draftSync?.stop()
         draftSync = nil
         lookups.clearAll()
@@ -267,6 +284,21 @@ final class AppState {
         guard let companyID = selectedCompanyID, let projectID = selectedProjectID else { return }
         let lookups: LookupStore = lookups
         prefetchTask = Task { await lookups.prefetch(companyID: companyID, projectID: projectID) }
+    }
+
+    /// A stored session that cannot reach the server. Waits for the network path to come back and
+    /// bootstraps again; once `/me` succeeds the sync starts and sends what is waiting, and the
+    /// listener is cancelled. Signing out cancels it too.
+    private func enterOffline() {
+        phase = .offline
+        guard offlineRetry == nil else { return }
+        let updates = reachability.updates
+        offlineRetry = Task { [weak self] in
+            for await reachable in updates where reachable {
+                guard let self, phase == .offline else { return }
+                await bootstrap()
+            }
+        }
     }
 
     /// Starts a fresh sync for the signed-in user, replacing any running one.
