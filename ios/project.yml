@@ -1,6 +1,6 @@
 name: FieldAssistant
 options:
-  bundleIdPrefix: com.monroeresidential
+  bundleIdPrefix: tools.fieldassistant
   deploymentTarget:
     iOS: "17.0"
 configs:
@@ -30,7 +30,7 @@ targets:
       base:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
-        # DEVELOPMENT_TEAM: # TODO: Apple Team ID (needed for fastlane beta)
+        DEVELOPMENT_TEAM: PR6KG6PZJN # Field Assistant Apple team
     info:
       path: FieldAssistant/Resources/Info.plist
       properties:
@@ -57,7 +57,7 @@ targets:
       - path: FieldAssistantTests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.monroeresidential.fieldassistant.tests
+        PRODUCT_BUNDLE_IDENTIFIER: tools.fieldassistant.app.tests
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         GENERATE_INFOPLIST_FILE: YES
@@ -71,7 +71,7 @@ targets:
       - path: FieldAssistantUITests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.monroeresidential.fieldassistant.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: tools.fieldassistant.app.uitests
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: FieldAssistant

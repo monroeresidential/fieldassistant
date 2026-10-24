@@ -15,12 +15,12 @@ platform :ios do
 
   desc "Build the Dev configuration (api-dev, DEV badge, .dev bundle id) and upload it to TestFlight"
   lane :beta_dev do
-    build_and_upload(configuration: "Dev", app_identifier: "com.monroeresidential.fieldassistant.dev")
+    build_and_upload(configuration: "Dev", app_identifier: "tools.fieldassistant.app.dev")
   end
 
   desc "Build the Prod configuration and upload it to TestFlight"
   lane :beta_prod do
-    build_and_upload(configuration: "Prod", app_identifier: "com.monroeresidential.fieldassistant")
+    build_and_upload(configuration: "Prod", app_identifier: "tools.fieldassistant.app")
   end
 
   # Builds `configuration` and uploads it to the App Store Connect app `app_identifier`.

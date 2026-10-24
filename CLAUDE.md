@@ -45,7 +45,7 @@ Single iOS test class: add `-only-testing:FieldAssistantTests/<Class>`.
 Fastlane (from `ios/`, via `gem install fastlane`, `brew install fastlane` or `bundle exec`):
 
 - `fastlane test`: regenerates the project and runs the unit tests on iPhone 17.
-- `fastlane beta_dev` / `fastlane beta_prod`: build the Dev or Prod configuration and upload to TestFlight. Need `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 App Store Connect key) in the environment, and an Apple Team ID, which is not set yet: add `DEVELOPMENT_TEAM` to the app target in `ios/project.yml` (a commented-out placeholder marks the spot).
+- `fastlane beta_dev` / `fastlane beta_prod`: build the Dev or Prod configuration and upload to TestFlight. Need `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_CONTENT` (base64 App Store Connect key) in the environment, and the Apple Team ID, which is set as `DEVELOPMENT_TEAM` on the app target in `ios/project.yml`.
 - iOS configurations (`ios/Config/*.xcconfig`): `Local` talks to `localhost:8080` and is what the scheme runs and tests; `Dev` talks to `api-dev.fieldassistant.tools`, shows a DEV badge, and uses the `.dev` bundle id and `fieldassistant-dev` URL scheme so it installs beside Prod; `Prod` talks to `api.fieldassistant.tools`.
 
 Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/workflows/deploy-api.yml`.
@@ -135,4 +135,4 @@ Decided in the decisions doc: no OpenTelemetry or Prometheus (slog + `/healthz`)
 
 ## Open decisions
 
-Decided: the production domain is `fieldassistant.tools` (API at `api.fieldassistant.tools`). Still unresolved: Spanish dictation, the bundle identifier and Apple Team ID (`com.monroeresidential.fieldassistant` is a placeholder), and who pilots the first TestFlight build. Do not silently resolve these in code; surface them.
+Decided: the production domain is `fieldassistant.tools` (API at `api.fieldassistant.tools`). The bundle identifiers (`tools.fieldassistant.app`, `tools.fieldassistant.app.dev`) and Apple Team ID (`PR6KG6PZJN`) are decided (2026-10-24). Still unresolved: Spanish dictation and who pilots the first TestFlight build. Do not silently resolve these in code; surface them.

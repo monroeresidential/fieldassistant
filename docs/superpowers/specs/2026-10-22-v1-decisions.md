@@ -65,7 +65,7 @@ a second client while the contract is still moving doubles sync work.
 ## Still open (from the spec)
 
 - Spanish dictation for v1 crews.
-- App name and bundle identifier.
+- App name and bundle identifier: decided 2026-10-24, see below.
 - Who pilots the first TestFlight build and on which project.
 - "Dictate and fire" for trusted users (deferred past v1).
 
@@ -87,3 +87,11 @@ Two deployed environments on one droplet, as two Compose stacks with separate da
 iOS gets three build configurations: `Local` (localhost backend), `Dev` (`api-dev`, with a visible DEV badge; the TestFlight build the site team tests against sandbox data), `Prod`.
 
 Supersedes the earlier "dev (local) and prod only" line. Move dev to its own droplet only if it ever interferes with production.
+
+## Bundle identifier and Team (decided 2026-10-24)
+
+- App name: "Field Assistant".
+- Bundle identifiers: `tools.fieldassistant.app` (Prod and Local) and `tools.fieldassistant.app.dev` (Dev). Test bundles are `tools.fieldassistant.app.tests` and `tools.fieldassistant.app.uitests`.
+- Apple Team ID: `PR6KG6PZJN`, set as `DEVELOPMENT_TEAM` in `ios/project.yml`.
+- Both bundle IDs and Drew's iPhone are registered in App Store Connect via the `asc` CLI.
+- URL schemes (`fieldassistant`, `fieldassistant-dev`) are unchanged.
