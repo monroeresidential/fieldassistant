@@ -9,9 +9,12 @@ final class FakeTranscriber: Transcriber {
     private(set) var continuation: AsyncThrowingStream<String, Error>.Continuation?
     private(set) var startedAudioFile: URL?
     private(set) var stopCount = 0
+    /// When false, `stop()` leaves the stream open so the test can deliver a final result after it.
+    var finishesOnStop: Bool
 
-    init(authorization: TranscriberAuthorization = .granted) {
+    init(authorization: TranscriberAuthorization = .granted, finishesOnStop: Bool = true) {
         self.authorization = authorization
+        self.finishesOnStop = finishesOnStop
     }
 
     func requestAuthorization() async -> TranscriberAuthorization {
@@ -27,7 +30,7 @@ final class FakeTranscriber: Transcriber {
 
     func stop() {
         stopCount += 1
-        continuation?.finish()
+        if finishesOnStop { continuation?.finish() }
     }
 }
 

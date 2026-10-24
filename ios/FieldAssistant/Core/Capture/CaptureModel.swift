@@ -25,6 +25,12 @@ final class CaptureModel {
     @ObservationIgnored private let location: LocationOnce?
     @ObservationIgnored private let clock: any Clock<Duration>
     @ObservationIgnored private var timerTask: Task<Void, Never>?
+    /// Whether a recognizer stream was started and has not finished yet.
+    @ObservationIgnored private var listening = false
+    /// Callers of `waitForFinalTranscript` parked until the stream finishes or their timeout fires.
+    @ObservationIgnored private var finalWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    /// Set once the transcript was typed or the capture discarded; later recognizer results are dropped.
+    @ObservationIgnored private var ignoresRecognizer = false
 
     init(
         draftID: UUID = UUID(),
@@ -62,6 +68,7 @@ final class CaptureModel {
             return
         }
         state = .recording
+        listening = true
         Task { await listen(to: stream) }
         timerTask = Task { await tick() }
         if let location, coordinate == nil {
@@ -74,6 +81,29 @@ final class CaptureModel {
         transcriber.stop()
         timerTask?.cancel()
         state = .stopped
+    }
+
+    /// Waits for the recognizer's final result after `stop()`, which can land a moment later and
+    /// carries the punctuated text. Returns at once when no stream is running, and after `timeout`
+    /// if the recognizer never finishes.
+    func waitForFinalTranscript(timeout: Duration = .seconds(3)) async {
+        guard listening else { return }
+        let id = UUID()
+        let timer = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            self?.resumeWaiter(id)
+        }
+        await withCheckedContinuation { finalWaiters[id] = $0 }
+        timer.cancel()
+    }
+
+    /// Abandons the capture: stops the microphone and deletes the audio and photos on disk.
+    func discard() {
+        ignoresRecognizer = true
+        if state == .recording { transcriber.stop() }
+        timerTask?.cancel()
+        photos = []
+        DraftFiles.removeAll(for: draftID)
     }
 
     func addPhoto(_ image: UIImage) throws {
@@ -101,7 +131,13 @@ final class CaptureModel {
 
     #if DEBUG
     /// Skips the microphone; for the simulator and demos in debug builds.
+    /// Stops the microphone first if it is running, so a late recognizer result cannot replace the text.
     func setTypedTranscript(_ text: String) {
+        ignoresRecognizer = true
+        if state == .recording {
+            transcriber.stop()
+            timerTask?.cancel()
+        }
         transcript = text
         state = .stopped
     }
@@ -111,17 +147,26 @@ final class CaptureModel {
     /// `stop()`. An error only counts while still recording; after stop it is the recognizer
     /// winding down (for example, no speech heard).
     private func listen(to stream: AsyncThrowingStream<String, Error>) async {
+        defer {
+            listening = false
+            for id in Array(finalWaiters.keys) { resumeWaiter(id) }
+        }
         do {
-            for try await text in stream {
+            for try await text in stream where !ignoresRecognizer {
                 transcript = text
             }
         } catch {
+            guard !ignoresRecognizer else { return }
             if state == .recording {
                 transcriber.stop()
                 timerTask?.cancel()
                 state = .failed(error.localizedDescription)
             }
         }
+    }
+
+    private func resumeWaiter(_ id: UUID) {
+        finalWaiters.removeValue(forKey: id)?.resume()
     }
 
     /// Adds a second to `elapsed` each second of the injected clock. It counts ticks rather than

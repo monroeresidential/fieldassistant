@@ -74,6 +74,15 @@ enum APIFailure: Error, Equatable {
         }
     }
 
+    /// A sentence to show a field user.
+    var userMessage: String {
+        switch self {
+        case .permissionDenied(let message), .validation(let message), .server(let message): message
+        case .reauthRequired: "Your session expired. Sign in again."
+        case .offline: "No signal. Try again when you have a connection."
+        }
+    }
+
     private static let offlineCodes: Set<URLError.Code> = [
         .notConnectedToInternet, .timedOut, .cannotConnectToHost, .networkConnectionLost,
     ]

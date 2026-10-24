@@ -18,8 +18,9 @@ struct DraftService: Sendable {
     let client: Client
 
     /// Sends the captured transcript for extraction. The local id is the server id, so a retried
-    /// create returns the existing draft instead of making a second one.
-    func create(_ draft: LocalDraft) async throws -> DraftResponse {
+    /// create returns the existing draft instead of making a second one. Runs on the caller's
+    /// actor, since `LocalDraft` is a SwiftData model that must stay on the actor that owns it.
+    func create(_ draft: LocalDraft, isolation: isolated (any Actor)? = #isolation) async throws -> DraftResponse {
         var location: Components.Schemas.CreateDraftRequest.locationPayload?
         if let lat = draft.latitude, let lng = draft.longitude {
             location = .init(lat: lat, lng: lng)

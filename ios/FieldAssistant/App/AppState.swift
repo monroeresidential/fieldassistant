@@ -23,7 +23,20 @@ final class AppState {
         static let selectedProjectID = "selectedProjectID"
     }
 
+    /// What happened when a captured draft was sent for extraction.
+    enum SendOutcome: Equatable {
+        /// The server extracted it; the draft holds the response and opens in Review.
+        case sent
+        /// No connection; the draft stays `waiting` until it can be sent.
+        case waiting
+        /// The server refused it; the draft stays `waiting` with the message.
+        case failed(String)
+    }
+
     private(set) var phase: Phase = .loading
+    /// True after a send found no connection, until a later send gets through. Home shows the
+    /// "No signal" banner while it is set and a draft is waiting.
+    private(set) var sendingWaitsForSignal = false
     private(set) var isSigningIn = false
     /// Why the last sign-in attempt failed, or `nil`. `.cancelled` means the user closed the sheet.
     private(set) var signInError: AuthError?
@@ -52,6 +65,11 @@ final class AppState {
     @ObservationIgnored private(set) var lookups: LookupStore!
     /// The running lookup prefetch, if any. A new selection or the end of the session cancels it.
     @ObservationIgnored private(set) var prefetchTask: Task<Void, Never>?
+    /// The drafts captured on this phone.
+    @ObservationIgnored let drafts: DraftStore
+    @ObservationIgnored let settings: Settings
+
+    var draftService: DraftService { DraftService(client: client) }
 
     init(
         store: SessionStore,
@@ -63,6 +81,8 @@ final class AppState {
     ) {
         self.store = store
         self.defaults = defaults
+        drafts = DraftStore(context: modelContext)
+        settings = Settings(defaults: defaults)
         selectedCompanyID = Self.storedID(forKey: Keys.selectedCompanyID, in: defaults)
         selectedProjectID = Self.storedID(forKey: Keys.selectedProjectID, in: defaults)
 
@@ -130,6 +150,34 @@ final class AppState {
         cancelPrefetch()
         await authService.signOut()
         endSession()
+    }
+
+    /// Sends a stored draft's transcript for extraction. The draft's id makes a resend idempotent.
+    func send(_ draft: LocalDraft) async -> SendOutcome {
+        do {
+            let response = try await draftService.create(draft)
+            draft.apply(response)
+            draft.errorMessage = nil
+            try? drafts.save()
+            sendingWaitsForSignal = false
+            return .sent
+        } catch {
+            let failure = APIFailure(error)
+            if failure == .offline {
+                sendingWaitsForSignal = true
+                return .waiting
+            }
+            draft.errorMessage = failure.userMessage
+            try? drafts.save()
+            return .failed(failure.userMessage)
+        }
+    }
+
+    /// Sends every waiting draft of a project, oldest first, stopping at the first one that finds no connection.
+    func sendWaiting(projectID: Int64) async {
+        for draft in drafts.drafts(withStatus: .waiting) where draft.projectID == projectID {
+            if await send(draft) == .waiting { return }
+        }
     }
 
     // MARK: - Private
@@ -232,3 +280,18 @@ final class AppState {
         }
     }
 }
+
+#if DEBUG
+extension AppState {
+    /// A signed-out app state for SwiftUI previews: no server, preview-only defaults.
+    static func preview(container: ModelContainer) -> AppState {
+        AppState(
+            store: KeychainSessionStore(),
+            presenter: ASWebAuthenticationSessionPresenter(),
+            baseURL: URL(string: "https://example.invalid/v1")!,
+            modelContext: container.mainContext,
+            defaults: UserDefaults(suiteName: "preview") ?? .standard
+        )
+    }
+}
+#endif

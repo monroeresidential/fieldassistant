@@ -119,7 +119,68 @@ final class CaptureModelTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(draft.capturedAt, before)
     }
 
+    func testWaitForFinalTranscriptTakesTheResultAfterStop() async throws {
+        let transcriber = FakeTranscriber(finishesOnStop: false)
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        let continuation = try XCTUnwrap(transcriber.continuation)
+        continuation.yield("twisted column at the air handler")
+        await waitUntil { !model.transcript.isEmpty }
+        model.stop()
+
+        let waiting = Task { await model.waitForFinalTranscript(timeout: .seconds(5)) }
+        continuation.yield("Twisted column at the air handler.")
+        continuation.finish()
+        await waiting.value
+
+        XCTAssertEqual(model.transcript, "Twisted column at the air handler.")
+        XCTAssertTrue(model.canBuild)
+    }
+
+    func testWaitForFinalTranscriptGivesUpAfterTimeout() async throws {
+        let transcriber = FakeTranscriber(finishesOnStop: false)
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        try XCTUnwrap(transcriber.continuation).yield("slab edge")
+        await waitUntil { !model.transcript.isEmpty }
+        model.stop()
+
+        await model.waitForFinalTranscript(timeout: .milliseconds(50))
+
+        XCTAssertEqual(model.transcript, "slab edge")
+    }
+
+    func testDiscardStopsRecordingAndRemovesFiles() async throws {
+        let transcriber = FakeTranscriber()
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        try model.addPhoto(Self.image())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: DraftFiles.audioURL(for: model.draftID).deletingLastPathComponent().path))
+
+        model.discard()
+
+        XCTAssertEqual(transcriber.stopCount, 1)
+        XCTAssertTrue(model.photos.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: DraftFiles.audioURL(for: model.draftID).deletingLastPathComponent().path))
+    }
+
     #if DEBUG
+    func testTypedTranscriptWhileRecordingStopsTheMicAndWins() async throws {
+        let transcriber = FakeTranscriber(finishesOnStop: false)
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        let continuation = try XCTUnwrap(transcriber.continuation)
+
+        model.setTypedTranscript("Typed text")
+        continuation.yield("late recognizer text")
+        continuation.finish()
+        await model.waitForFinalTranscript(timeout: .seconds(5))
+
+        XCTAssertEqual(transcriber.stopCount, 1)
+        XCTAssertEqual(model.transcript, "Typed text")
+        XCTAssertEqual(model.state, .stopped)
+    }
+
     func testTypedTranscriptSkipsRecording() {
         let transcriber = FakeTranscriber()
         let model = makeModel(transcriber: transcriber)
