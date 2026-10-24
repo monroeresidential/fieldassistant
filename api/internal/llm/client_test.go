@@ -182,8 +182,14 @@ func TestClient_Extract_ToolLoopThenFinal(t *testing.T) {
 	if first["max_tokens"] != float64(4096) {
 		t.Errorf("max_tokens = %v, want 4096", first["max_tokens"])
 	}
-	if tc, _ := first["tool_choice"].(map[string]any); tc["type"] != "any" {
-		t.Errorf("tool_choice = %v, want any", first["tool_choice"])
+	if tc, _ := first["tool_choice"].(map[string]any); tc["type"] != "auto" {
+		t.Errorf("tool_choice = %v, want auto", first["tool_choice"])
+	}
+	if tc, _ := reqs[1]["tool_choice"].(map[string]any); tc["type"] != "auto" {
+		t.Errorf("second tool_choice = %v, want auto", reqs[1]["tool_choice"])
+	}
+	if tools, _ := reqs[1]["tools"].([]any); len(tools) != 2 {
+		t.Errorf("second request tools = %v, want both tools", reqs[1]["tools"])
 	}
 	tools, _ := first["tools"].([]any)
 	if len(tools) != 2 {
@@ -271,30 +277,94 @@ func TestClient_Extract_ToolBudget_ForcesFinal(t *testing.T) {
 	if len(reqs) != 3 {
 		t.Fatalf("requests = %d, want 3", len(reqs))
 	}
+	if tc, _ := reqs[1]["tool_choice"].(map[string]any); tc["type"] != "auto" {
+		t.Errorf("second tool_choice = %v, want auto", reqs[1]["tool_choice"])
+	}
 	third := reqs[2]
-	tc, _ := third["tool_choice"].(map[string]any)
-	if tc["type"] != "tool" || tc["name"] != "submit_draft" {
-		t.Errorf("third tool_choice = %v, want tool submit_draft", third["tool_choice"])
-	}
-	tools, _ := third["tools"].([]any)
-	if len(tools) != 1 {
-		t.Fatalf("third request tools = %v, want only submit_draft", tools)
-	}
-	if tool, _ := tools[0].(map[string]any); tool["name"] != "submit_draft" {
-		t.Errorf("third request tool = %v, want submit_draft", tools[0])
-	}
-	// The over-budget tool_use still gets a tool_result so the conversation stays valid.
+	assertFinalOnlyAuto(t, third)
+	// The over-budget tool_use still gets a tool_result so the conversation
+	// stays valid, followed by the instruction to call the final tool.
 	blocks := lastMessageBlocks(t, third)
-	if len(blocks) != 1 || blocks[0]["type"] != "tool_result" || blocks[0]["tool_use_id"] != "toolu_2" {
-		t.Fatalf("third request last message = %v, want a tool_result for toolu_2", blocks)
+	if len(blocks) != 2 || blocks[0]["type"] != "tool_result" || blocks[0]["tool_use_id"] != "toolu_2" {
+		t.Fatalf("third request last message = %v, want a tool_result for toolu_2 and a text block", blocks)
 	}
 	if isErr, _ := blocks[0]["is_error"].(bool); !isErr {
 		t.Errorf("over-budget tool_result is_error = false, want true")
 	}
+	assertTextBlock(t, blocks[1], forcedText)
 }
 
+const (
+	forcedText = "Call submit_draft now with your final answer. Do not call any other tool."
+	nudgeText  = "Call submit_draft now with your final answer."
+)
+
+// assertFinalOnlyAuto checks a request offers only submit_draft with
+// tool_choice auto.
+func assertFinalOnlyAuto(t *testing.T, body map[string]any) {
+	t.Helper()
+	if tc, _ := body["tool_choice"].(map[string]any); tc["type"] != "auto" {
+		t.Errorf("tool_choice = %v, want auto", body["tool_choice"])
+	}
+	tools, _ := body["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("tools = %v, want only submit_draft", tools)
+	}
+	if tool, _ := tools[0].(map[string]any); tool["name"] != "submit_draft" {
+		t.Errorf("tool = %v, want submit_draft", tools[0])
+	}
+}
+
+func assertTextBlock(t *testing.T, block map[string]any, want string) {
+	t.Helper()
+	if block["type"] != "text" || block["text"] != want {
+		t.Errorf("block = %v, want text %q", block, want)
+	}
+}
+
+// The first end_turn without the final tool gets one nudge offering only
+// the final tool; the model then calls it.
+func TestClient_Extract_EndTurnText_NudgesOnce(t *testing.T) {
+	f := newFakeAnthropic(t,
+		endTurnResponse("Here is the RFI."),
+		toolUseResponse("toolu_1", "submit_draft", `{"subject":"x"}`),
+	)
+	handle := func(context.Context, ToolCall) (json.RawMessage, error) {
+		t.Error("handler should not be called")
+		return nil, nil
+	}
+	res, err := newTestClient(f, 10*time.Second).Extract(context.Background(), testRequest(), handle)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	jsonEqual(t, res.Final, `{"subject":"x"}`)
+	reqs := f.requests()
+	if len(reqs) != 2 {
+		t.Fatalf("requests = %d, want 2", len(reqs))
+	}
+	assertFinalOnlyAuto(t, reqs[1])
+	blocks := lastMessageBlocks(t, reqs[1])
+	if len(blocks) != 1 {
+		t.Fatalf("nudge message = %v, want one text block", blocks)
+	}
+	assertTextBlock(t, blocks[0], nudgeText)
+	wantRoles := []string{"user", "assistant", "user", "assistant"}
+	if len(res.Turns) != len(wantRoles) {
+		t.Fatalf("Turns = %d, want %d", len(res.Turns), len(wantRoles))
+	}
+	for i, turn := range res.Turns {
+		if turn.Role != wantRoles[i] {
+			t.Errorf("Turns[%d].Role = %q, want %q", i, turn.Role, wantRoles[i])
+		}
+	}
+	if !strings.Contains(string(res.Turns[2].Content), nudgeText) {
+		t.Errorf("Turns[2] = %s, want the nudge", res.Turns[2].Content)
+	}
+}
+
+// A second end_turn without the final tool, after the nudge, is ErrNoFinal.
 func TestClient_Extract_EndTurnWithoutFinal_ErrNoFinal(t *testing.T) {
-	f := newFakeAnthropic(t, endTurnResponse("I am not sure."))
+	f := newFakeAnthropic(t, endTurnResponse("I am not sure."), endTurnResponse("Still not sure."))
 	handle := func(context.Context, ToolCall) (json.RawMessage, error) {
 		t.Error("handler should not be called")
 		return nil, nil
@@ -303,8 +373,30 @@ func TestClient_Extract_EndTurnWithoutFinal_ErrNoFinal(t *testing.T) {
 	if !errors.Is(err, ErrNoFinal) {
 		t.Fatalf("err = %v, want ErrNoFinal", err)
 	}
-	if len(res.Turns) != 2 {
-		t.Errorf("Turns = %d, want 2 (kept for the audit row)", len(res.Turns))
+	if n := len(f.requests()); n != 2 {
+		t.Errorf("requests = %d, want 2 (one nudge only)", n)
+	}
+	if len(res.Turns) != 4 {
+		t.Errorf("Turns = %d, want 4 (kept for the audit row)", len(res.Turns))
+	}
+}
+
+// An end_turn on the forced (budget) turn is ErrNoFinal with no nudge.
+func TestClient_Extract_EndTurnOnForcedTurn_ErrNoFinal(t *testing.T) {
+	f := newFakeAnthropic(t,
+		toolUseResponse("toolu_1", "list_users", `{"query":"ben"}`),
+		toolUseResponse("toolu_2", "list_users", `{"query":"benjamin"}`),
+		endTurnResponse("Done."),
+	)
+	handle := func(context.Context, ToolCall) (json.RawMessage, error) { return json.RawMessage(`[]`), nil }
+	req := testRequest()
+	req.MaxToolCalls = 1
+	_, err := newTestClient(f, 10*time.Second).Extract(context.Background(), req, handle)
+	if !errors.Is(err, ErrNoFinal) {
+		t.Fatalf("err = %v, want ErrNoFinal", err)
+	}
+	if n := len(f.requests()); n != 3 {
+		t.Errorf("requests = %d, want 3 (no nudge after the forced turn)", n)
 	}
 }
 
@@ -366,9 +458,10 @@ func TestClient_Extract_ParallelOverBudgetCalls_ForceFinal(t *testing.T) {
 	}
 	second := reqs[1]
 	blocks := lastMessageBlocks(t, second)
-	if len(blocks) != 3 {
-		t.Fatalf("second request last message = %v, want three tool_results", blocks)
+	if len(blocks) != 4 {
+		t.Fatalf("second request last message = %v, want three tool_results and a text block", blocks)
 	}
+	assertTextBlock(t, blocks[3], forcedText)
 	for i, wantErr := range []bool{false, true, true} {
 		if blocks[i]["type"] != "tool_result" {
 			t.Errorf("block %d type = %v, want tool_result", i, blocks[i]["type"])
@@ -377,17 +470,7 @@ func TestClient_Extract_ParallelOverBudgetCalls_ForceFinal(t *testing.T) {
 			t.Errorf("block %d is_error = %v, want %v", i, isErr, wantErr)
 		}
 	}
-	tc, _ := second["tool_choice"].(map[string]any)
-	if tc["type"] != "tool" || tc["name"] != "submit_draft" {
-		t.Errorf("second tool_choice = %v, want tool submit_draft", second["tool_choice"])
-	}
-	tools, _ := second["tools"].([]any)
-	if len(tools) != 1 {
-		t.Fatalf("second request tools = %v, want only submit_draft", tools)
-	}
-	if tool, _ := tools[0].(map[string]any); tool["name"] != "submit_draft" {
-		t.Errorf("second request tool = %v, want submit_draft", tools[0])
-	}
+	assertFinalOnlyAuto(t, second)
 }
 
 func TestClient_Extract_MaxTokens_ErrTruncated(t *testing.T) {

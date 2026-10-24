@@ -45,9 +45,14 @@ func NewClient(apiKey, model, baseURL string, timeout time.Duration) *Client {
 }
 
 // Extract runs the tool loop: the model is offered every tool with
-// tool_choice "any"; lookup calls are answered with handle until the model
-// calls req.FinalTool, whose input becomes Result.Final. Once the budget of
-// req.MaxToolCalls is spent, the next turn offers only FinalTool and forces it.
+// tool_choice "auto" (some models reject "any" and "tool"); lookup calls are
+// answered with handle until the model calls req.FinalTool, whose input
+// becomes Result.Final. Once the budget of req.MaxToolCalls is spent, the
+// next turn offers only FinalTool and a user instruction to call it. The
+// first time the model ends its turn with text instead, it gets one nudge
+// turn offering only FinalTool; ending a nudge or budget turn without the
+// final tool is ErrNoFinal. The nudge happens only before the budget is
+// spent, so a call makes at most MaxToolCalls+2 requests.
 func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (res Result, err error) {
 	start := time.Now()
 	defer func() { res.Duration = time.Since(start) }()
@@ -69,7 +74,8 @@ func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (
 		return res, err
 	}
 
-	forced := false
+	forced := false // the lookup budget is spent
+	nudged := false // the model was told once to call FinalTool
 	for {
 		params := anthropic.MessageNewParams{
 			Model:     anthropic.Model(c.model),
@@ -77,13 +83,13 @@ func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (
 			System:    []anthropic.TextBlockParam{{Text: req.System}},
 			Messages:  messages,
 		}
-		if forced {
+		finalOnly := forced || nudged
+		if finalOnly {
 			params.Tools = []anthropic.ToolUnionParam{finalTool}
-			params.ToolChoice = anthropic.ToolChoiceParamOfTool(req.FinalTool)
 		} else {
 			params.Tools = allTools
-			params.ToolChoice = anthropic.ToolChoiceUnionParam{OfAny: &anthropic.ToolChoiceAnyParam{}}
 		}
+		params.ToolChoice = anthropic.ToolChoiceUnionParam{OfAuto: &anthropic.ToolChoiceAutoParam{}}
 
 		opts := []option.RequestOption{option.WithMaxRetries(c.maxRetries)}
 		if c.timeout > 0 {
@@ -124,6 +130,10 @@ func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (
 			if wasForced {
 				return res, ErrToolBudget
 			}
+			if finalOnly {
+				// Only FinalTool was offered after the nudge.
+				return res, fmt.Errorf("%w (called %s after the nudge)", ErrNoFinal, block.Name)
+			}
 			if res.ToolCalls >= req.MaxToolCalls {
 				// Budget spent: answer this call with an error and force the
 				// final tool on the next turn.
@@ -144,7 +154,17 @@ func (c *Client) Extract(ctx context.Context, req Request, handle ToolHandler) (
 			results = append(results, anthropic.NewToolResultBlock(block.ID, string(out), false))
 		}
 		if len(results) == 0 {
-			return res, fmt.Errorf("%w (stop reason %q)", ErrNoFinal, msg.StopReason)
+			// No tool call at all. On a normal turn that ended with content,
+			// nudge once; otherwise give up.
+			if finalOnly || msg.StopReason != anthropic.StopReasonEndTurn || len(msg.Content) == 0 {
+				return res, fmt.Errorf("%w (stop reason %q)", ErrNoFinal, msg.StopReason)
+			}
+			nudged = true
+			results = append(results, anthropic.NewTextBlock(
+				fmt.Sprintf("Call %s now with your final answer.", req.FinalTool)))
+		} else if forced && !wasForced {
+			results = append(results, anthropic.NewTextBlock(
+				fmt.Sprintf("Call %s now with your final answer. Do not call any other tool.", req.FinalTool)))
 		}
 
 		next := anthropic.NewUserMessage(results...)

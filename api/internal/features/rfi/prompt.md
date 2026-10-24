@@ -50,4 +50,4 @@ Field notes:
 
 # Finish
 
-Finish by calling `submit_draft` exactly once with `payload`, `unresolved` and `confidence`.
+Finish by calling `submit_draft` exactly once with `payload`, `unresolved` and `confidence`. Your final answer must be that `submit_draft` tool call, not text: do not reply in prose, summarize the draft or ask a question instead of calling it.
