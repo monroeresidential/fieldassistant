@@ -1,6 +1,7 @@
 package procore
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +46,50 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("procore: API status %d: %s", e.Status, e.Body)
 }
 
+// ValidationError is a 422 response whose body maps Procore field names to
+// messages.
+type ValidationError struct {
+	Fields map[string][]string
+}
+
+func (e *ValidationError) Error() string {
+	keys := make([]string, 0, len(e.Fields))
+	for k := range e.Fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = k + ": " + strings.Join(e.Fields[k], "; ")
+	}
+	return "procore: validation failed: " + strings.Join(parts, ", ")
+}
+
+// parseValidationErrors reads {"errors": {field: "msg" | ["msg", ...]}}. It
+// reports false when the body has any other shape.
+func parseValidationErrors(b []byte) (*ValidationError, bool) {
+	var w struct {
+		Errors map[string]json.RawMessage `json:"errors"`
+	}
+	if json.Unmarshal(b, &w) != nil || len(w.Errors) == 0 {
+		return nil, false
+	}
+	fields := make(map[string][]string, len(w.Errors))
+	for k, raw := range w.Errors {
+		var one string
+		var many []string
+		switch {
+		case json.Unmarshal(raw, &one) == nil:
+			fields[k] = []string{one}
+		case json.Unmarshal(raw, &many) == nil:
+			fields[k] = many
+		default:
+			return nil, false
+		}
+	}
+	return &ValidationError{Fields: fields}, true
+}
+
 // Client is a client for Procore's REST API.
 type Client struct {
 	apiURL string
@@ -70,7 +116,7 @@ func NewClient(apiURL string, hc *http.Client, sleep func(time.Duration), now fu
 // Me returns the user behind accessToken.
 func (c *Client) Me(ctx context.Context, accessToken string) (Me, error) {
 	var me Me
-	err := c.do(ctx, accessToken, nil, http.MethodGet, "/rest/v1.0/me", nil, &me)
+	err := c.do(ctx, accessToken, nil, http.MethodGet, "/rest/v1.0/me", nil, nil, &me)
 	return me, err
 }
 
@@ -91,6 +137,58 @@ func (c *Client) ListRFIs(ctx context.Context, accessToken string, companyID, pr
 	return listAll[RFI](ctx, c, accessToken, &companyID, path, url.Values{})
 }
 
+func projectPath(projectID int64, suffix string) string {
+	return "/rest/v1.0/projects/" + strconv.FormatInt(projectID, 10) + suffix
+}
+
+// ListProjectUsers returns every user on projectID, following pagination.
+func (c *Client) ListProjectUsers(ctx context.Context, accessToken string, companyID, projectID int64) ([]ProjectUser, error) {
+	return listAll[ProjectUser](ctx, c, accessToken, &companyID, projectPath(projectID, "/users"), url.Values{})
+}
+
+// ListLocations returns every location in projectID, following pagination.
+func (c *Client) ListLocations(ctx context.Context, accessToken string, companyID, projectID int64) ([]Location, error) {
+	return listAll[Location](ctx, c, accessToken, &companyID, projectPath(projectID, "/locations"), url.Values{})
+}
+
+// ListSpecSections returns every specification section in projectID.
+func (c *Client) ListSpecSections(ctx context.Context, accessToken string, companyID, projectID int64) ([]SpecSection, error) {
+	return listAll[SpecSection](ctx, c, accessToken, &companyID, projectPath(projectID, "/specification_sections"), url.Values{})
+}
+
+// ListCostCodes returns every cost code of projectID, following pagination.
+func (c *Client) ListCostCodes(ctx context.Context, accessToken string, companyID, projectID int64) ([]CostCode, error) {
+	q := url.Values{"project_id": {strconv.FormatInt(projectID, 10)}}
+	return listAll[CostCode](ctx, c, accessToken, &companyID, "/rest/v1.0/cost_codes", q)
+}
+
+// ListVendors returns every vendor of projectID, following pagination.
+func (c *Client) ListVendors(ctx context.Context, accessToken string, companyID, projectID int64) ([]Vendor, error) {
+	return listAll[Vendor](ctx, c, accessToken, &companyID, projectPath(projectID, "/vendors"), url.Values{})
+}
+
+// ListDrawings returns every drawing of projectID, following pagination.
+func (c *Client) ListDrawings(ctx context.Context, accessToken string, companyID, projectID int64) ([]Drawing, error) {
+	q := url.Values{"project_id": {strconv.FormatInt(projectID, 10)}}
+	return listAll[Drawing](ctx, c, accessToken, &companyID, "/rest/v1.1/drawings", q)
+}
+
+// GetProject returns projectID's detail, including its time zone.
+func (c *Client) GetProject(ctx context.Context, accessToken string, companyID, projectID int64) (ProjectDetail, error) {
+	var p ProjectDetail
+	err := c.do(ctx, accessToken, &companyID, http.MethodGet, projectPath(projectID, ""), nil, nil, &p)
+	return p, err
+}
+
+// CreateRFI posts a new RFI to projectID with Procore's configurable
+// validations on. A 422 is returned as *ValidationError.
+func (c *Client) CreateRFI(ctx context.Context, accessToken string, companyID, projectID int64, body RFICreate) (RFICreated, error) {
+	var out RFICreated
+	q := url.Values{"run_configurable_validations": {"true"}}
+	err := c.do(ctx, accessToken, &companyID, http.MethodPost, projectPath(projectID, "/rfis"), q, map[string]RFICreate{"rfi": body}, &out)
+	return out, err
+}
+
 // listAll requests successive pages of perPage items until a short page. A
 // nil companyID omits the Procore-Company-Id header.
 func listAll[T any](ctx context.Context, c *Client, token string, companyID *int64, path string, q url.Values) ([]T, error) {
@@ -99,7 +197,7 @@ func listAll[T any](ctx context.Context, c *Client, token string, companyID *int
 	for page := 1; page <= maxPages; page++ {
 		q.Set("page", strconv.Itoa(page))
 		var items []T
-		if err := c.do(ctx, token, companyID, http.MethodGet, path, q, &items); err != nil {
+		if err := c.do(ctx, token, companyID, http.MethodGet, path, q, nil, &items); err != nil {
 			return nil, err
 		}
 		all = append(all, items...)
@@ -111,16 +209,31 @@ func listAll[T any](ctx context.Context, c *Client, token string, companyID *int
 }
 
 // do sends one request, retrying on 429, mapping error statuses and decoding
-// a 2xx JSON body into out.
-func (c *Client) do(ctx context.Context, token string, companyID *int64, method, path string, q url.Values, out any) error {
+// a 2xx JSON body into out. A non-nil body is sent as JSON.
+func (c *Client) do(ctx context.Context, token string, companyID *int64, method, path string, q url.Values, body, out any) error {
 	u := c.apiURL + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
+	var payload []byte
+	if body != nil {
+		var err error
+		if payload, err = json.Marshal(body); err != nil {
+			return fmt.Errorf("procore: encode %s %s body: %w", method, path, err)
+		}
+	}
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, method, u, nil)
+		// A fresh reader per attempt: a retry after 429 must resend the body.
+		var rd io.Reader
+		if payload != nil {
+			rd = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, u, rd)
 		if err != nil {
 			return fmt.Errorf("procore: build request: %w", err)
+		}
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Accept", "application/json")
@@ -165,6 +278,10 @@ func decodeResponse(ctx context.Context, resp *http.Response, method, path strin
 			return fmt.Errorf("%w: %w", ErrUnauthorized, apiErr)
 		case http.StatusForbidden:
 			return fmt.Errorf("%w: %w", ErrPermissionDenied, apiErr)
+		case http.StatusUnprocessableEntity:
+			if ve, ok := parseValidationErrors(b); ok {
+				return ve
+			}
 		}
 		return apiErr
 	}
