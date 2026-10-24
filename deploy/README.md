@@ -23,8 +23,24 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    ```
 3. Create one SSH user per environment, so a push to `develop` cannot run
    anything on the production stack. Both users are in the `docker` group and in
-   a shared `fa-deploy` group, and each has its own keypair
-   (`ssh-keygen -t ed25519`, one per environment):
+   a shared `fa-deploy` group, and each has its own keypair.
+
+   **Generate the two keypairs on your own machine first** (not on the droplet).
+   These are deploy keys used only by GitHub Actions; keep them separate from the
+   root key you use to administer the droplet:
+   ```
+   ssh-keygen -t ed25519 -N '' -C fieldassistant-deploy-dev  -f ~/.ssh/fieldassistant-deploy-dev
+   ssh-keygen -t ed25519 -N '' -C fieldassistant-deploy-prod -f ~/.ssh/fieldassistant-deploy-prod
+   ```
+   Each command produces a private key (`~/.ssh/fieldassistant-deploy-<env>`, goes
+   into the GitHub environment secret in step 8, never into the repo) and a public
+   key (`~/.ssh/fieldassistant-deploy-<env>.pub`, goes into that user's
+   `authorized_keys` below). Print the public keys so you can paste them:
+   ```
+   cat ~/.ssh/fieldassistant-deploy-dev.pub ~/.ssh/fieldassistant-deploy-prod.pub
+   ```
+
+   Now, on the droplet as root, create the users:
    ```
    groupadd fa-deploy
    for e in dev prod; do
@@ -109,7 +125,19 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
 8. In GitHub, add the secrets. `DROPLET_HOST` is a repository-level secret. The
    private keys go in **environment** secrets named `DROPLET_SSH_KEY`: the
    `development` environment holds the deploy-dev key and the `production`
-   environment holds the deploy-prod key.
+   environment holds the deploy-prod key. From your own machine with `gh`
+   authenticated (the private key files are the ones generated in step 3):
+   ```
+   gh secret set DROPLET_HOST --repo monroeresidential/fieldassistant --body "<droplet public IP or hostname>"
+   gh secret set DROPLET_SSH_KEY --repo monroeresidential/fieldassistant --env development < ~/.ssh/fieldassistant-deploy-dev
+   gh secret set DROPLET_SSH_KEY --repo monroeresidential/fieldassistant --env production  < ~/.ssh/fieldassistant-deploy-prod
+   ```
+   Test each key once from your machine; the forced command should refuse a
+   missing digest with `exit 3` rather than give you a shell:
+   ```
+   ssh -i ~/.ssh/fieldassistant-deploy-dev  deploy-dev@<droplet>  ; echo "exit $?"
+   ssh -i ~/.ssh/fieldassistant-deploy-prod deploy-prod@<droplet> ; echo "exit $?"
+   ```
 9. Start everything. If the image is private, first run `docker login ghcr.io`
    as root and as each deploy user, since Docker credentials are per user. Log in
    with your GitHub username and a personal access token (classic) that has only
