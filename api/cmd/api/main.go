@@ -12,13 +12,21 @@ import (
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 	"github.com/monroeresidential/fieldassistant/api/internal/config"
+	"github.com/monroeresidential/fieldassistant/api/internal/features/rfi"
 	"github.com/monroeresidential/fieldassistant/api/internal/httpapi"
+	"github.com/monroeresidential/fieldassistant/api/internal/jobs"
+	"github.com/monroeresidential/fieldassistant/api/internal/llm"
+	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
 	"github.com/monroeresidential/fieldassistant/api/internal/store"
 )
 
 // procoreTimeout bounds every outbound request to Procore.
 const procoreTimeout = 30 * time.Second
+
+// lookupCacheTTL is how long a project's cached Procore lookup lists are
+// trusted before they are fetched again.
+const lookupCacheTTL = 10 * time.Minute
 
 // companyCacheTTL is how long a user's Procore company list is trusted for
 // scope checks before it is fetched again.
@@ -41,6 +49,22 @@ func main() {
 	}
 	defer closeDeps()
 
+	// Jobs start before the server accepts requests and stop before the
+	// database pool closes (closeDeps is deferred above, so it runs last).
+	if err := deps.Jobs.Start(ctx); err != nil {
+		slog.Error("starting jobs failed", "error", err)
+		closeDeps()
+		os.Exit(1)
+	}
+	slog.Info("jobs started")
+	stopJobs := func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := deps.Jobs.Stop(stopCtx); err != nil {
+			slog.Error("stopping jobs failed", "error", err)
+		}
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           httpapi.NewRouter(deps),
@@ -57,6 +81,8 @@ func main() {
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("server failed", "error", err)
+			stopJobs()
+			closeDeps()
 			os.Exit(1)
 		}
 	case <-ctx.Done():
@@ -65,8 +91,11 @@ func main() {
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Error("shutdown failed", "error", err)
+			stopJobs()
+			closeDeps()
 			os.Exit(1)
 		}
+		stopJobs()
 	}
 }
 
@@ -92,7 +121,19 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	pc := procore.NewClient(cfg.Procore.APIURL, hc, nil, nil)
 	tokens := auth.NewTokenSource(st, vault, oauth, time.Now)
 	sessions := auth.NewSessions(st, cfg.SessionSecret, time.Now)
+
+	logger := slog.Default()
+	extractor := llm.NewClient(cfg.LLM.APIKey, cfg.LLM.ExtractModel, "", cfg.LLM.Timeout)
+	lookups := pipeline.NewLookups(st, pc, tokens, lookupCacheTTL, time.Now, logger)
+	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens,
+		map[string]pipeline.Feature{"rfi": rfi.New()}, cfg.LLM.ExtractModel, time.Now, logger)
+	jobsClient, err := jobs.NewClient(st.Pool, drafts, logger)
+	if err != nil {
+		st.Close()
+		return httpapi.Deps{}, nil, err
+	}
 	return httpapi.Deps{
+		Logger:    logger,
 		Config:    cfg,
 		Store:     st,
 		Sessions:  sessions,
@@ -100,5 +141,8 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 		Tokens:    tokens,
 		Procore:   pc,
 		Companies: auth.NewCompanyCache(pc, tokens, companyCacheTTL, time.Now),
+		Lookups:   lookups,
+		Drafts:    drafts,
+		Jobs:      jobsClient,
 	}, st.Close, nil
 }
