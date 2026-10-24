@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 )
 
 func validEnv() map[string]string {
@@ -17,6 +18,8 @@ func validEnv() map[string]string {
 		"TOKEN_VAULT_KEY":       base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"SESSION_SECRET":        base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		"PUBLIC_BASE_URL":       "http://localhost:8080",
+		"ANTHROPIC_API_KEY":     "sk-ant-test",
+		"LLM_EXTRACT_MODEL":     "claude-sonnet-5-5",
 	}
 }
 
@@ -123,5 +126,45 @@ func TestLoad_AppRedirectSchemeInvalid(t *testing.T) {
 	_, err := Load(getter(env))
 	if err == nil || !strings.Contains(err.Error(), "APP_REDIRECT_SCHEME") {
 		t.Fatalf("err = %v, want error naming APP_REDIRECT_SCHEME", err)
+	}
+}
+
+func TestLoad_LLMRequired(t *testing.T) {
+	env := validEnv()
+	delete(env, "ANTHROPIC_API_KEY")
+	delete(env, "LLM_EXTRACT_MODEL")
+
+	_, err := Load(getter(env))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	for _, name := range []string{"ANTHROPIC_API_KEY", "LLM_EXTRACT_MODEL"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error %q does not mention %s", err, name)
+		}
+	}
+}
+
+func TestLoad_LLMTimeoutDefault(t *testing.T) {
+	cfg, err := Load(getter(validEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LLM.Timeout != 20*time.Second {
+		t.Errorf("LLM.Timeout = %v, want 20s", cfg.LLM.Timeout)
+	}
+	if cfg.LLM.APIKey != "sk-ant-test" || cfg.LLM.ExtractModel != "claude-sonnet-5-5" {
+		t.Errorf("LLM fields not populated: %+v", cfg.LLM)
+	}
+}
+
+func TestLoad_LLMTimeoutInvalid(t *testing.T) {
+	for _, v := range []string{"abc", "0", "-5"} {
+		env := validEnv()
+		env["LLM_TIMEOUT_SECONDS"] = v
+		_, err := Load(getter(env))
+		if err == nil || !strings.Contains(err.Error(), "LLM_TIMEOUT_SECONDS") {
+			t.Errorf("value %q: want error mentioning LLM_TIMEOUT_SECONDS, got %v", v, err)
+		}
 	}
 }

@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -14,6 +16,8 @@ const (
 	defaultPort      = "8080"
 
 	defaultAppRedirectScheme = "fieldassistant"
+
+	defaultLLMTimeoutSeconds = 20
 )
 
 // schemePattern is the lowercase subset of an RFC 3986 URI scheme.
@@ -24,6 +28,13 @@ type ProcoreConfig struct {
 	ClientID, ClientSecret, LoginURL, APIURL, RedirectURL string
 }
 
+// LLMConfig holds the Anthropic API settings used for RFI extraction.
+type LLMConfig struct {
+	APIKey       string
+	ExtractModel string
+	Timeout      time.Duration
+}
+
 // Config is the validated service configuration.
 type Config struct {
 	Port          string
@@ -32,6 +43,7 @@ type Config struct {
 	// AppRedirectScheme is the URL scheme the auth callback redirects to.
 	AppRedirectScheme string
 	Procore           ProcoreConfig
+	LLM               LLMConfig
 	TokenVaultKey     []byte
 	SessionSecret     []byte
 }
@@ -59,6 +71,10 @@ func Load(getenv func(string) string) (Config, error) {
 			APIURL:       req("PROCORE_API_URL"),
 			RedirectURL:  req("PROCORE_REDIRECT_URL"),
 		},
+		LLM: LLMConfig{
+			APIKey:       req("ANTHROPIC_API_KEY"),
+			ExtractModel: req("LLM_EXTRACT_MODEL"),
+		},
 	}
 	vaultKey := req("TOKEN_VAULT_KEY")
 	sessionSecret := req("SESSION_SECRET")
@@ -75,6 +91,16 @@ func Load(getenv func(string) string) (Config, error) {
 	if !schemePattern.MatchString(cfg.AppRedirectScheme) {
 		return Config{}, fmt.Errorf("APP_REDIRECT_SCHEME %q is not a valid URL scheme (want lowercase letters, digits, +, . or -, starting with a letter)", cfg.AppRedirectScheme)
 	}
+
+	timeoutSeconds := defaultLLMTimeoutSeconds
+	if v := getenv("LLM_TIMEOUT_SECONDS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return Config{}, fmt.Errorf("LLM_TIMEOUT_SECONDS %q must be a positive integer", v)
+		}
+		timeoutSeconds = n
+	}
+	cfg.LLM.Timeout = time.Duration(timeoutSeconds) * time.Second
 
 	var err error
 	if cfg.TokenVaultKey, err = decodeKey("TOKEN_VAULT_KEY", vaultKey); err != nil {
