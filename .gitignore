@@ -13,3 +13,7 @@ deploy/.env
 deploy/.env.dev
 deploy/.env.prod
 deploy/backups/
+
+# Local worktrees and plan-execution scratch
+.claude/worktrees/
+.superpowers/
