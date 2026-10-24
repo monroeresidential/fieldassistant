@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <meta name="design_doc_mode" content="canvas">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #E9EBEC; font-family: "Public Sans", system-ui, sans-serif; color: #2F3437; }
+    a { color: #C2410C; } a:hover { color: #9A3412; }
+    @keyframes fa-blink { 0%,100% { opacity: 1 } 50% { opacity: 0 } }
+  </style>
+</helmet>
+
+<section data-screen-label="Turn 1" style="padding: 48px; display: flex; flex-direction: column; gap: 44px">
+
+  <div style="max-width: 720px; display: flex; flex-direction: column; gap: 10px">
+    <div style="font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #C2410C">Field Assistant · iOS · proposed layout</div>
+    <h1 style="margin: 0; font-size: 40px; font-weight: 700; letter-spacing: -.02em; line-height: 1.05">Capture, extract, review, submit</h1>
+    <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #5C6368">Every screen is the same four-step loop from the spec. 3F orange is reserved for the one thing that needs a tap on each screen: the record button, the stop button, the submit button, the flagged field. Everything else is charcoal on white with hairlines.</p>
+  </div>
+
+  <!-- ─── Light row ─── -->
+  <div style="display: flex; flex-wrap: wrap; gap: 44px; align-items: flex-start">
+
+    <!-- 1a Sign in -->
+    <div id="1a" data-screen-label="1a Sign in" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1a" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1a</a><span style="font-size: 13px; color: #5C6368">Sign in</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #2F3437; color: #fff; font-family: 'Public Sans', system-ui, sans-serif; padding: 70px 28px 56px">
+          <div style="display: flex; align-items: center; gap: 12px">
+            <svg width="44" height="44" viewBox="0 0 44 44" aria-label="Field Assistant" role="img"><g stroke-width="4" stroke-linecap="round"><path d="M8 18v8" stroke="#fff"></path><path d="M15 12v20" stroke="#fff"></path><path d="M22 6v32" stroke="#F26122"></path><path d="M29 14v16" stroke="#fff"></path><path d="M36 19v6" stroke="#fff"></path></g></svg>
+            <span style="font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: #B6BCC0">Field Assistant</span>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 18px">
+            <div style="font-size: 13px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: #F26122">Procore, by voice</div>
+            <div style="font-size: 56px; font-weight: 700; line-height: .98; letter-spacing: -.03em">Field<br>Assistant</div>
+            <div style="width: 48px; height: 3px; background: #F26122"></div>
+            <p style="margin: 0; font-size: 17px; line-height: 1.5; color: #D5D9DC; max-width: 300px">Dictate an RFI on site. Review the draft. Tap once to send it to Procore.</p>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 12px">
+            <button style="min-height: 56px; border: 0; border-radius: 6px; background: #F26122; color: #fff; font: 700 17px 'Public Sans', system-ui, sans-serif; letter-spacing: .01em">Sign in with Procore</button>
+            <p style="margin: 0; font-size: 12px; text-align: center; color: #B6BCC0; line-height: 1.5">Sign-in happens on Procore's own page. This app never sees your password.</p>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1b Project picker -->
+    <div id="1b" data-screen-label="1b Project picker" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1b" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1b</a><span style="font-size: 13px; color: #5C6368">Company / project picker</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #fff; color: #2F3437; font-family: 'Public Sans', system-ui, sans-serif; padding: 62px 20px 56px; gap: 20px">
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <button style="align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0; border: 0; background: none; font: 600 12px 'Public Sans', system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; color: #C2410C">Monroe Residential <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+            <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -.02em">Choose a project</h2>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 14px; background: #F4F5F6; border-radius: 8px; color: #8A9196; font-size: 15px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>Search projects</div>
+          <div style="display: flex; flex-direction: column">
+            <div style="display: flex; align-items: center; gap: 12px; padding: 16px 0; border-top: 1px solid #E1E4E6; min-height: 72px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 17px; font-weight: 600">118 W Illinois</span><span style="font-size: 13px; color: #5C6368">Chicago · 212 units · active</span></div>
+              <span style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #C2410C; background: #FEF0E8; padding: 4px 8px; border-radius: 4px">Last used</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A9196" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 16px 0; border-top: 1px solid #E1E4E6; min-height: 72px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 17px; font-weight: 600">223 W Erie</span><span style="font-size: 13px; color: #5C6368">Chicago · 44 units · active</span></div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8A9196" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 16px 0; border-top: 1px solid #E1E4E6; border-bottom: 1px solid #E1E4E6; min-height: 72px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 17px; font-weight: 600; color: #8A9196">1400 N Lake Shore</span><span style="font-size: 13px; color: #8A9196">Read-only on the RFI tool</span></div>
+            </div>
+          </div>
+          <p style="margin: auto 0 0; font-size: 12px; color: #8A9196; line-height: 1.5; text-align: center">People, locations and spec sections download when you choose a project, so pickers work without signal.</p>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1c Home A -->
+    <div id="1c" data-screen-label="1c Home A" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1c" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1c</a><span style="font-size: 13px; color: #5C6368">Home A — feature chooser, then record</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #fff; color: #2F3437; font-family: 'Public Sans', system-ui, sans-serif; padding: 62px 20px 56px; gap: 22px">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 8px">
+            <div style="display: flex; flex-direction: column; gap: 4px">
+              <span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #C2410C">Monroe Residential</span>
+              <button style="display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; font: 700 28px 'Public Sans', system-ui, sans-serif; letter-spacing: -.02em; color: #2F3437"><span>118 W Illinois</span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F26122" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+            </div>
+            <button style="width: 44px; height: 44px; border-radius: 50%; border: 1px solid #E1E4E6; background: #fff; color: #2F3437; display: inline-flex; align-items: center; justify-content: center" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"></path></svg></button>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+            <div style="min-height: 88px; padding: 14px; border-radius: 8px; border: 2px solid #F26122; display: flex; flex-direction: column; justify-content: space-between">
+              <span style="font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #C2410C">Selected</span>
+              <span style="font-size: 20px; font-weight: 700">RFI</span>
+            </div>
+            <div style="min-height: 88px; padding: 14px; border-radius: 8px; border: 1px solid #E1E4E6; display: flex; flex-direction: column; justify-content: space-between">
+              <span style="font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #8A9196">Available</span>
+              <span style="font-size: 20px; font-weight: 700">Observation</span>
+            </div>
+            <div style="min-height: 88px; padding: 14px; border-radius: 8px; border: 1px solid #E1E4E6; display: flex; flex-direction: column; justify-content: space-between; color: #8A9196">
+              <span style="font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase">Read-only here</span>
+              <span style="font-size: 20px; font-weight: 700">Punch item</span>
+            </div>
+            <div style="min-height: 88px; padding: 14px; border-radius: 8px; border: 1px dashed #E1E4E6; display: flex; flex-direction: column; justify-content: space-between; color: #8A9196">
+              <span style="font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase">Coming</span>
+              <span style="font-size: 20px; font-weight: 700">Daily log</span>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 0">
+            <button style="width: 116px; height: 116px; border-radius: 50%; border: 0; background: #F26122; color: #fff; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 10px #FEF0E8" aria-label="Record an RFI"><svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg></button>
+            <span style="font-size: 17px; font-weight: 700; margin-top: 8px">Record an RFI</span>
+            <span style="font-size: 13px; color: #5C6368">Under a minute, start to Procore</span>
+          </div>
+          <div style="display: flex; flex-direction: column">
+            <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 8px"><span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6368">Recent</span><a href="#1c" style="font-size: 13px; font-weight: 600; text-decoration: none">All drafts</a></div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #E1E4E6; min-height: 60px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Duct through beam at grid C-4</span><span style="font-size: 12px; color: #8A9196; font-variant-numeric: tabular-nums">RFI · 2:14 PM · 3 photos</span></div>
+              <span style="font-size: 11px; font-weight: 700; letter-spacing: .04em; color: #2F3437; background: #F4F5F6; padding: 4px 8px; border-radius: 4px">#214 Submitted</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #E1E4E6; min-height: 60px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Window rough opening, unit 1204</span><span style="font-size: 12px; color: #8A9196; font-variant-numeric: tabular-nums">RFI · 11:02 AM · 1 photo</span></div>
+              <span style="font-size: 11px; font-weight: 700; letter-spacing: .04em; color: #C2410C; border: 1px solid #C2410C; padding: 3px 8px; border-radius: 4px">Queued</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #E1E4E6; border-bottom: 1px solid #E1E4E6; min-height: 60px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Fire caulk at level 2 shaft</span><span style="font-size: 12px; color: #8A9196">RFI · Yesterday</span></div>
+              <span style="font-size: 11px; font-weight: 700; letter-spacing: .04em; color: #5C6368; border: 1px solid #E1E4E6; padding: 3px 8px; border-radius: 4px">Draft</span>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1d Home B -->
+    <div id="1d" data-screen-label="1d Home B" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1d" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1d</a><span style="font-size: 13px; color: #5C6368">Home B — record dominates, feature as a segment</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #fff; color: #2F3437; font-family: 'Public Sans', system-ui, sans-serif; padding: 62px 20px 56px; gap: 20px">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+            <button style="display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border: 1px solid #E1E4E6; border-radius: 999px; background: #fff; font: 600 13px 'Public Sans', system-ui, sans-serif; color: #2F3437"><span>118 W Illinois</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F26122" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+            <button style="width: 40px; height: 40px; border-radius: 50%; border: 1px solid #E1E4E6; background: #fff; color: #2F3437; display: inline-flex; align-items: center; justify-content: center" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"></path></svg></button>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px">
+            <div style="display: inline-flex; padding: 3px; background: #F4F5F6; border-radius: 999px; font-size: 14px; font-weight: 600">
+              <span style="padding: 9px 18px; border-radius: 999px; background: #2F3437; color: #fff">RFI</span>
+              <span style="padding: 9px 18px; color: #2F3437">Observation</span>
+              <span style="padding: 9px 18px; color: #8A9196">Punch</span>
+            </div>
+            <button style="width: 200px; height: 200px; border-radius: 50%; border: 0; background: #F26122; color: #fff; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 0 0 14px #FEF0E8; margin: 10px 0" aria-label="Record an RFI">
+              <svg width="58" height="58" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg>
+              <span style="font-size: 20px; font-weight: 700; letter-spacing: .02em">RECORD</span>
+            </button>
+            <p style="margin: 0; font-size: 13px; text-align: center; color: #5C6368; max-width: 250px; line-height: 1.5">Say the question, who it's for, where and when. Photos come next.</p>
+          </div>
+          <div style="display: flex; flex-direction: column">
+            <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 8px"><span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6368">Recent</span><a href="#1d" style="font-size: 13px; font-weight: 600; text-decoration: none">All drafts</a></div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #E1E4E6; min-height: 60px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Duct through beam at grid C-4</span><span style="font-size: 12px; color: #8A9196">RFI · 2:14 PM</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #2F3437; background: #F4F5F6; padding: 4px 8px; border-radius: 4px">#214 Submitted</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #E1E4E6; border-bottom: 1px solid #E1E4E6; min-height: 60px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Window rough opening, unit 1204</span><span style="font-size: 12px; color: #8A9196">RFI · 11:02 AM</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #C2410C; border: 1px solid #C2410C; padding: 3px 8px; border-radius: 4px">Queued</span>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1e Capture -->
+    <div id="1e" data-screen-label="1e Capture" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1e" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1e</a><span style="font-size: 13px; color: #5C6368">Capture — recording</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #fff; color: #2F3437; font-family: 'Public Sans', system-ui, sans-serif; padding: 62px 20px 48px; gap: 16px">
+          <div style="display: flex; align-items: center; justify-content: space-between">
+            <button style="min-height: 44px; padding: 0; border: 0; background: none; font: 600 15px 'Public Sans', system-ui, sans-serif; color: #C2410C">Cancel</button>
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600"><span style="width: 10px; height: 10px; border-radius: 50%; background: #F26122; display: inline-flex">{{ blinkDot }}</span><span style="font-variant-numeric: tabular-nums">Recording 0:42</span></div>
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #8A9196">RFI</span>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6368">Live transcript · on device</span>
+            <p style="margin: 0; font-size: 24px; font-weight: 500; line-height: 1.35; letter-spacing: -.01em; text-wrap: pretty">RFI for 118 West Illinois, third floor. Mechanical drawings show the duct going through the beam at grid C-4. Need the structural engineer to confirm we can core through. This is holding up rough-in. Cost impact unknown. Assign to Mike, due Friday<span style="display: inline-block; width: 3px; height: 24px; background: #F26122; vertical-align: -4px; margin-left: 3px">{{ blinkCaret }}</span></p>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px">
+            <div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6368">Photos · 3</span><span style="font-size: 11px; color: #8A9196; font-variant-numeric: tabular-nums">Level 3 · 41.891, -87.631</span></div>
+            <div style="display: flex; gap: 10px">
+              <div style="width: 76px; height: 76px; border-radius: 6px; background: linear-gradient(160deg, #9AA1A6, #5C6368)"></div>
+              <div style="width: 76px; height: 76px; border-radius: 6px; background: linear-gradient(200deg, #B6BCC0, #7A8186)"></div>
+              <div style="width: 76px; height: 76px; border-radius: 6px; background: linear-gradient(120deg, #6B7278, #3A4044)"></div>
+              <button style="width: 76px; height: 76px; border-radius: 6px; border: 1.5px dashed #B6BCC0; background: none; color: #5C6368; display: inline-flex; align-items: center; justify-content: center" aria-label="Add photo"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path><circle cx="12" cy="13" r="3"></circle></svg></button>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 14px; padding-top: 14px; border-top: 1px solid #E1E4E6">
+            <button style="width: 76px; height: 76px; border-radius: 50%; border: 0; background: #F26122; color: #fff; flex: none; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 8px #FEF0E8" aria-label="Stop recording"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect width="14" height="14" x="5" y="5" rx="2"></rect></svg></button>
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+              <button style="min-height: 52px; border: 0; border-radius: 6px; background: #F4F5F6; color: #8A9196; font: 700 16px 'Public Sans', system-ui, sans-serif" disabled>Build RFI</button>
+              <span style="font-size: 11px; color: #8A9196; text-align: center">Stop recording to build. Works without signal.</span>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1f Review -->
+    <div id="1f" data-screen-label="1f Review" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1f" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1f</a><span style="font-size: 13px; color: #5C6368">Review — one scrolling form, unresolved inline</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #fff; color: #2F3437; font-family: 'Public Sans', system-ui, sans-serif; padding-top: 62px">
+          <div style="padding: 0 20px 14px; display: flex; flex-direction: column; gap: 6px">
+            <button style="align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0; border: 0; background: none; font: 600 14px 'Public Sans', system-ui, sans-serif; color: #C2410C"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>Capture</button>
+            <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 8px">
+              <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -.02em">Review RFI</h2>
+              <span style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #C2410C; background: #FEF0E8; padding: 5px 9px; border-radius: 4px; margin-bottom: 6px">1 field needs you</span>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; padding: 0 20px">
+            <div style="display: flex; flex-direction: column; gap: 5px; padding: 14px 0; border-top: 1px solid #E1E4E6">
+              <label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Subject</label>
+              <div style="font-size: 16px; font-weight: 600; line-height: 1.4">Core through beam at grid C-4 for duct routing, Level 3</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 5px; padding: 14px 0; border-top: 1px solid #E1E4E6">
+              <label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Question</label>
+              <div style="font-size: 15px; line-height: 1.55; text-wrap: pretty">Can we core through the beam at grid C-4 on Level 3 to route the duct shown on the mechanical drawings? Please confirm with structural. Rough-in is on hold at this location pending the answer.</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px; margin: 8px 0; border-left: 4px solid #F26122; border-radius: 0 8px 8px 0; background: #FEF0E8">
+              <div style="display: flex; align-items: center; justify-content: space-between"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #C2410C">Assignee</label><span style="font-size: 12px; font-weight: 600; color: #C2410C">Two people named Mike</span></div>
+              <div style="display: flex; flex-direction: column; gap: 4px">
+                <label style="display: flex; align-items: center; gap: 12px; min-height: 48px; font-size: 15px"><span style="width: 22px; height: 22px; border-radius: 50%; border: 2px solid #B6BCC0; flex: none"></span><span style="display: flex; flex-direction: column; line-height: 1.25"><span style="font-weight: 600">Mike Torres</span><span style="font-size: 12px; color: #5C6368">Structural engineer · Thornton Tomasetti</span></span></label>
+                <label style="display: flex; align-items: center; gap: 12px; min-height: 48px; font-size: 15px"><span style="width: 22px; height: 22px; border-radius: 50%; border: 2px solid #B6BCC0; flex: none"></span><span style="display: flex; flex-direction: column; line-height: 1.25"><span style="font-weight: 600">Mike Alvarez</span><span style="font-size: 12px; color: #5C6368">Superintendent · 3F Construction</span></span></label>
+              </div>
+              <a href="#1f" style="font-size: 13px; font-weight: 600; align-self: flex-start">Someone else…</a>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 60px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">RFI manager</label><span style="font-size: 15px">Drew Friestedt</span></div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A9196" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 60px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Location</label><span style="font-size: 15px">Level 3 › Grid C-4</span></div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A9196" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 60px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Spec section</label><span style="font-size: 15px"><span style="font-variant-numeric: tabular-nums">23 31 00</span> · HVAC Ducts and Casings</span></div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A9196" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid #E1E4E6">
+              <div style="display: flex; flex-direction: column; gap: 3px; padding: 14px 10px 14px 0; border-right: 1px solid #E1E4E6"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Due</label><span style="font-size: 15px; font-variant-numeric: tabular-nums">Fri, Oct 30</span></div>
+              <div style="display: flex; flex-direction: column; gap: 3px; padding: 14px 0 14px 14px"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Drawing</label><span style="font-size: 15px">M-301</span></div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid #E1E4E6">
+              <div style="display: flex; flex-direction: column; gap: 3px; padding: 14px 10px 14px 0; border-right: 1px solid #E1E4E6"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Schedule impact</label><span style="font-size: 15px">Yes · holding rough-in</span></div>
+              <div style="display: flex; flex-direction: column; gap: 3px; padding: 14px 0 14px 14px"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Cost impact</label><span style="font-size: 15px">Yes · amount unknown</span></div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px 0; border-top: 1px solid #E1E4E6">
+              <label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Photos · 3</label>
+              <div style="display: flex; gap: 10px">
+                <div style="width: 64px; height: 64px; border-radius: 6px; background: linear-gradient(160deg, #9AA1A6, #5C6368)"></div>
+                <div style="width: 64px; height: 64px; border-radius: 6px; background: linear-gradient(200deg, #B6BCC0, #7A8186)"></div>
+                <div style="width: 64px; height: 64px; border-radius: 6px; background: linear-gradient(120deg, #6B7278, #3A4044)"></div>
+              </div>
+            </div>
+            <button style="display: flex; align-items: center; justify-content: space-between; min-height: 52px; padding: 0; border: 0; border-top: 1px solid #E1E4E6; border-bottom: 1px solid #E1E4E6; background: none; font: 500 14px 'Public Sans', system-ui, sans-serif; color: #5C6368"><span>Field notes · original transcript</span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+            <div style="height: 110px"></div>
+          </div>
+          <div style="position: sticky; bottom: 0; margin-top: auto; padding: 12px 20px 44px; background: #fff; border-top: 1px solid #E1E4E6; display: flex; gap: 10px">
+            <button style="flex: 1; min-height: 54px; border: 1.5px solid #2F3437; border-radius: 6px; background: #fff; color: #2F3437; font: 700 15px 'Public Sans', system-ui, sans-serif">Save draft</button>
+            <button style="flex: 1.4; min-height: 54px; border: 0; border-radius: 6px; background: #C2410C; color: #fff; font: 700 15px 'Public Sans', system-ui, sans-serif">Submit to Procore</button>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1g Result -->
+    <div id="1g" data-screen-label="1g Result" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1g" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1g</a><span style="font-size: 13px; color: #5C6368">Result</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #2F3437; color: #fff; font-family: 'Public Sans', system-ui, sans-serif; padding: 70px 28px 56px">
+          <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 16px">
+            <span style="width: 56px; height: 56px; border-radius: 50%; background: #F26122; color: #fff; display: inline-flex; align-items: center; justify-content: center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+            <div style="font-size: 13px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: #F26122">Created in Procore</div>
+            <div style="font-size: 84px; font-weight: 700; line-height: .95; letter-spacing: -.04em; font-variant-numeric: tabular-nums">RFI 214</div>
+            <div style="font-size: 20px; font-weight: 600; line-height: 1.3; text-wrap: pretty; color: #E9EBEC">Core through beam at grid C-4 for duct routing, Level 3</div>
+            <div style="width: 48px; height: 3px; background: #F26122"></div>
+            <dl style="margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px 24px; font-size: 14px">
+              <dt style="color: #B6BCC0">Project</dt><dd style="margin: 0">118 W Illinois</dd>
+              <dt style="color: #B6BCC0">Assigned</dt><dd style="margin: 0">Mike Torres</dd>
+              <dt style="color: #B6BCC0">Due</dt><dd style="margin: 0; font-variant-numeric: tabular-nums">Fri, Oct 30</dd>
+              <dt style="color: #B6BCC0">Attached</dt><dd style="margin: 0">3 photos</dd>
+              <dt style="color: #B6BCC0">Sent</dt><dd style="margin: 0; font-variant-numeric: tabular-nums">2:14 PM · 48 s from record</dd>
+            </dl>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px">
+            <button style="min-height: 56px; border: 0; border-radius: 6px; background: #F26122; color: #fff; font: 700 17px 'Public Sans', system-ui, sans-serif; display: inline-flex; align-items: center; justify-content: center; gap: 10px">Open in Procore <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg></button>
+            <button style="min-height: 56px; border: 1.5px solid #fff; border-radius: 6px; background: none; color: #fff; font: 700 17px 'Public Sans', system-ui, sans-serif">New RFI</button>
+            <a href="#1c" style="text-align: center; font-size: 14px; font-weight: 600; text-decoration: none; padding: 10px; color: #B6BCC0">Done</a>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1h Settings -->
+    <div id="1h" data-screen-label="1h Settings" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1h" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1h</a><span style="font-size: 13px; color: #5C6368">Settings</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #fff; color: #2F3437; font-family: 'Public Sans', system-ui, sans-serif; padding: 62px 20px 56px; gap: 24px">
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <button style="align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0; border: 0; background: none; font: 600 14px 'Public Sans', system-ui, sans-serif; color: #C2410C"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>Home</button>
+            <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -.02em">Settings</h2>
+          </div>
+          <div style="display: flex; flex-direction: column">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6368; padding-bottom: 8px">Submitting</span>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 64px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Submit as Procore draft</span><span style="font-size: 12px; color: #5C6368; line-height: 1.4">RFIs land as drafts until you open them in Procore.</span></div>
+              <span style="width: 51px; height: 31px; border-radius: 999px; background: #F26122; position: relative; flex: none"><span style="position: absolute; top: 2px; right: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff"></span></span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 64px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Photo size</span><span style="font-size: 12px; color: #5C6368">Long edge, before upload</span></div>
+              <span style="font-size: 14px; color: #5C6368; font-variant-numeric: tabular-nums">2,500 px</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A9196" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; border-bottom: 1px solid #E1E4E6; min-height: 64px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Keep audio after submit</span><span style="font-size: 12px; color: #5C6368">Off: recordings are deleted once Procore confirms.</span></div>
+              <span style="width: 51px; height: 31px; border-radius: 999px; background: #E1E4E6; position: relative; flex: none"><span style="position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2)"></span></span>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6368; padding-bottom: 8px">Project</span>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 64px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">118 W Illinois</span><span style="font-size: 12px; color: #5C6368">Monroe Residential · lookups refreshed 9 min ago</span></div>
+              <a href="#1b" style="font-size: 14px; font-weight: 600; text-decoration: none">Change</a>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; border-bottom: 1px solid #E1E4E6; min-height: 64px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Refresh people and locations</span><span style="font-size: 12px; color: #5C6368">Pull the latest from Procore now</span></div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C2410C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 3v6h-6"></path></svg>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #5C6368; padding-bottom: 8px">Account</span>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 64px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Drew Friestedt</span><span style="font-size: 12px; color: #5C6368">drew@monroeresidential.com · Procore</span></div>
+            </div>
+            <button style="min-height: 52px; padding: 0; border: 0; border-top: 1px solid #E1E4E6; border-bottom: 1px solid #E1E4E6; background: none; text-align: left; font: 600 15px 'Public Sans', system-ui, sans-serif; color: #C2410C">Sign out</button>
+          </div>
+          <div style="margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 8px"><svg width="28" height="28" viewBox="0 0 44 44" aria-label="Field Assistant" role="img"><g stroke-width="4" stroke-linecap="round"><path d="M8 18v8" stroke="#2F3437"></path><path d="M15 12v20" stroke="#2F3437"></path><path d="M22 6v32" stroke="#F26122"></path><path d="M29 14v16" stroke="#2F3437"></path><path d="M36 19v6" stroke="#2F3437"></path></g></svg><span style="font-size: 11px; color: #8A9196; text-align: center; font-variant-numeric: tabular-nums">Field Assistant 1.0 (build 14) · api.fieldassistant.tools</span></div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1i Reauth -->
+    <div id="1i" data-screen-label="1i Reauth" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1i" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1i</a><span style="font-size: 13px; color: #5C6368">Reauth prompt — over Home</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+        <div style="min-height: 100%; position: relative; display: flex; flex-direction: column; background: #fff; color: #2F3437; font-family: 'Public Sans', system-ui, sans-serif; padding: 62px 20px 56px; gap: 22px">
+          <div style="display: flex; flex-direction: column; gap: 4px; opacity: .35">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #C2410C">Monroe Residential</span>
+            <span style="font: 700 28px 'Public Sans', system-ui, sans-serif; letter-spacing: -.02em">118 W Illinois</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; opacity: .35">
+            <div style="min-height: 88px; border-radius: 8px; border: 2px solid #F26122"></div>
+            <div style="min-height: 88px; border-radius: 8px; border: 1px solid #E1E4E6"></div>
+          </div>
+          <div style="position: absolute; inset: 0; background: rgba(47,52,55,.55); display: flex; align-items: flex-end; padding: 0">
+            <div style="width: 100%; background: #fff; border-radius: 18px 18px 0 0; padding: 12px 24px 52px; display: flex; flex-direction: column; gap: 16px">
+              <span style="width: 36px; height: 5px; border-radius: 3px; background: #E1E4E6; align-self: center"></span>
+              <span style="width: 48px; height: 48px; border-radius: 50%; background: #FEF0E8; color: #C2410C; display: inline-flex; align-items: center; justify-content: center"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg></span>
+              <div style="display: flex; flex-direction: column; gap: 8px">
+                <h3 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.02em">Sign in to Procore again</h3>
+                <p style="margin: 0; font-size: 15px; line-height: 1.5; color: #5C6368">Procore stopped accepting this phone's access, usually after a password change. Your 2 queued RFIs are safe and will send as soon as you're back in.</p>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #F4F5F6; border-radius: 8px; font-size: 13px"><span style="font-weight: 700; color: #C2410C; border: 1px solid #C2410C; padding: 2px 7px; border-radius: 4px; font-size: 11px">Queued</span><span style="flex: 1; color: #5C6368">Window rough opening, unit 1204 · 1 more</span></div>
+              <button style="min-height: 56px; border: 0; border-radius: 6px; background: #C2410C; color: #fff; font: 700 17px 'Public Sans', system-ui, sans-serif">Sign in with Procore</button>
+              <button style="min-height: 44px; border: 0; background: none; font: 600 15px 'Public Sans', system-ui, sans-serif; color: #5C6368">Not now</button>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1j Offline / queued -->
+    <div id="1j" data-screen-label="1j Offline" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1j" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1j</a><span style="font-size: 13px; color: #5C6368">Offline — drafts list with queue states</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #fff; color: #2F3437; font-family: 'Public Sans', system-ui, sans-serif; padding-top: 62px">
+          <div style="margin: 0 20px; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #2F3437; color: #fff; border-radius: 8px; font-size: 13px; font-weight: 500"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h.01"></path><path d="M8.5 16.4a5 5 0 0 1 7 0"></path><path d="M5 12.9a10 10 0 0 1 5.2-2.7"></path><path d="M19 12.9a10 10 0 0 0-2.1-1.6"></path><path d="M2 8.8a15 15 0 0 1 6.4-3.4"></path><path d="M22 8.8a15 15 0 0 0-11-4"></path><path d="m2 2 20 20"></path></svg><span style="flex: 1">No signal. Recording works; sending waits.</span></div>
+          <div style="padding: 20px 20px 10px; display: flex; flex-direction: column; gap: 6px">
+            <button style="align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0; border: 0; background: none; font: 600 14px 'Public Sans', system-ui, sans-serif; color: #C2410C"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>Home</button>
+            <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -.02em">Drafts</h2>
+          </div>
+          <div style="display: flex; flex-direction: column; padding: 0 20px">
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 72px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Spalling at loading dock column</span><span style="font-size: 12px; color: #8A9196; font-variant-numeric: tabular-nums">RFI · 3:40 PM · 2 photos</span><span style="font-size: 12px; color: #C2410C; font-weight: 500">Needs connection to build the draft</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #C2410C; border: 1px solid #C2410C; padding: 3px 8px; border-radius: 4px">Waiting</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 72px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Window rough opening, unit 1204</span><span style="font-size: 12px; color: #8A9196; font-variant-numeric: tabular-nums">RFI · 11:02 AM · 1 photo</span><span style="font-size: 12px; color: #5C6368">Reviewed. Sends automatically, once.</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #C2410C; border: 1px solid #C2410C; padding: 3px 8px; border-radius: 4px">Queued</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 72px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Duct through beam at grid C-4</span><span style="font-size: 12px; color: #8A9196; font-variant-numeric: tabular-nums">RFI · 2:14 PM · 3 photos</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #2F3437; background: #F4F5F6; padding: 4px 8px; border-radius: 4px">#214 Submitted</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; min-height: 72px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Fire caulk at level 2 shaft</span><span style="font-size: 12px; color: #8A9196">RFI · Yesterday</span><span style="font-size: 12px; color: #C2410C; font-weight: 500">Procore: Location is required on this project</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #fff; background: #C2410C; padding: 4px 8px; border-radius: 4px">Fix</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 0; border-top: 1px solid #E1E4E6; border-bottom: 1px solid #E1E4E6; min-height: 72px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"><span style="font-size: 15px; font-weight: 500">Elevator pit waterproofing</span><span style="font-size: 12px; color: #8A9196">RFI · Mon</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #5C6368; border: 1px solid #E1E4E6; padding: 3px 8px; border-radius: 4px">Draft</span>
+            </div>
+          </div>
+          <p style="margin: auto 20px 56px; font-size: 12px; color: #8A9196; line-height: 1.5; text-align: center">Each submit carries the draft's own key, so a retry after a dropped connection never posts twice.</p>
+        </div>
+      </x-import>
+    </div>
+  </div>
+
+  <!-- ─── Dark row ─── -->
+  <div style="display: flex; flex-direction: column; gap: 6px; max-width: 720px">
+    <div style="font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #C2410C">Dark appearance</div>
+    <p style="margin: 0; font-size: 14px; line-height: 1.6; color: #5C6368">Same layout on the site's charcoal. Orange stays on the one action; hairlines go to white at 12%.</p>
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 44px; align-items: flex-start">
+
+    <!-- 1k Home dark -->
+    <div id="1k" data-screen-label="1k Home dark" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1k" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1k</a><span style="font-size: 13px; color: #5C6368">Home A · dark</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #2F3437; color: #fff; font-family: 'Public Sans', system-ui, sans-serif; padding: 62px 20px 56px; gap: 22px">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 8px">
+            <div style="display: flex; flex-direction: column; gap: 4px">
+              <span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #F26122">Monroe Residential</span>
+              <button style="display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; font: 700 28px 'Public Sans', system-ui, sans-serif; letter-spacing: -.02em; color: #fff"><span>118 W Illinois</span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F26122" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg></button>
+            </div>
+            <button style="width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18); background: none; color: #fff; display: inline-flex; align-items: center; justify-content: center" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"></path></svg></button>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+            <div style="min-height: 88px; padding: 14px; border-radius: 8px; border: 2px solid #F26122; display: flex; flex-direction: column; justify-content: space-between">
+              <span style="font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #F26122">Selected</span>
+              <span style="font-size: 20px; font-weight: 700">RFI</span>
+            </div>
+            <div style="min-height: 88px; padding: 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,.18); display: flex; flex-direction: column; justify-content: space-between">
+              <span style="font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #B6BCC0">Available</span>
+              <span style="font-size: 20px; font-weight: 700">Observation</span>
+            </div>
+            <div style="min-height: 88px; padding: 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); display: flex; flex-direction: column; justify-content: space-between; color: #8A9196">
+              <span style="font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase">Read-only here</span>
+              <span style="font-size: 20px; font-weight: 700">Punch item</span>
+            </div>
+            <div style="min-height: 88px; padding: 14px; border-radius: 8px; border: 1px dashed rgba(255,255,255,.18); display: flex; flex-direction: column; justify-content: space-between; color: #8A9196">
+              <span style="font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase">Coming</span>
+              <span style="font-size: 20px; font-weight: 700">Daily log</span>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 0">
+            <button style="width: 116px; height: 116px; border-radius: 50%; border: 0; background: #F26122; color: #fff; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 10px rgba(242,97,34,.18)" aria-label="Record an RFI"><svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg></button>
+            <span style="font-size: 17px; font-weight: 700; margin-top: 8px">Record an RFI</span>
+            <span style="font-size: 13px; color: #B6BCC0">Under a minute, start to Procore</span>
+          </div>
+          <div style="display: flex; flex-direction: column">
+            <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 8px"><span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #B6BCC0">Recent</span><a href="#1k" style="font-size: 13px; font-weight: 600; text-decoration: none; color: #F26122">All drafts</a></div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.12); min-height: 60px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Duct through beam at grid C-4</span><span style="font-size: 12px; color: #B6BCC0; font-variant-numeric: tabular-nums">RFI · 2:14 PM · 3 photos</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #fff; background: #3A4044; padding: 4px 8px; border-radius: 4px">#214 Submitted</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.12); min-height: 60px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Window rough opening, unit 1204</span><span style="font-size: 12px; color: #B6BCC0; font-variant-numeric: tabular-nums">RFI · 11:02 AM · 1 photo</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #F26122; border: 1px solid #F26122; padding: 3px 8px; border-radius: 4px">Queued</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.12); border-bottom: 1px solid rgba(255,255,255,.12); min-height: 60px">
+              <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Fire caulk at level 2 shaft</span><span style="font-size: 12px; color: #B6BCC0">RFI · Yesterday</span></div>
+              <span style="font-size: 11px; font-weight: 700; color: #B6BCC0; border: 1px solid rgba(255,255,255,.18); padding: 3px 8px; border-radius: 4px">Draft</span>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1l Capture dark -->
+    <div id="1l" data-screen-label="1l Capture dark" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1l" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1l</a><span style="font-size: 13px; color: #5C6368">Capture · dark</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #2F3437; color: #fff; font-family: 'Public Sans', system-ui, sans-serif; padding: 62px 20px 48px; gap: 16px">
+          <div style="display: flex; align-items: center; justify-content: space-between">
+            <button style="min-height: 44px; padding: 0; border: 0; background: none; font: 600 15px 'Public Sans', system-ui, sans-serif; color: #F26122">Cancel</button>
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600"><span style="width: 10px; height: 10px; border-radius: 50%; background: #F26122; display: inline-flex">{{ blinkDot2 }}</span><span style="font-variant-numeric: tabular-nums">Recording 0:42</span></div>
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #B6BCC0">RFI</span>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 10px">
+            <span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #B6BCC0">Live transcript · on device</span>
+            <p style="margin: 0; font-size: 24px; font-weight: 500; line-height: 1.35; letter-spacing: -.01em; text-wrap: pretty">RFI for 118 West Illinois, third floor. Mechanical drawings show the duct going through the beam at grid C-4. Need the structural engineer to confirm we can core through. This is holding up rough-in. Cost impact unknown. Assign to Mike, due Friday<span style="display: inline-block; width: 3px; height: 24px; background: #F26122; vertical-align: -4px; margin-left: 3px">{{ blinkCaret2 }}</span></p>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px">
+            <div style="display: flex; align-items: baseline; justify-content: space-between"><span style="font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #B6BCC0">Photos · 3</span><span style="font-size: 11px; color: #8A9196; font-variant-numeric: tabular-nums">Level 3 · 41.891, -87.631</span></div>
+            <div style="display: flex; gap: 10px">
+              <div style="width: 76px; height: 76px; border-radius: 6px; background: linear-gradient(160deg, #9AA1A6, #5C6368)"></div>
+              <div style="width: 76px; height: 76px; border-radius: 6px; background: linear-gradient(200deg, #B6BCC0, #7A8186)"></div>
+              <div style="width: 76px; height: 76px; border-radius: 6px; background: linear-gradient(120deg, #6B7278, #3A4044)"></div>
+              <button style="width: 76px; height: 76px; border-radius: 6px; border: 1.5px dashed rgba(255,255,255,.3); background: none; color: #B6BCC0; display: inline-flex; align-items: center; justify-content: center" aria-label="Add photo"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path><circle cx="12" cy="13" r="3"></circle></svg></button>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.12)">
+            <button style="width: 76px; height: 76px; border-radius: 50%; border: 0; background: #F26122; color: #fff; flex: none; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 0 8px rgba(242,97,34,.18)" aria-label="Stop recording"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect width="14" height="14" x="5" y="5" rx="2"></rect></svg></button>
+            <div style="flex: 1; display: flex; flex-direction: column; gap: 6px">
+              <button style="min-height: 52px; border: 0; border-radius: 6px; background: #3A4044; color: #8A9196; font: 700 16px 'Public Sans', system-ui, sans-serif" disabled>Build RFI</button>
+              <span style="font-size: 11px; color: #8A9196; text-align: center">Stop recording to build. Works without signal.</span>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <!-- 1m Review dark -->
+    <div id="1m" data-screen-label="1m Review dark" style="display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; gap: 8px"><a href="#1m" style="text-decoration: none; font-size: 12px; font-weight: 700; padding: 3px 8px; border: 1px solid #C2410C; border-radius: 4px">1m</a><span style="font-size: 13px; color: #5C6368">Review · dark</span></div>
+      <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ true }}" hint-size="402px,874px">
+        <div style="min-height: 100%; display: flex; flex-direction: column; background: #2F3437; color: #fff; font-family: 'Public Sans', system-ui, sans-serif; padding-top: 62px">
+          <div style="padding: 0 20px 14px; display: flex; flex-direction: column; gap: 6px">
+            <button style="align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0; border: 0; background: none; font: 600 14px 'Public Sans', system-ui, sans-serif; color: #F26122"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>Capture</button>
+            <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 8px">
+              <h2 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -.02em">Review RFI</h2>
+              <span style="font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #fff; background: #C2410C; padding: 5px 9px; border-radius: 4px; margin-bottom: 6px">1 field needs you</span>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; padding: 0 20px">
+            <div style="display: flex; flex-direction: column; gap: 5px; padding: 14px 0; border-top: 1px solid rgba(255,255,255,.12)">
+              <label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Subject</label>
+              <div style="font-size: 16px; font-weight: 600; line-height: 1.4">Core through beam at grid C-4 for duct routing, Level 3</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 5px; padding: 14px 0; border-top: 1px solid rgba(255,255,255,.12)">
+              <label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Question</label>
+              <div style="font-size: 15px; line-height: 1.55; color: #E9EBEC; text-wrap: pretty">Can we core through the beam at grid C-4 on Level 3 to route the duct shown on the mechanical drawings? Please confirm with structural. Rough-in is on hold at this location pending the answer.</div>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px; margin: 8px 0; border-left: 4px solid #F26122; border-radius: 0 8px 8px 0; background: #3A4044">
+              <div style="display: flex; align-items: center; justify-content: space-between"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #F26122">Assignee</label><span style="font-size: 12px; font-weight: 600; color: #F26122">Two people named Mike</span></div>
+              <div style="display: flex; flex-direction: column; gap: 4px">
+                <label style="display: flex; align-items: center; gap: 12px; min-height: 48px; font-size: 15px"><span style="width: 22px; height: 22px; border-radius: 50%; border: 2px solid #8A9196; flex: none"></span><span style="display: flex; flex-direction: column; line-height: 1.25"><span style="font-weight: 600">Mike Torres</span><span style="font-size: 12px; color: #B6BCC0">Structural engineer · Thornton Tomasetti</span></span></label>
+                <label style="display: flex; align-items: center; gap: 12px; min-height: 48px; font-size: 15px"><span style="width: 22px; height: 22px; border-radius: 50%; border: 2px solid #8A9196; flex: none"></span><span style="display: flex; flex-direction: column; line-height: 1.25"><span style="font-weight: 600">Mike Alvarez</span><span style="font-size: 12px; color: #B6BCC0">Superintendent · 3F Construction</span></span></label>
+              </div>
+              <a href="#1m" style="font-size: 13px; font-weight: 600; align-self: flex-start; color: #F26122">Someone else…</a>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; padding: 14px 0; border-top: 1px solid rgba(255,255,255,.12); min-height: 60px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">RFI manager</label><span style="font-size: 15px">Drew Friestedt</span></div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A9196" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; padding: 14px 0; border-top: 1px solid rgba(255,255,255,.12); min-height: 60px">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Location</label><span style="font-size: 15px">Level 3 › Grid C-4</span></div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A9196" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid rgba(255,255,255,.12)">
+              <div style="display: flex; flex-direction: column; gap: 3px; padding: 14px 10px 14px 0; border-right: 1px solid rgba(255,255,255,.12)"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Due</label><span style="font-size: 15px; font-variant-numeric: tabular-nums">Fri, Oct 30</span></div>
+              <div style="display: flex; flex-direction: column; gap: 3px; padding: 14px 0 14px 14px"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Drawing</label><span style="font-size: 15px">M-301</span></div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid rgba(255,255,255,.12); border-bottom: 1px solid rgba(255,255,255,.12)">
+              <div style="display: flex; flex-direction: column; gap: 3px; padding: 14px 10px 14px 0; border-right: 1px solid rgba(255,255,255,.12)"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Schedule impact</label><span style="font-size: 15px">Yes · holding rough-in</span></div>
+              <div style="display: flex; flex-direction: column; gap: 3px; padding: 14px 0 14px 14px"><label style="font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A9196">Cost impact</label><span style="font-size: 15px">Yes · amount unknown</span></div>
+            </div>
+            <div style="height: 110px"></div>
+          </div>
+          <div style="position: sticky; bottom: 0; margin-top: auto; padding: 12px 20px 44px; background: #2F3437; border-top: 1px solid rgba(255,255,255,.12); display: flex; gap: 10px">
+            <button style="flex: 1; min-height: 54px; border: 1.5px solid #fff; border-radius: 6px; background: none; color: #fff; font: 700 15px 'Public Sans', system-ui, sans-serif">Save draft</button>
+            <button style="flex: 1.4; min-height: 54px; border: 0; border-radius: 6px; background: #F26122; color: #fff; font: 700 15px 'Public Sans', system-ui, sans-serif">Submit to Procore</button>
+          </div>
+        </div>
+      </x-import>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const blink = (k, d) => React.createElement('span', { key: k, style: { display: 'block', width: '100%', height: '100%', borderRadius: 'inherit', background: 'inherit', animation: `fa-blink 1.1s ${d} infinite` } });
+    return { blinkDot: blink('d', '0s'), blinkCaret: blink('c', '.3s'), blinkDot2: blink('d2', '0s'), blinkCaret2: blink('c2', '.3s') };
+  }
+}
+</script>
+</body>
+</html>
