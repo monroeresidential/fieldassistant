@@ -72,7 +72,7 @@ func TestRFI_OutputSchema_IsValidJSONSchema(t *testing.T) {
 
 func TestRFI_ApplyDefaults_ManagerAndDraft(t *testing.T) {
 	f := New()
-	out, un := f.ApplyDefaults(ctxFor(42, 2), map[string]any{}, usersWith(42))
+	out, un := f.ApplyDefaults(ctxFor(42, 2), map[string]any{}, nil, usersWith(42))
 	if len(un) != 0 {
 		t.Errorf("unresolved = %+v", un)
 	}
@@ -84,14 +84,14 @@ func TestRFI_ApplyDefaults_ManagerAndDraft(t *testing.T) {
 		t.Errorf("empty arrays not defaulted: %s", b)
 	}
 
-	out, _ = f.ApplyDefaults(ctxFor(42, 5), map[string]any{}, usersWith(42))
+	out, _ = f.ApplyDefaults(ctxFor(42, 5), map[string]any{}, nil, usersWith(42))
 	if out["draft"] != false {
 		t.Errorf("SubmittedCount 5: draft = %v, want false", out["draft"])
 	}
 
 	// Values already set are kept, and the input is not mutated.
 	in := map[string]any{"rfi_manager_id": float64(7), "draft": false, "private": true}
-	out, _ = f.ApplyDefaults(ctxFor(42, 0), in, usersWith(42))
+	out, _ = f.ApplyDefaults(ctxFor(42, 0), in, nil, usersWith(42))
 	if out["rfi_manager_id"] != float64(7) || out["draft"] != false || out["private"] != true {
 		t.Errorf("explicit values overridden: %v", out)
 	}
@@ -101,7 +101,7 @@ func TestRFI_ApplyDefaults_ManagerAndDraft(t *testing.T) {
 }
 
 func TestRFI_ApplyDefaults_ManagerNotInDirectory_Unresolved(t *testing.T) {
-	out, un := New().ApplyDefaults(ctxFor(42, 0), map[string]any{}, usersWith(1, 2))
+	out, un := New().ApplyDefaults(ctxFor(42, 0), map[string]any{}, nil, usersWith(1, 2))
 	if _, ok := out["rfi_manager_id"]; ok {
 		t.Error("rfi_manager_id set for a user not in the directory")
 	}
@@ -111,16 +111,49 @@ func TestRFI_ApplyDefaults_ManagerNotInDirectory_Unresolved(t *testing.T) {
 	}
 }
 
+func TestRFI_ApplyDefaults_SkipsManagerWhenUnresolved(t *testing.T) {
+	in := []pipeline.Unresolved{{Field: "rfi_manager_id", Reason: pipeline.ReasonAmbiguous,
+		Candidates: []pipeline.LookupRow{{ID: 42}, {ID: 43}}}}
+	out, un := New().ApplyDefaults(ctxFor(42, 0), map[string]any{}, in, usersWith(42, 43))
+	if _, ok := out["rfi_manager_id"]; ok {
+		t.Errorf("rfi_manager_id = %v, want unset while unresolved", out["rfi_manager_id"])
+	}
+	if len(un) != 0 {
+		t.Errorf("added unresolved = %+v, want none", un)
+	}
+}
+
+func TestRFI_PayloadFields_MatchSchema(t *testing.T) {
+	f := New()
+	got := map[string]bool{}
+	for _, p := range f.PayloadFields() {
+		got[p] = true
+	}
+	props := OutputSchema["properties"].(map[string]any)["payload"].(map[string]any)["properties"].(map[string]any)
+	if len(got) != len(props) {
+		t.Errorf("PayloadFields = %v, schema has %d properties", f.PayloadFields(), len(props))
+	}
+	for k := range props {
+		if !got[k] {
+			t.Errorf("PayloadFields lacks %s", k)
+		}
+	}
+	subject := props["subject"].(map[string]any)
+	if subject["maxLength"] != 100 {
+		t.Errorf("subject maxLength = %v, want 100", subject["maxLength"])
+	}
+}
+
 func TestRFI_QuestionBody_AppendsFieldNotes(t *testing.T) {
 	f := New()
-	out, _ := f.ApplyDefaults(ctxFor(42, 0), map[string]any{"question_body": "Why?"}, usersWith(42))
+	out, _ := f.ApplyDefaults(ctxFor(42, 0), map[string]any{"question_body": "Why?"}, nil, usersWith(42))
 	body, _ := out["question_body"].(string)
 	if !strings.HasSuffix(body, "Field notes:\num why") || body != "Why?\n\nField notes:\num why" {
 		t.Errorf("question_body = %q", body)
 	}
 
 	already := "Why?\n\nField notes:\num why"
-	out, _ = f.ApplyDefaults(ctxFor(42, 0), map[string]any{"question_body": already}, usersWith(42))
+	out, _ = f.ApplyDefaults(ctxFor(42, 0), map[string]any{"question_body": already}, nil, usersWith(42))
 	if out["question_body"] != already {
 		t.Errorf("Field notes appended twice: %q", out["question_body"])
 	}
@@ -131,7 +164,7 @@ func TestRFI_Prompt_LoadsWithVersion(t *testing.T) {
 	if len(p.Version) != 12 {
 		t.Errorf("Version = %q, want 12 hex digits", p.Version)
 	}
-	for _, s := range []string{"Field notes:", "submit_draft", "unresolved", "yes_unknown", "YYYY-MM-DD"} {
+	for _, s := range []string{"Field notes:", "submit_draft", "unresolved", "yes_unknown", "YYYY-MM-DD", "Never use `tbd`"} {
 		if !strings.Contains(p.Text, s) {
 			t.Errorf("prompt lacks %q", s)
 		}

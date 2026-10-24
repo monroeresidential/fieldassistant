@@ -15,8 +15,10 @@ const dateLayout = "2006-01-02"
 //   - An ID not in lookups[kind] is removed: a single-valued field loses its
 //     key, a multi-valued field keeps the remaining IDs (possibly []). Each
 //     such field is flagged once as not_in_lookup.
-//   - Unresolved candidates not in the lookup are dropped; the rest are
-//     replaced with the cached rows.
+//   - Unresolved entries for a field not in f.PayloadFields are dropped.
+//     Candidates of an ID field that are not in its lookup are dropped and
+//     the rest replaced with the cached rows; any other field gets no
+//     candidates, since only lookup rows may be offered for picking.
 //   - A date field that is not YYYY-MM-DD, or is before today in loc, is
 //     removed and flagged as date_unparseable.
 //   - Unresolved entries are deduplicated by field, first wins, and a
@@ -95,38 +97,33 @@ func Validate(f Feature, payload map[string]any, unresolved []Unresolved, lookup
 		}
 	}
 
+	known := map[string]bool{}
+	for _, field := range f.PayloadFields() {
+		known[field] = true
+	}
 	seen := map[string]bool{}
 	deduped := make([]Unresolved, 0, len(un))
 	for _, u := range un {
-		if seen[u.Field] {
+		idf, isID := idFields[u.Field]
+		if seen[u.Field] || !(known[u.Field] || isID || dateFields[u.Field]) {
 			continue
 		}
 		seen[u.Field] = true
-		u.Candidates = filterCandidates(u.Candidates, idFields, u.Field, lookups)
-		if idf, ok := idFields[u.Field]; (ok && !idf.Multi) || dateFields[u.Field] {
+		cands := []LookupRow{}
+		if isID {
+			for _, c := range u.Candidates {
+				if row, ok := lookups[idf.Kind].Find(c.ID); ok {
+					cands = append(cands, row)
+				}
+			}
+		}
+		u.Candidates = cands
+		if (isID && !idf.Multi) || dateFields[u.Field] {
 			delete(out, u.Field)
 		}
 		deduped = append(deduped, u)
 	}
 	return out, deduped
-}
-
-// filterCandidates keeps the candidates of an ID field that exist in its
-// lookup, as the cached rows. Candidates of other fields pass through. The
-// result is never nil.
-func filterCandidates(cands []LookupRow, idFields map[string]IDField, field string, lookups map[LookupKind]LookupSet) []LookupRow {
-	out := []LookupRow{}
-	idf, isID := idFields[field]
-	for _, c := range cands {
-		if !isID {
-			out = append(out, c)
-			continue
-		}
-		if row, ok := lookups[idf.Kind].Find(c.ID); ok {
-			out = append(out, row)
-		}
-	}
-	return out
 }
 
 // toID converts a JSON-decoded number to an ID. Non-integral or

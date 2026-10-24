@@ -30,19 +30,28 @@ type ExtractContext struct {
 
 // Feature is what a feature module supplies to the shared extraction
 // pipeline. Payloads are JSON-decoded maps, so numbers arrive as float64.
+//
+// Call order: after extraction the pipeline calls ApplyDefaults with the
+// model's payload and unresolved list, appends the unresolved entries it
+// returns to the model's, and then calls Validate with the defaulted payload
+// and the merged list. Validate runs last so that no default can reintroduce
+// an ID or a field that validation removed.
 type Feature interface {
 	Name() string
 	LookupKinds() []LookupKind
 	IDFields() []IDField
 	DateFields() []string
+	// PayloadFields lists every field the payload may hold. Validate drops
+	// unresolved entries naming any other field.
+	PayloadFields() []string
 	Prompt() llm.Prompt
 	// OutputSchema is the JSON schema of the submit_draft tool input.
 	OutputSchema() map[string]any
 	UserMessage(ctx ExtractContext, transcript string) string
 	// ApplyDefaults returns a new payload with server-side defaults filled in
-	// and any unresolved fields the defaults could not settle. It must not
-	// mutate payload.
-	ApplyDefaults(ctx ExtractContext, payload map[string]any, lookups map[LookupKind]LookupSet) (map[string]any, []Unresolved)
+	// and the unresolved entries the defaults add. It does not default a
+	// field that is already in unresolved, and must not mutate its inputs.
+	ApplyDefaults(ctx ExtractContext, payload map[string]any, unresolved []Unresolved, lookups map[LookupKind]LookupSet) (map[string]any, []Unresolved)
 }
 
 // Unresolved reasons, matching the UnresolvedField.reason enum in the contract.

@@ -20,11 +20,14 @@ func (testFeature) IDFields() []IDField {
 		{Field: "location_id", Kind: KindLocations},
 	}
 }
-func (testFeature) DateFields() []string                      { return []string{"due_date"} }
+func (testFeature) DateFields() []string { return []string{"due_date"} }
+func (testFeature) PayloadFields() []string {
+	return []string{"subject", "assignee_ids", "rfi_manager_id", "location_id", "drawing_number", "due_date"}
+}
 func (testFeature) Prompt() llm.Prompt                        { return llm.Prompt{} }
 func (testFeature) OutputSchema() map[string]any              { return nil }
 func (testFeature) UserMessage(ExtractContext, string) string { return "" }
-func (testFeature) ApplyDefaults(_ ExtractContext, p map[string]any, _ map[LookupKind]LookupSet) (map[string]any, []Unresolved) {
+func (testFeature) ApplyDefaults(_ ExtractContext, p map[string]any, _ []Unresolved, _ map[LookupKind]LookupSet) (map[string]any, []Unresolved) {
 	return p, nil
 }
 
@@ -185,6 +188,30 @@ func TestValidate_KeepsKnownIDs_NoFlag(t *testing.T) {
 	if len(out["assignee_ids"].([]any)) != 2 || out["rfi_manager_id"] != float64(11) ||
 		out["location_id"] != float64(7) || out["due_date"] != "2026-11-01" || out["subject"] != "S" {
 		t.Errorf("payload changed: %v", out)
+	}
+}
+
+func TestValidate_NonIDField_CandidatesDropped(t *testing.T) {
+	p := map[string]any{"drawing_number": "M-301"}
+	in := []Unresolved{{Field: "drawing_number", Reason: ReasonAmbiguous, Candidates: []LookupRow{{ID: 999, Label: "Invented"}}}}
+	out, un := Validate(testFeature{}, p, in, testLookups(), testToday, testLoc)
+	u, n := findUnresolved(un, "drawing_number")
+	if n != 1 {
+		t.Fatalf("unresolved = %+v, want the drawing_number entry kept", un)
+	}
+	if u.Candidates == nil || len(u.Candidates) != 0 {
+		t.Errorf("candidates = %#v, want empty non-nil", u.Candidates)
+	}
+	if out["drawing_number"] != "M-301" {
+		t.Errorf("drawing_number = %v, want kept", out["drawing_number"])
+	}
+}
+
+func TestValidate_UnknownField_Dropped(t *testing.T) {
+	in := []Unresolved{{Field: "assignee", Reason: ReasonAmbiguous, Candidates: []LookupRow{{ID: 11}}}}
+	_, un := Validate(testFeature{}, map[string]any{}, in, testLookups(), testToday, testLoc)
+	if len(un) != 0 {
+		t.Errorf("unresolved = %+v, want the unknown field dropped", un)
 	}
 }
 

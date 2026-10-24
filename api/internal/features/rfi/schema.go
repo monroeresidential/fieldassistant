@@ -13,7 +13,7 @@ var OutputSchema = map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"subject":                   str("The question, at most 100 characters."),
+				"subject":                   map[string]any{"type": "string", "maxLength": 100, "description": "The question, at most 100 characters."},
 				"question_body":             str("Question, context, what is blocked, then a blank line, 'Field notes:' and the verbatim transcript."),
 				"assignee_ids":              ids("User ids from list_users."),
 				"rfi_manager_id":            id("Leave empty; the server sets it."),

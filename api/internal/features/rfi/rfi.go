@@ -4,6 +4,7 @@ package rfi
 import (
 	"embed"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -61,6 +62,17 @@ func (*Feature) IDFields() []pipeline.IDField {
 
 func (*Feature) DateFields() []string { return []string{"due_date"} }
 
+// PayloadFields are the payload property names in OutputSchema, sorted.
+func (*Feature) PayloadFields() []string {
+	props := OutputSchema["properties"].(map[string]any)["payload"].(map[string]any)["properties"].(map[string]any)
+	fields := make([]string, 0, len(props))
+	for k := range props {
+		fields = append(fields, k)
+	}
+	sort.Strings(fields)
+	return fields
+}
+
 func (f *Feature) Prompt() llm.Prompt { return f.prompt }
 
 func (*Feature) OutputSchema() map[string]any { return OutputSchema }
@@ -80,15 +92,21 @@ func (*Feature) UserMessage(ctx pipeline.ExtractContext, transcript string) stri
 	return b.String()
 }
 
-// ApplyDefaults fills the fields the server owns and returns a new payload.
-func (*Feature) ApplyDefaults(ctx pipeline.ExtractContext, payload map[string]any, lookups map[pipeline.LookupKind]pipeline.LookupSet) (map[string]any, []pipeline.Unresolved) {
+// ApplyDefaults fills the fields the server owns and returns a new payload
+// and the unresolved entries it adds. A field already in unresolved is left
+// for the reviewer rather than defaulted.
+func (*Feature) ApplyDefaults(ctx pipeline.ExtractContext, payload map[string]any, unresolved []pipeline.Unresolved, lookups map[pipeline.LookupKind]pipeline.LookupSet) (map[string]any, []pipeline.Unresolved) {
 	out := make(map[string]any, len(payload)+4)
 	for k, v := range payload {
 		out[k] = v
 	}
+	open := map[string]bool{}
+	for _, u := range unresolved {
+		open[u.Field] = true
+	}
 	var un []pipeline.Unresolved
 
-	if out["rfi_manager_id"] == nil {
+	if out["rfi_manager_id"] == nil && !open["rfi_manager_id"] {
 		delete(out, "rfi_manager_id")
 		if lookups[pipeline.KindUsers].Has(ctx.UserProcoreID) {
 			out["rfi_manager_id"] = ctx.UserProcoreID

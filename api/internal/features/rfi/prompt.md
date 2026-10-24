@@ -36,6 +36,7 @@ Field notes:
 # Impacts
 
 - Set `schedule_impact` and `cost_impact` only when the speaker addressed them. Otherwise omit both.
+- Never use `tbd`. When the speaker did not address an impact, omit it.
 - "Holding up", "holding us up" or "we're stopped" means `schedule_impact.status = yes_unknown`.
 - A spoken dollar amount sets `cost_impact` to `{"status": "yes_known", "value": "<amount>"}`.
 
