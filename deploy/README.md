@@ -85,7 +85,8 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    characters. None of these files is committed.
    - `.env` (from `.env.example`): read by Compose only, not by the API. Holds
      `DOMAIN` (`fieldassistant.tools`), `POSTGRES_DEV_PASSWORD`,
-     `POSTGRES_PROD_PASSWORD` and `SPACES_BUCKET`. Use two different passwords.
+     `POSTGRES_PROD_PASSWORD` and `SPACES_BUCKET` (bucket name, optionally with a
+     folder prefix such as `field-assistant/backup`). Use two different passwords.
    - `.env.dev` (from `.env.dev.example`): the dev API. Put the **sandbox**
      Procore client id and secret here. `DATABASE_URL` points at `postgres-dev`
      and uses `POSTGRES_DEV_PASSWORD`. The redirect URL and `PUBLIC_BASE_URL` use
