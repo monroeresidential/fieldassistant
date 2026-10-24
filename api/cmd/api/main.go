@@ -52,7 +52,10 @@ func main() {
 	// Jobs start before the server accepts requests and stop before the
 	// database pool closes (closeDeps is deferred above, so it runs last).
 	// River gets a context the signal never cancels: cancelling the Start
-	// context is a hard stop that skips the graceful drain.
+	// context is a hard stop that skips the graceful drain. Shutdown takes
+	// at most 25 s (HTTP 10 s, jobs 10 s, cancel 5 s), inside the 30 s
+	// stop_grace_period in deploy/docker-compose.yml. A job killed anyway
+	// is retried after jobs.RescueStuckJobsAfter.
 	if err := deps.Jobs.Start(context.Background()); err != nil {
 		slog.Error("starting jobs failed", "error", err)
 		closeDeps()
