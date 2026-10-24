@@ -239,10 +239,14 @@ func (c *Client) ProbeKind(ctx context.Context, accessToken string, companyID, p
 	return c.do(ctx, accessToken, &companyID, http.MethodGet, path, q, nil, &discard)
 }
 
-// GetProject returns projectID's detail, including its time zone.
+// GetProject returns projectID's detail, including its time zone. Procore's
+// Show Project endpoint requires company_id in the query as well as the
+// company header; without it the sandbox answers 400 "Missing Project or
+// Company ID".
 func (c *Client) GetProject(ctx context.Context, accessToken string, companyID, projectID int64) (ProjectDetail, error) {
 	var p ProjectDetail
-	err := c.do(ctx, accessToken, &companyID, http.MethodGet, projectPath(projectID, ""), nil, nil, &p)
+	q := url.Values{"company_id": {strconv.FormatInt(companyID, 10)}}
+	err := c.do(ctx, accessToken, &companyID, http.MethodGet, projectPath(projectID, ""), q, nil, &p)
 	return p, err
 }
 

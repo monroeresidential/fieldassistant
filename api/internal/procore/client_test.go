@@ -577,6 +577,11 @@ func TestClient_GetProject_TimeZone(t *testing.T) {
 	if h := f.recorded()[0].Header.Get("Procore-Company-Id"); h != "7" {
 		t.Errorf("company header = %q", h)
 	}
+	// Procore's Show Project endpoint answers 400 "Missing Project or Company
+	// ID" without company_id in the query, header or not.
+	if q := f.recorded()[0].Query["company_id"]; q != "7" {
+		t.Errorf("company_id query = %q, want 7", q)
+	}
 }
 
 func TestClient_CreateRFI_PostsWrappedBodyWithValidations(t *testing.T) {
