@@ -237,6 +237,7 @@ func (d *Drafts) create(ctx context.Context, in CreateInput) (Draft, error) {
 	payload, added := f.ApplyDefaults(ectx, payload, unresolved, sets)
 	unresolved = append(unresolved, added...)
 	payload, unresolved = Validate(f, payload, unresolved, sets, ectx.Today, loc)
+	unresolved = markBlocking(f, unresolved)
 
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -288,7 +289,7 @@ func (d *Drafts) create(ctx context.Context, in CreateInput) (Draft, error) {
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: store draft: %w", err)
 	}
-	return fromRow(row)
+	return d.toDraft(row)
 }
 
 // Get returns the user's draft.
@@ -302,7 +303,7 @@ func (d *Drafts) Get(ctx context.Context, userID, id uuid.UUID) (Draft, error) {
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: load draft: %w", err)
 	}
-	return fromRow(row)
+	return d.toDraft(row)
 }
 
 // GetByJob returns the user's draft whose current submit job is jobID, or
@@ -317,7 +318,7 @@ func (d *Drafts) GetByJob(ctx context.Context, userID uuid.UUID, jobID int64) (D
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: load draft by job: %w", err)
 	}
-	return fromRow(row)
+	return d.toDraft(row)
 }
 
 // SaveEdits stores the reviewer's payload after validating its IDs and dates
@@ -386,7 +387,7 @@ func (d *Drafts) storeEdits(ctx context.Context, cur Draft, payload map[string]a
 	if err != nil {
 		return Draft{}, err
 	}
-	return fromRow(row)
+	return d.toDraft(row)
 }
 
 // warm loads f's lookup kinds for one extraction or validation. A fatal
@@ -487,7 +488,7 @@ func (d *Drafts) List(ctx context.Context, userID uuid.UUID, projectID int64, li
 	}
 	out := make([]Draft, 0, len(rows))
 	for _, r := range rows {
-		dr, err := fromRow(r)
+		dr, err := d.toDraft(r)
 		if err != nil {
 			return nil, err
 		}
@@ -505,7 +506,19 @@ func (d *Drafts) load(ctx context.Context, id uuid.UUID) (Draft, error) {
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: load draft: %w", err)
 	}
-	return fromRow(row)
+	return d.toDraft(row)
+}
+
+// toDraft is fromRow with each unresolved entry's Blocking recomputed for
+// the draft's feature, so a row stored before Blocking existed, or under
+// different RequiredFields, reads the same as a fresh one.
+func (d *Drafts) toDraft(r db.Draft) (Draft, error) {
+	dr, err := fromRow(r)
+	if err != nil {
+		return Draft{}, err
+	}
+	dr.Unresolved = markBlocking(d.features[dr.Feature], dr.Unresolved)
+	return dr, nil
 }
 
 func fromRow(r db.Draft) (Draft, error) {

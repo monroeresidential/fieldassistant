@@ -86,9 +86,10 @@ func TestSaveEdits_ChangedField_ClearsFlag(t *testing.T) {
 	}
 }
 
-// A due date that has passed since the last save fails Submit, and the
-// stored draft shows the same: due_date removed and flagged.
-func TestSubmit_Unresolved_PersistsRevalidation(t *testing.T) {
+// A due date that has passed since the last save is removed and flagged
+// date_unparseable. due_date is optional, so the flag is advisory: Submit
+// stores the revalidated draft first, then proceeds without the date.
+func TestSubmit_PassedDueDate_StoredAndAdvisory(t *testing.T) {
 	e := newDraftsEnv(t)
 	e.fp.Locations = []procore.Location{{ID: 77, Name: "Grid C4"}}
 	due := e.clock.Now().Add(72 * time.Hour).Format(dateLayout)
@@ -103,20 +104,18 @@ func TestSubmit_Unresolved_PersistsRevalidation(t *testing.T) {
 	}
 	e.clock.Advance(7 * 24 * time.Hour)
 
-	_, err = e.drafts.Submit(ctx, e.user, d.ID, &enqueuer{})
-	var un *ErrUnresolved
-	if !errors.As(err, &un) || !slices.Equal(un.Fields, []string{"due_date"}) {
-		t.Fatalf("Submit = %v, want ErrUnresolved for due_date", err)
+	if _, err := e.drafts.Submit(ctx, e.user, d.ID, &enqueuer{}); err != nil {
+		t.Fatalf("Submit = %v, want it to proceed past an advisory due_date flag", err)
 	}
 	got := e.mustGet(t, d.ID)
 	if _, ok := payloadMap(t, got)["due_date"]; ok {
 		t.Errorf("stored payload still has due_date: %s", got.Payload())
 	}
-	if len(got.Unresolved) != 1 || got.Unresolved[0].Field != "due_date" || got.Unresolved[0].Reason != ReasonDateUnparseable {
-		t.Errorf("stored unresolved = %+v, want due_date", got.Unresolved)
+	if len(got.Unresolved) != 1 || got.Unresolved[0].Field != "due_date" || got.Unresolved[0].Reason != ReasonDateUnparseable || got.Unresolved[0].Blocking {
+		t.Errorf("stored unresolved = %+v, want an advisory due_date flag", got.Unresolved)
 	}
-	if got.Status != StatusReviewed {
-		t.Errorf("status = %q, want reviewed", got.Status)
+	if got.Status != StatusSubmitting {
+		t.Errorf("status = %q, want submitting", got.Status)
 	}
 	ev := lastAudit(t, e, d.ID, AuditEdited)
 	var ap struct {

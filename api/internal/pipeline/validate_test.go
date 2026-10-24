@@ -24,6 +24,9 @@ func (testFeature) DateFields() []string { return []string{"due_date"} }
 func (testFeature) PayloadFields() []string {
 	return []string{"subject", "assignee_ids", "rfi_manager_id", "location_id", "drawing_number", "due_date"}
 }
+func (testFeature) RequiredFields() []string {
+	return []string{"subject", "assignee_ids", "rfi_manager_id"}
+}
 func (testFeature) Prompt() llm.Prompt                        { return llm.Prompt{} }
 func (testFeature) OutputSchema() map[string]any              { return nil }
 func (testFeature) UserMessage(ExtractContext, string) string { return "" }

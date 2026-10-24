@@ -514,6 +514,155 @@ func TestSubmit_UnresolvedPayload_Rejected(t *testing.T) {
 	}
 }
 
+// flagFor returns d's entry for field, or fails.
+func flagFor(t *testing.T, d Draft, field string) Unresolved {
+	t.Helper()
+	for _, u := range d.Unresolved {
+		if u.Field == field {
+			return u
+		}
+	}
+	t.Fatalf("no unresolved entry for %s in %+v", field, d.Unresolved)
+	return Unresolved{}
+}
+
+// A not_found flag on an optional field the reviewer cannot fill (the
+// project has no locations) is advisory: it stays on the draft but does not
+// stop the submit.
+func TestSubmit_AdvisoryFlag_DoesNotBlock(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.llm.Steps = []llmtest.Step{{Final: `{"payload":{"subject":"S","question_body":"Q","assignee_ids":[11]},"unresolved":[{"field":"location_id","reason":"not_found","candidates":[]}],"confidence":{}}`}}
+	ctx := context.Background()
+	d, err := e.drafts.Create(ctx, e.input(uuid.New()))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if u := flagFor(t, d, "location_id"); u.Blocking {
+		t.Errorf("created flag = %+v, want advisory", u)
+	}
+	q := &enqueuer{}
+
+	out, err := e.drafts.Submit(ctx, e.user, d.ID, q)
+	if err != nil {
+		t.Fatalf("Submit = %v, want it to proceed past an advisory flag", err)
+	}
+	if out.Draft.Status != StatusSubmitting || len(q.drafts) != 1 {
+		t.Fatalf("status %q, enqueued %d; want submitting with one job", out.Draft.Status, len(q.drafts))
+	}
+	got := e.mustGet(t, d.ID)
+	if u := flagFor(t, got, "location_id"); u.Reason != ReasonNotFound || u.Blocking {
+		t.Errorf("stored flag = %+v, want not_found kept as advisory", u)
+	}
+}
+
+// A flag on a field Procore requires blocks whatever its reason.
+func TestSubmit_RequiredFieldFlag_Blocks(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.llm.Steps = []llmtest.Step{{Final: `{"payload":{"subject":"S","question_body":"Q","assignee_ids":[]},"unresolved":[{"field":"assignee_ids","reason":"not_found","candidates":[]}],"confidence":{}}`}}
+	ctx := context.Background()
+	d, err := e.drafts.Create(ctx, e.input(uuid.New()))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	q := &enqueuer{}
+
+	_, err = e.drafts.Submit(ctx, e.user, d.ID, q)
+	var un *ErrUnresolved
+	if !errors.As(err, &un) || !reflect.DeepEqual(un.Fields, []string{"assignee_ids"}) {
+		t.Fatalf("Submit = %v, want ErrUnresolved naming assignee_ids", err)
+	}
+	if len(q.drafts) != 0 {
+		t.Error("enqueued despite a blocking flag")
+	}
+	if u := flagFor(t, e.mustGet(t, d.ID), "assignee_ids"); !u.Blocking {
+		t.Errorf("flag = %+v, want blocking", u)
+	}
+}
+
+// costCodeFeature is draftsFeature plus an optional cost_code_id, a field
+// outside RequiredFields.
+type costCodeFeature struct{ draftsFeature }
+
+func (costCodeFeature) LookupKinds() []LookupKind {
+	return append(draftsFeature{}.LookupKinds(), KindCostCodes)
+}
+func (costCodeFeature) IDFields() []IDField {
+	return append(draftsFeature{}.IDFields(), IDField{Field: "cost_code_id", Kind: KindCostCodes})
+}
+func (costCodeFeature) PayloadFields() []string {
+	return append(draftsFeature{}.PayloadFields(), "cost_code_id")
+}
+func (costCodeFeature) OutputSchema() map[string]any {
+	props := map[string]any{"cost_code_id": map[string]any{"type": "integer"}}
+	for k, v := range draftsSchema["properties"].(map[string]any)["payload"].(map[string]any)["properties"].(map[string]any) {
+		props[k] = v
+	}
+	top := map[string]any{}
+	for k, v := range draftsSchema["properties"].(map[string]any) {
+		top[k] = v
+	}
+	top["payload"] = map[string]any{"type": "object", "properties": props}
+	return map[string]any{"type": "object", "properties": top}
+}
+func (f costCodeFeature) Normalize(payload map[string]any, unresolved []Unresolved) (map[string]any, []Unresolved) {
+	return NormalizeToSchema(f, payload, unresolved)
+}
+
+// An ID the lookups do not hold blocks even on an optional field: the
+// reviewer must pick a real one or clear it.
+func TestSubmit_NotInLookupOnOptionalField_Blocks(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.drafts.features["rfi"] = costCodeFeature{}
+	e.fp.CostCodes = []procore.CostCode{{ID: 5, Name: "Concrete"}}
+	e.llm.Steps = []llmtest.Step{{Final: `{"payload":{"subject":"S","question_body":"Q","assignee_ids":[11],"cost_code_id":999},"unresolved":[],"confidence":{}}`}}
+	ctx := context.Background()
+	d, err := e.drafts.Create(ctx, e.input(uuid.New()))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if u := flagFor(t, d, "cost_code_id"); u.Reason != ReasonNotInLookup || !u.Blocking {
+		t.Fatalf("created flag = %+v, want blocking not_in_lookup", u)
+	}
+	q := &enqueuer{}
+
+	_, err = e.drafts.Submit(ctx, e.user, d.ID, q)
+	var un *ErrUnresolved
+	if !errors.As(err, &un) || !reflect.DeepEqual(un.Fields, []string{"cost_code_id"}) {
+		t.Fatalf("Submit = %v, want ErrUnresolved naming cost_code_id", err)
+	}
+	if len(q.drafts) != 0 {
+		t.Error("enqueued despite a blocking flag")
+	}
+}
+
+func TestMarkBlocking(t *testing.T) {
+	in := []Unresolved{
+		{Field: "location_id", Reason: ReasonNotFound},
+		{Field: "location_id", Reason: ReasonAmbiguous},
+		{Field: "due_date", Reason: ReasonDateUnparseable},
+		{Field: "location_id", Reason: ReasonNotInLookup},
+		{Field: "location_id", Reason: ReasonInvalidValue},
+		{Field: "form", Reason: ReasonProcoreValidation},
+		{Field: "subject", Reason: ReasonAmbiguous},
+		{Field: "rfi_manager_id", Reason: ReasonNotFound},
+		// A stored value is recomputed, not trusted.
+		{Field: "location_id", Reason: ReasonNotFound, Blocking: true},
+	}
+	want := []bool{false, false, false, true, true, true, true, true, false}
+	got := markBlocking(draftsFeature{}, in)
+	for i, u := range got {
+		if u.Blocking != want[i] {
+			t.Errorf("%s/%s blocking = %v, want %v", u.Field, u.Reason, u.Blocking, want[i])
+		}
+	}
+	if in[3].Blocking || !in[8].Blocking {
+		t.Error("markBlocking mutated its input")
+	}
+	if markBlocking(draftsFeature{}, nil) == nil {
+		t.Error("markBlocking(nil) = nil, want an empty slice")
+	}
+}
+
 func TestSubmit_OtherUser_NotFound(t *testing.T) {
 	e := newDraftsEnv(t)
 	d := e.submittable(t, twistedFinal)

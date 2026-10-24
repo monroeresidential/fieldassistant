@@ -46,6 +46,10 @@ type Feature interface {
 	// PayloadFields lists every field the payload may hold. Validate drops
 	// unresolved entries naming any other field.
 	PayloadFields() []string
+	// RequiredFields lists the fields Procore needs to create the record. An
+	// unresolved entry on one of them always blocks submit (see
+	// markBlocking).
+	RequiredFields() []string
 	Prompt() llm.Prompt
 	// OutputSchema is the JSON schema of the submit_draft tool input.
 	OutputSchema() map[string]any
@@ -76,10 +80,52 @@ const (
 	ReasonInvalidValue = "invalid_value"
 )
 
-// Unresolved is a field the user must settle during review.
+// Unresolved is a field flagged for the reviewer. A blocking entry must be
+// settled before submit; an advisory one is shown but does not stop it.
 type Unresolved struct {
 	Field      string      `json:"field"`
 	Reason     string      `json:"reason"`
 	Message    string      `json:"message,omitempty"`
 	Candidates []LookupRow `json:"candidates"`
+	// Blocking is derived by markBlocking from Reason and the feature's
+	// RequiredFields; a stored value is never trusted.
+	Blocking bool `json:"blocking"`
+}
+
+// markBlocking returns a copy of us (never nil) with Blocking set. An entry
+// blocks when its field is in f.RequiredFields, whatever the reason, or
+// when its reason means the value itself is wrong: not_in_lookup,
+// invalid_value or procore_validation. not_found, ambiguous and
+// date_unparseable on any other field are advisory, since the reviewer may
+// have nothing to pick (a project with no locations). A nil f marks by
+// reason only.
+func markBlocking(f Feature, us []Unresolved) []Unresolved {
+	required := map[string]bool{}
+	if f != nil {
+		for _, field := range f.RequiredFields() {
+			required[field] = true
+		}
+	}
+	out := make([]Unresolved, len(us))
+	for i, u := range us {
+		switch u.Reason {
+		case ReasonNotInLookup, ReasonInvalidValue, ReasonProcoreValidation:
+			u.Blocking = true
+		default:
+			u.Blocking = required[u.Field]
+		}
+		out[i] = u
+	}
+	return out
+}
+
+// blockingFields returns the fields of the blocking entries in us.
+func blockingFields(us []Unresolved) []string {
+	var fields []string
+	for _, u := range us {
+		if u.Blocking {
+			fields = append(fields, u.Field)
+		}
+	}
+	return fields
 }

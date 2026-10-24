@@ -116,7 +116,9 @@ Table `lookup_cache` as above. River creates its own tables via its migration.
 
 1. If the draft is already `submitted`, return 200 with the stored result; nothing is posted again.
 2. If `submitting`, return 202 with the existing job ID.
-3. Otherwise validate the user payload once more (same ID validation as after extraction; any unresolved field is a 400 with the field names), mark `submitting`, enqueue the River job with the draft ID as its unique key, return 202 with the job ID.
+3. Otherwise validate the user payload once more (same ID validation as after extraction; any blocking unresolved field is a 400 with the field names), mark `submitting`, enqueue the River job with the draft ID as its unique key, return 202 with the job ID.
+
+A flag is blocking when its reason is `not_in_lookup`, `invalid_value` or `procore_validation`, or when its field is one the feature lists as required to create the record (for an RFI: `subject`, `question_body`, `assignee_ids`, `rfi_manager_id`). `not_found`, `ambiguous` and `date_unparseable` on any other field are advisory: they stay on the draft and in responses but do not stop the submit, since the reviewer may have nothing to pick (a project with no locations). Added in contract 1.4.2.
 
 The submit worker posts `POST /rest/v1.0/projects/{id}/rfis?run_configurable_validations=true` with the company header, using the user's Procore token (refreshed if needed; a revoked token fails the job with `reauth_required`). On 201 it stores the RFI ID, number and web URL, marks `submitted`, writes the audit row. On 422 it parses Procore's field errors, maps them back to draft field names, stores them on the draft as `unresolved` with reason `procore_validation` and the server message, marks the draft `failed`, writes the audit row. On any other failure after a successful POST was possibly received (timeout after send), the worker lists the project's RFIs filtered by subject and created time before retrying, so a lost response cannot cause a duplicate. The job retries transient failures three times with backoff; a final failure marks the draft `failed` with a reason the app can show.
 
@@ -134,7 +136,7 @@ The submit worker posts `POST /rest/v1.0/projects/{id}/rfis?run_configurable_val
 | `GET /jobs/{id}` | Submit status |
 | `GET /drafts?project_id=` | Recent drafts for the home list, newest first, limit 50 |
 
-`DraftResponse` carries `{id, feature, status, payload, unresolved[], confidence{}, transcript, model_version, result?}` where `unresolved[]` items are `{field, reason, message?, candidates[]: {id, label, extra}}`. The payload schema is the RFI draft payload; later features add their own payload schema under a `oneOf` keyed by `feature`.
+`DraftResponse` carries `{id, feature, status, payload, unresolved[], confidence{}, transcript, model_version, result?}` where `unresolved[]` items are `{field, reason, message?, candidates[]: {id, label, extra}, blocking}`. The payload schema is the RFI draft payload; later features add their own payload schema under a `oneOf` keyed by `feature`.
 
 All draft and job routes require the session and scope the draft to the caller's user ID; another user's draft is `not_found`.
 

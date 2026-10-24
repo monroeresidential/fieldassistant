@@ -191,7 +191,7 @@ func draftResponse(d pipeline.Draft) (DraftResponse, error) {
 			}
 			cands = append(cands, row)
 		}
-		f := UnresolvedField{Field: u.Field, Reason: UnresolvedFieldReason(u.Reason), Candidates: cands}
+		f := UnresolvedField{Field: u.Field, Reason: UnresolvedFieldReason(u.Reason), Candidates: cands, Blocking: u.Blocking}
 		if u.Message != "" {
 			msg := u.Message
 			f.Message = &msg
