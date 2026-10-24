@@ -329,17 +329,19 @@ final class RFIReviewModelTests: XCTestCase {
     }
 }
 
-/// `ClientTransport` that holds every request until `release()`, then forwards it to `inner`, so a
-/// test can act while a request is in flight.
+/// `ClientTransport` that holds every request (or, with `gating`, each matching one) until
+/// `release()`, then forwards it to `inner`, so a test can act while a request is in flight.
 final class GateTransport: ClientTransport, @unchecked Sendable {
     let inner: StubTransport
+    private let gating: @Sendable (HTTPRequest) -> Bool
     private let lock = NSLock()
     private var released = false
     private var held = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    init(_ inner: StubTransport) {
+    init(_ inner: StubTransport, gating: @escaping @Sendable (HTTPRequest) -> Bool = { _ in true }) {
         self.inner = inner
+        self.gating = gating
     }
 
     /// Returns once a request is waiting at the gate, or fails after about five seconds.
@@ -366,6 +368,9 @@ final class GateTransport: ClientTransport, @unchecked Sendable {
         baseURL: URL,
         operationID: String
     ) async throws -> (HTTPResponse, HTTPBody?) {
+        guard gating(request) else {
+            return try await inner.send(request, body: body, baseURL: baseURL, operationID: operationID)
+        }
         await withCheckedContinuation { continuation in
             let resumeNow = lock.withLock {
                 held += 1

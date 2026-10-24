@@ -82,6 +82,9 @@ final class AppState {
     @ObservationIgnored private(set) var draftSync: DraftSync?
     /// While the session is `offline`, retries `/me` each time the network path comes back.
     @ObservationIgnored private var offlineRetry: Task<Void, Never>?
+    /// Advances each time the session ends. A `/me` that was started before then (an offline retry,
+    /// a foreground bootstrap, a banner Retry) sees the change and leaves the signed-out state alone.
+    @ObservationIgnored private var sessionEpoch = 0
 
     var draftService: DraftService { DraftService(client: client) }
 
@@ -210,19 +213,31 @@ final class AppState {
     // MARK: - Private
 
     private func loadMe() async {
+        let epoch = sessionEpoch
         let output: Operations.getMe.Output
         do {
             output = try await client.getMe()
-        } catch where Self.isRefreshRejection(error) {
-            // The middleware already cleared the store and reported the sign-out.
-            endSession()
-            return
         } catch {
-            // Offline or transport failure: a field user must not be logged out for that.
-            enterOffline()
+            // The session ended while `/me` was in flight: whatever it says belongs to nobody now.
+            guard epoch == sessionEpoch else { return }
+            loadMeFailed(error)
             return
         }
+        guard epoch == sessionEpoch else { return }
+        apply(output)
+    }
 
+    private func loadMeFailed(_ error: Error) {
+        if Self.isRefreshRejection(error) {
+            // The middleware already cleared the store and reported the sign-out.
+            endSession()
+        } else {
+            // Offline or transport failure: a field user must not be logged out for that.
+            enterOffline()
+        }
+    }
+
+    private func apply(_ output: Operations.getMe.Output) {
         switch output {
         case .ok(let ok):
             guard let user = try? ok.body.json else {
@@ -263,6 +278,7 @@ final class AppState {
     /// Setting the IDs to nil also removes their `UserDefaults` keys.
     /// The cached lookups belong to the signed-in user too, so they are deleted here as well.
     private func endSession() {
+        sessionEpoch += 1
         cancelPrefetch()
         offlineRetry?.cancel()
         offlineRetry = nil
@@ -277,13 +293,19 @@ final class AppState {
         phase = .signedOut
     }
 
-    /// Refreshes the selected project's lookup lists in the background, replacing any running prefetch.
-    /// Clearing the project only cancels the running one.
-    private func prefetchLookups() {
+    /// Refreshes the selected project's lookup lists in the background, replacing any running
+    /// prefetch. `force` skips the `ETag` revalidation (Settings' "Refresh people and locations").
+    /// Runs as `prefetchTask`, so a project change or the end of the session cancels it.
+    func refreshLookups(force: Bool) {
         cancelPrefetch()
         guard let companyID = selectedCompanyID, let projectID = selectedProjectID else { return }
         let lookups: LookupStore = lookups
-        prefetchTask = Task { await lookups.prefetch(companyID: companyID, projectID: projectID) }
+        prefetchTask = Task { await lookups.prefetch(companyID: companyID, projectID: projectID, force: force) }
+    }
+
+    /// Clearing the project only cancels the running prefetch.
+    private func prefetchLookups() {
+        refreshLookups(force: false)
     }
 
     /// A stored session that cannot reach the server. Waits for the network path to come back and

@@ -125,6 +125,22 @@ final class LookupStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testRefreshFinishingAfterClearAllWritesNothing() async throws {
+        let gate = GateTransport(StubTransport([APIStub.lookup(rows: #"[{"id":11,"label":"Ben West"}]"#)]))
+        let (store, container) = try makeStore(gate)
+        // Not cancelled: only the clear tells the refresh its rows belong to an ended session.
+        let refresh = Task { try await store.refresh(companyID: 7, projectID: 99, kind: .users, force: true) }
+        try await gate.waitUntilHeld()
+
+        store.clearAll()
+        gate.release()
+        try await refresh.value
+
+        XCTAssertNil(store.set(projectID: 99, kind: .users))
+        XCTAssertEqual(try container.mainContext.fetchCount(FetchDescriptor<CachedLookup>()), 0)
+    }
+
+    @MainActor
     private func makeStore(_ transport: ClientTransport) throws -> (LookupStore, ModelContainer) {
         let container = try AppContainer.makeModelContainer(inMemory: true)
         let client = makeClient(transport, middlewares: [IfNoneMatchMiddleware()])

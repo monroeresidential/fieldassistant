@@ -358,6 +358,50 @@ final class AppStateTests: XCTestCase {
         XCTAssertTrue(transport.requests.isEmpty)
     }
 
+    @MainActor
+    func testLateMeAfterSignOutIsIgnored() async throws {
+        let store = InMemorySessionStore(validSession())
+        let inner = StubTransport(
+            [(HTTPResponse(status: .noContent), nil), APIStub.me(procoreUserID: 42, lastCompanyID: 7, lastProjectID: 99)]
+                + LookupKind.allCases.map { _ in APIStub.lookup(rows: #"[{"id":11,"label":"Ben West"}]"#) }
+        )
+        let gate = GateTransport(inner) { $0.path == "/me" }
+        let state = makeState(store: store, transport: gate)
+        let bootstrap = Task { await state.bootstrap() }
+        try await gate.waitUntilHeld()
+
+        await state.signOut()
+        gate.release()
+        await bootstrap.value
+        await state.prefetchTask?.value
+
+        XCTAssertEqual(state.phase, .signedOut)
+        XCTAssertNil(state.draftSync)
+        XCTAssertNil(state.draftOwnerID)
+        XCTAssertNil(state.selectedCompanyID)
+        XCTAssertNil(state.selectedProjectID)
+        XCTAssertNil(state.prefetchTask)
+        XCTAssertEqual(try XCTUnwrap(container).mainContext.fetchCount(FetchDescriptor<CachedLookup>()), 0)
+        XCTAssertEqual(inner.requests.map(\.request.path), ["/auth/logout", "/me"], "no lookups after sign-out")
+    }
+
+    @MainActor
+    func testSettingsRefreshIsCancelledBySignOut() async throws {
+        let inner = StubTransport([APIStub.me(lastCompanyID: 7, lastProjectID: 99)])
+        LookupKind.allCases.forEach { _ in inner.enqueue(.notModified) }
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: inner)
+        await state.bootstrap()
+        await state.prefetchTask?.value
+        inner.enqueue(.noContent)
+
+        state.refreshLookups(force: true)
+        let refresh = try XCTUnwrap(state.prefetchTask)
+        await state.signOut()
+
+        XCTAssertTrue(refresh.isCancelled)
+        XCTAssertNil(state.prefetchTask)
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -392,7 +436,7 @@ final class AppStateTests: XCTestCase {
     @MainActor
     private func makeState(
         store: InMemorySessionStore,
-        transport: StubTransport,
+        transport: ClientTransport,
         presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError())
     ) -> AppState {
         let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true))

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import SwiftData
 
 /// The on-device cache of each project's lookup lists, kept in SwiftData and revalidated by `ETag`.
@@ -10,11 +11,16 @@ final class LookupStore {
     /// Bumped on every save, and read by `set(projectID:kind:)`, so views showing rows re-render.
     private var revision = 0
     @ObservationIgnored private var prefetchGeneration = 0
+    /// Advances on every `clearAll`. A refresh started before a clear drops its result, so a fetch
+    /// that outlives a sign-out never writes the previous user's rows back.
+    @ObservationIgnored private var clearGeneration = 0
 
     @ObservationIgnored private let context: ModelContext
     /// A context references its container weakly and traps once it is gone, so the store keeps it alive.
     @ObservationIgnored private let container: ModelContainer
     @ObservationIgnored private let service: LookupService
+
+    private static let log = Logger(subsystem: "FieldAssistant", category: "LookupStore")
 
     init(context: ModelContext, service: LookupService) {
         self.context = context
@@ -45,8 +51,10 @@ final class LookupStore {
             }
             try context.save()
         } catch {
+            Self.log.error("Clearing the lookup cache failed: \(error.localizedDescription, privacy: .public)")
             context.rollback()
         }
+        clearGeneration += 1
         revision += 1
     }
 
@@ -69,6 +77,7 @@ final class LookupStore {
     /// Fetches one list, revalidating with the cached `ETag`, and stores a changed result.
     /// Throws `APIFailure`; a failure or a 304 leaves the cached copy as it was.
     func refresh(companyID: Int64, projectID: Int64, kind: LookupKind, force: Bool) async throws {
+        let clears = clearGeneration
         let result = try await service.fetch(
             companyID: companyID,
             projectID: projectID,
@@ -78,6 +87,7 @@ final class LookupStore {
         )
         // A cancelled refresh (project switch or sign-out) must not write after the cache was cleared.
         try Task.checkCancellation()
+        guard clears == clearGeneration else { return }
         guard case .rows(let response, let etag) = result else { return }
         let rowsData = try JSONEncoder().encode(response.rows)
         // Looked up again after the await, in case a concurrent refresh inserted the record meanwhile.

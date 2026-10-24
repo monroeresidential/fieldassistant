@@ -20,7 +20,7 @@ struct SettingsView: View {
 
             Section("Project") {
                 Button {
-                    refreshLookups()
+                    appState.refreshLookups(force: true)
                 } label: {
                     HStack {
                         Label("Refresh people and locations", systemImage: "arrow.clockwise")
@@ -60,12 +60,6 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func refreshLookups() {
-        guard let companyID = appState.selectedCompanyID, let projectID = appState.selectedProjectID else { return }
-        let lookups = appState.lookups!
-        Task { await lookups.prefetch(companyID: companyID, projectID: projectID, force: true) }
     }
 
     /// "Field Assistant 1.0 (12) · local · localhost:8080"
