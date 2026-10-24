@@ -207,6 +207,122 @@ func TestLookups_Forbidden_PerUserOnly(t *testing.T) {
 	}
 }
 
+// A project member whose own token is refused a kind does not get the rows
+// another member cached for it: the shared row is served only after a probe
+// with the member's own token succeeds.
+func TestLookups_SharedRowNotServedWithoutKindVerification(t *testing.T) {
+	l, fp, _, _, tokens := newLookupsWithTokens(t)
+	fp.Users = twoUsers()
+	userA, userB := uuid.New(), uuid.New()
+	tokens.setToken(userA, "tok-a")
+	tokens.setToken(userB, "tok-b")
+	fp.ErrForToken["tok-b"] = map[string]error{"ProbeKind": fmt.Errorf("%w: %w", procore.ErrPermissionDenied, &procore.APIError{Status: 403, Body: "no directory access"})}
+	ctx := context.Background()
+
+	if a, err := l.Get(ctx, userA, testCompany, testProject, KindUsers, false); err != nil || len(a.Rows) != 2 {
+		t.Fatalf("user A = %+v, %v; want 2 rows", a, err)
+	}
+	b, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false)
+	if err != nil {
+		t.Fatalf("user B: %v", err)
+	}
+	if !b.Unavailable || len(b.Rows) != 0 || b.Reason != "no directory access" {
+		t.Fatalf("user B set = %+v, want unavailable with no rows", b)
+	}
+	// The denial is remembered for B: no second probe within the TTL.
+	if again, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false); err != nil || !again.Unavailable {
+		t.Fatalf("user B again = %+v, %v", again, err)
+	}
+	if n := fp.CallCount("ProbeKind"); n != 1 {
+		t.Errorf("ProbeKind calls = %d, want 1", n)
+	}
+	// A's own fetch counted as verification: A is never probed.
+	for _, c := range fp.Calls() {
+		if c.Method == "ProbeKind" && c.AccessToken == "tok-a" {
+			t.Error("user A was probed after fetching the list")
+		}
+	}
+
+	// A probe that fails for another reason serves the cached row.
+	userC := uuid.New()
+	tokens.setToken(userC, "tok-c")
+	fp.ErrForToken["tok-c"] = map[string]error{"ProbeKind": fmt.Errorf("probe: %w", procore.ErrUnavailable)}
+	if c, err := l.Get(ctx, userC, testCompany, testProject, KindUsers, false); err != nil || len(c.Rows) != 2 {
+		t.Fatalf("user C after a failed probe = %+v, %v; want the cached rows", c, err)
+	}
+}
+
+// ProbeKind takes a LookupKind's string; the Procore client's names must match.
+func TestLookupKinds_MatchProcoreKinds(t *testing.T) {
+	want := map[LookupKind]string{
+		KindUsers: procore.KindUsers, KindLocations: procore.KindLocations, KindSpecSections: procore.KindSpecSections,
+		KindCostCodes: procore.KindCostCodes, KindVendors: procore.KindVendors, KindDrawings: procore.KindDrawings,
+	}
+	for _, k := range AllKinds {
+		if string(k) != want[k] {
+			t.Errorf("kind %q has Procore name %q", k, want[k])
+		}
+	}
+}
+
+// A successful probe is remembered per user and kind for the TTL.
+func TestLookups_KindVerificationCachedForTTL(t *testing.T) {
+	l, fp, clock, _, tokens := newLookupsWithTokens(t)
+	fp.Users = twoUsers()
+	fp.Locations = []procore.Location{{ID: 77, Name: "Grid C4"}}
+	userA, userB := uuid.New(), uuid.New()
+	tokens.setToken(userA, "tok-a")
+	tokens.setToken(userB, "tok-b")
+	ctx := context.Background()
+
+	for _, k := range []LookupKind{KindUsers, KindLocations} {
+		if _, err := l.Get(ctx, userA, testCompany, testProject, k, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 3 {
+		if set, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false); err != nil || len(set.Rows) != 2 {
+			t.Fatalf("user B = %+v, %v", set, err)
+		}
+	}
+	probes := func() (users, locations int) {
+		for _, c := range fp.Calls() {
+			if c.Method == "ProbeKind" && c.AccessToken == "tok-b" {
+				switch c.Kind {
+				case "users":
+					users++
+				case "locations":
+					locations++
+				}
+			}
+		}
+		return
+	}
+	if u, _ := probes(); u != 1 {
+		t.Fatalf("users probes within the TTL = %d, want 1", u)
+	}
+	// Verification is per kind.
+	if _, err := l.Get(ctx, userB, testCompany, testProject, KindLocations, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, loc := probes(); loc != 1 {
+		t.Fatalf("locations probes = %d, want 1", loc)
+	}
+
+	// After the TTL the shared row is stale and B's Get refetches with B's
+	// own token, which verifies B again without a probe.
+	clock.Advance(testTTL + time.Second)
+	if _, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Get(ctx, userB, testCompany, testProject, KindUsers, false); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := probes(); u != 1 {
+		t.Errorf("users probes after B's own refetch = %d, want still 1", u)
+	}
+}
+
 func TestLookups_Forbidden_KeepsExistingSharedRows(t *testing.T) {
 	l, fp, clock, st, tokens := newLookupsWithTokens(t)
 	fp.Users = twoUsers()

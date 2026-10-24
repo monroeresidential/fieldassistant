@@ -92,6 +92,9 @@ type ProcoreLookups interface {
 	ListVendors(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.Vendor, error)
 	ListDrawings(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.Drawing, error)
 	GetProject(ctx context.Context, accessToken string, companyID, projectID int64) (procore.ProjectDetail, error)
+	// ProbeKind checks the token may read kind's list (one page-1 request,
+	// body discarded); kind is a LookupKind's string.
+	ProbeKind(ctx context.Context, accessToken string, companyID, projectID int64, kind string) error
 }
 
 var _ ProcoreLookups = (*procore.Client)(nil)
@@ -141,6 +144,7 @@ type Lookups struct {
 	projects map[projectKey]projectEntry
 	access   map[accessKey]time.Time // when the user last proved they can see the project
 	denied   map[denyKey]denial      // per-user 403s on a lookup kind
+	verified map[denyKey]time.Time   // when the user last proved they can read a lookup kind
 }
 
 // NewLookups builds a Lookups. A nil logger means slog.Default().
@@ -148,17 +152,30 @@ func NewLookups(st *store.Store, pc ProcoreLookups, tokens AccessTokenSource, tt
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Lookups{st: st, pc: pc, tokens: tokens, ttl: ttl, now: now, log: logger, projects: map[projectKey]projectEntry{}, access: map[accessKey]time.Time{}, denied: map[denyKey]denial{}}
+	return &Lookups{
+		st: st, pc: pc, tokens: tokens, ttl: ttl, now: now, log: logger,
+		projects: map[projectKey]projectEntry{}, access: map[accessKey]time.Time{},
+		denied: map[denyKey]denial{}, verified: map[denyKey]time.Time{},
+	}
 }
 
 // Get returns the lookup set for kind. The caller must be able to see the
 // project, which is checked with their own token and cached per user for the
-// TTL; otherwise procore.ErrPermissionDenied is returned. A stored row younger
-// than the TTL is served unless force is set. Otherwise the list is fetched
-// from Procore and stored. A 403 on the list is remembered for that user only
-// and returned as an unavailable set; the shared row is left alone. Token
-// errors surface. Any other failure serves the stale row when there is one and
-// returns the error when there is not.
+// TTL; otherwise procore.ErrPermissionDenied is returned.
+//
+// A stored row younger than the TTL is served unless force is set, but only
+// to a user who has proved within the TTL that they may read that kind: by
+// fetching the list with their own token, or by a probe (ProbeKind) made
+// before the row is served. A probe refused with a 403 is remembered as
+// that user's denial and the set is unavailable for them; a probe that
+// fails otherwise serves the row, since availability beats a probe failure,
+// while token errors surface.
+//
+// Otherwise the list is fetched from Procore with the user's token and
+// stored. A 403 on the list is remembered for that user only and returned as
+// an unavailable set; the shared row is left alone. Token errors surface.
+// Any other failure serves the stale row when there is one and returns the
+// error when there is not.
 func (l *Lookups) Get(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kind LookupKind, force bool) (LookupSet, error) {
 	if err := l.requireAccess(ctx, userID, companyID, projectID); err != nil {
 		return LookupSet{}, err
@@ -174,20 +191,30 @@ func (l *Lookups) Get(ctx context.Context, userID uuid.UUID, companyID, projectI
 		return LookupSet{}, err
 	}
 	if haveStale && !force && l.now().Sub(stale.FetchedAt) < l.ttl {
-		return stale, nil
+		if stale.Unavailable || l.isVerified(userID, companyID, projectID, kind) {
+			return stale, nil
+		}
+		perr := l.probe(ctx, userID, companyID, projectID, kind)
+		switch {
+		case perr == nil:
+			return stale, nil
+		case errors.Is(perr, procore.ErrPermissionDenied):
+			return l.deny(userID, companyID, projectID, kind, perr), nil
+		case LookupErrorFatal(perr):
+			return LookupSet{}, perr
+		default:
+			l.log.Warn("lookup kind probe failed; serving cached rows", "kind", kind, "company_id", companyID, "project_id", projectID, "error", perr)
+			return stale, nil
+		}
 	}
 
 	rows, fetchErr := l.fetch(ctx, userID, companyID, projectID, kind)
 	switch {
 	case fetchErr == nil:
-		l.clearDenial(userID, companyID, projectID, kind)
+		l.markVerified(userID, companyID, projectID, kind)
 		return l.save(ctx, companyID, projectID, kind, rows, false, "")
 	case errors.Is(fetchErr, procore.ErrPermissionDenied):
-		d := denial{reason: denialReason(fetchErr), at: l.now()}
-		l.mu.Lock()
-		l.denied[denyKey{userID, companyID, projectID, kind}] = d
-		l.mu.Unlock()
-		return LookupSet{Kind: kind, Rows: []LookupRow{}, Unavailable: true, Reason: d.reason, FetchedAt: d.at}, nil
+		return l.deny(userID, companyID, projectID, kind, fetchErr), nil
 	case errors.Is(fetchErr, auth.ErrReauthRequired), errors.Is(fetchErr, procore.ErrUnauthorized):
 		return LookupSet{}, fetchErr
 	case haveStale:
@@ -208,10 +235,49 @@ func (l *Lookups) denial(userID uuid.UUID, companyID, projectID int64, kind Look
 	return d, true
 }
 
-func (l *Lookups) clearDenial(userID uuid.UUID, companyID, projectID int64, kind LookupKind) {
+// deny remembers a 403 on kind for this user, drops their verification and
+// returns the unavailable set they get.
+func (l *Lookups) deny(userID uuid.UUID, companyID, projectID int64, kind LookupKind, err error) LookupSet {
+	d := denial{reason: denialReason(err), at: l.now()}
+	key := denyKey{userID, companyID, projectID, kind}
 	l.mu.Lock()
-	delete(l.denied, denyKey{userID, companyID, projectID, kind})
+	l.denied[key] = d
+	delete(l.verified, key)
 	l.mu.Unlock()
+	return LookupSet{Kind: kind, Rows: []LookupRow{}, Unavailable: true, Reason: d.reason, FetchedAt: d.at}
+}
+
+// markVerified records that the user just read kind with their own token,
+// and clears any denial.
+func (l *Lookups) markVerified(userID uuid.UUID, companyID, projectID int64, kind LookupKind) {
+	key := denyKey{userID, companyID, projectID, kind}
+	l.mu.Lock()
+	l.verified[key] = l.now()
+	delete(l.denied, key)
+	l.mu.Unlock()
+}
+
+// isVerified reports whether the user proved within the TTL that they may
+// read kind.
+func (l *Lookups) isVerified(userID uuid.UUID, companyID, projectID int64, kind LookupKind) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	at, ok := l.verified[denyKey{userID, companyID, projectID, kind}]
+	return ok && l.now().Sub(at) < l.ttl
+}
+
+// probe asks Procore, with the user's own token, whether they may read
+// kind; success is recorded as verification.
+func (l *Lookups) probe(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kind LookupKind) error {
+	token, err := l.tokens.AccessToken(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrLookupToken, err)
+	}
+	if err := l.pc.ProbeKind(ctx, token, companyID, projectID, string(kind)); err != nil {
+		return err
+	}
+	l.markVerified(userID, companyID, projectID, kind)
+	return nil
 }
 
 // requireAccess confirms the user can see the project, using the cached

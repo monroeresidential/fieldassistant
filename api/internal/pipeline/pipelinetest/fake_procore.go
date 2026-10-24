@@ -18,6 +18,8 @@ type Call struct {
 	ProjectID   int64
 	// RFI is the body of a CreateRFI call.
 	RFI *procore.RFICreate
+	// Kind is the lookup kind of a ProbeKind call.
+	Kind string
 }
 
 // FakeProcore answers the Procore reads and RFI writes the pipeline uses from
@@ -73,15 +75,42 @@ func (f *FakeProcore) CallCount(method string) int {
 	return n
 }
 
-// record logs the call and returns the scripted error for it.
-func (f *FakeProcore) record(c Call) error {
+// record logs the call and returns the scripted error for it: the first of
+// the methods (c.Method, then any fallbacks) scripted in ErrForToken for
+// c's token, else the first scripted in Err.
+func (f *FakeProcore) record(c Call, fallbacks ...string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, c)
-	if err, ok := f.ErrForToken[c.AccessToken][c.Method]; ok {
-		return err
+	methods := append([]string{c.Method}, fallbacks...)
+	for _, m := range methods {
+		if err, ok := f.ErrForToken[c.AccessToken][m]; ok {
+			return err
+		}
 	}
-	return f.Err[c.Method]
+	for _, m := range methods {
+		if err, ok := f.Err[m]; ok {
+			return err
+		}
+	}
+	return nil
+}
+
+// listMethods maps a lookup kind to the fake's list method for it.
+var listMethods = map[string]string{
+	"users":         "ListProjectUsers",
+	"locations":     "ListLocations",
+	"spec_sections": "ListSpecSections",
+	"cost_codes":    "ListCostCodes",
+	"vendors":       "ListVendors",
+	"drawings":      "ListDrawings",
+}
+
+// ProbeKind records a "ProbeKind" call. Its error is the one scripted for
+// "ProbeKind", else the one scripted for the kind's list method, so a token
+// denied a list is denied its probe too.
+func (f *FakeProcore) ProbeKind(_ context.Context, token string, companyID, projectID int64, kind string) error {
+	return f.record(Call{Method: "ProbeKind", AccessToken: token, CompanyID: companyID, ProjectID: projectID, Kind: kind}, listMethods[kind])
 }
 
 func (f *FakeProcore) ListProjectUsers(_ context.Context, token string, companyID, projectID int64) ([]procore.ProjectUser, error) {

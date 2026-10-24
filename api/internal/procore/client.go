@@ -158,36 +158,85 @@ func projectPath(projectID int64, suffix string) string {
 	return "/rest/v1.0/projects/" + strconv.FormatInt(projectID, 10) + suffix
 }
 
+// Lookup kinds, as ProbeKind takes them; they match the pipeline's names.
+const (
+	KindUsers        = "users"
+	KindLocations    = "locations"
+	KindSpecSections = "spec_sections"
+	KindCostCodes    = "cost_codes"
+	KindVendors      = "vendors"
+	KindDrawings     = "drawings"
+)
+
+// lookupEndpoint returns the list endpoint of a lookup kind: its path and
+// query, without paging parameters.
+func lookupEndpoint(kind string, projectID int64) (string, url.Values, bool) {
+	byProject := url.Values{"project_id": {strconv.FormatInt(projectID, 10)}}
+	switch kind {
+	case KindUsers:
+		return projectPath(projectID, "/users"), url.Values{}, true
+	case KindLocations:
+		return projectPath(projectID, "/locations"), url.Values{}, true
+	case KindSpecSections:
+		return projectPath(projectID, "/specification_sections"), url.Values{}, true
+	case KindCostCodes:
+		return "/rest/v1.0/cost_codes", byProject, true
+	case KindVendors:
+		return projectPath(projectID, "/vendors"), url.Values{}, true
+	case KindDrawings:
+		return "/rest/v1.1/drawings", byProject, true
+	}
+	return "", nil, false
+}
+
+func listKind[T any](ctx context.Context, c *Client, token string, companyID, projectID int64, kind string) ([]T, error) {
+	path, q, _ := lookupEndpoint(kind, projectID)
+	return listAll[T](ctx, c, token, &companyID, path, q)
+}
+
 // ListProjectUsers returns every user on projectID, following pagination.
 func (c *Client) ListProjectUsers(ctx context.Context, accessToken string, companyID, projectID int64) ([]ProjectUser, error) {
-	return listAll[ProjectUser](ctx, c, accessToken, &companyID, projectPath(projectID, "/users"), url.Values{})
+	return listKind[ProjectUser](ctx, c, accessToken, companyID, projectID, KindUsers)
 }
 
 // ListLocations returns every location in projectID, following pagination.
 func (c *Client) ListLocations(ctx context.Context, accessToken string, companyID, projectID int64) ([]Location, error) {
-	return listAll[Location](ctx, c, accessToken, &companyID, projectPath(projectID, "/locations"), url.Values{})
+	return listKind[Location](ctx, c, accessToken, companyID, projectID, KindLocations)
 }
 
 // ListSpecSections returns every specification section in projectID.
 func (c *Client) ListSpecSections(ctx context.Context, accessToken string, companyID, projectID int64) ([]SpecSection, error) {
-	return listAll[SpecSection](ctx, c, accessToken, &companyID, projectPath(projectID, "/specification_sections"), url.Values{})
+	return listKind[SpecSection](ctx, c, accessToken, companyID, projectID, KindSpecSections)
 }
 
 // ListCostCodes returns every cost code of projectID, following pagination.
 func (c *Client) ListCostCodes(ctx context.Context, accessToken string, companyID, projectID int64) ([]CostCode, error) {
-	q := url.Values{"project_id": {strconv.FormatInt(projectID, 10)}}
-	return listAll[CostCode](ctx, c, accessToken, &companyID, "/rest/v1.0/cost_codes", q)
+	return listKind[CostCode](ctx, c, accessToken, companyID, projectID, KindCostCodes)
 }
 
 // ListVendors returns every vendor of projectID, following pagination.
 func (c *Client) ListVendors(ctx context.Context, accessToken string, companyID, projectID int64) ([]Vendor, error) {
-	return listAll[Vendor](ctx, c, accessToken, &companyID, projectPath(projectID, "/vendors"), url.Values{})
+	return listKind[Vendor](ctx, c, accessToken, companyID, projectID, KindVendors)
 }
 
 // ListDrawings returns every drawing of projectID, following pagination.
 func (c *Client) ListDrawings(ctx context.Context, accessToken string, companyID, projectID int64) ([]Drawing, error) {
-	q := url.Values{"project_id": {strconv.FormatInt(projectID, 10)}}
-	return listAll[Drawing](ctx, c, accessToken, &companyID, "/rest/v1.1/drawings", q)
+	return listKind[Drawing](ctx, c, accessToken, companyID, projectID, KindDrawings)
+}
+
+// ProbeKind checks that accessToken may read kind's list in projectID by
+// requesting its first page with per_page=1 and discarding the body. It
+// returns nil on a 2xx and the mapped error otherwise (ErrPermissionDenied
+// on a 403).
+func (c *Client) ProbeKind(ctx context.Context, accessToken string, companyID, projectID int64, kind string) error {
+	path, q, ok := lookupEndpoint(kind, projectID)
+	if !ok {
+		return fmt.Errorf("procore: unknown lookup kind %q", kind)
+	}
+	q.Set("per_page", "1")
+	q.Set("page", "1")
+	var discard json.RawMessage
+	return c.do(ctx, accessToken, &companyID, http.MethodGet, path, q, nil, &discard)
 }
 
 // GetProject returns projectID's detail, including its time zone.

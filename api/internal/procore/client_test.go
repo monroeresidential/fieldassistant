@@ -517,6 +517,35 @@ func TestClient_ListCostCodes_UsesQueryParam(t *testing.T) {
 	}
 }
 
+func TestClient_ProbeKind_OnePageOfOne(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/users": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":1,"name":"Ann"}]`)
+		},
+		"/rest/v1.0/cost_codes": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 403, `{"errors":"no budget access"}`)
+		},
+	})
+	c := newTestClient(f, &sleepRecorder{})
+	ctx := context.Background()
+	if err := c.ProbeKind(ctx, "tok", 7, 9, KindUsers); err != nil {
+		t.Fatalf("ProbeKind users = %v", err)
+	}
+	r := f.recorded()[0]
+	if r.Query["per_page"] != "1" || r.Query["page"] != "1" || r.Header.Get("Procore-Company-Id") != "7" {
+		t.Errorf("probe request = %+v", r)
+	}
+	if err := c.ProbeKind(ctx, "tok", 7, 9, KindCostCodes); !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("ProbeKind cost_codes = %v, want ErrPermissionDenied", err)
+	}
+	if r := f.recorded()[1]; r.Query["project_id"] != "9" || r.Query["per_page"] != "1" {
+		t.Errorf("cost code probe query = %v", r.Query)
+	}
+	if err := c.ProbeKind(ctx, "tok", 7, 9, "nope"); err == nil {
+		t.Error("ProbeKind of an unknown kind succeeded")
+	}
+}
+
 func TestClient_ListDrawings_V11(t *testing.T) {
 	f := newFakeProcore(t, map[string]http.HandlerFunc{
 		"/rest/v1.1/drawings": func(w http.ResponseWriter, r *http.Request) {
