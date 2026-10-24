@@ -333,6 +333,88 @@ func TestCreate_UnavailableKind_ToolOmitted(t *testing.T) {
 	}
 }
 
+// One lookup kind failing with nothing cached does not fail extraction: the
+// kind is left out for this call and nothing is flagged for it.
+func TestCreate_OneKindFetchFails_StillExtracts(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.fp.Locations = []procore.Location{{ID: 77, Name: "Grid C4"}}
+	e.fp.Err["ListDrawings"] = fmt.Errorf("list drawings: %w", &procore.APIError{Status: 500, Body: "oops"})
+	e.llm.Steps = []llmtest.Step{{Final: twistedFinal}}
+
+	d, err := e.drafts.Create(context.Background(), e.input(uuid.New()))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	names := map[string]bool{}
+	for _, tool := range e.llm.Requests[0].Tools {
+		names[tool.Name] = true
+	}
+	if names["list_drawings"] || !names["list_users"] || !names["list_locations"] {
+		t.Errorf("tools = %v, want list_drawings left out", names)
+	}
+	if len(d.Unresolved) != 0 {
+		t.Errorf("unresolved = %+v, want none", d.Unresolved)
+	}
+
+	// Saving and submitting work too while drawings are down.
+	if _, err := e.drafts.SaveEdits(context.Background(), e.user, d.ID, d.Payload()); err != nil {
+		t.Fatalf("SaveEdits: %v", err)
+	}
+	if _, err := e.drafts.Submit(context.Background(), e.user, d.ID, &enqueuer{}); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+}
+
+// When the list an ID field needs cannot be loaded, Submit refuses rather
+// than dropping or flagging the reviewer's choice, and nothing is queued.
+func TestSubmit_IDKindUnavailable_FailsWithoutFlagging(t *testing.T) {
+	e := newDraftsEnv(t)
+	d := e.submittable(t, twistedFinal)
+	ctx := context.Background()
+	if _, err := e.st.Pool.Exec(ctx, `delete from lookup_cache where kind = 'users'`); err != nil {
+		t.Fatal(err)
+	}
+	e.fp.Err["ListProjectUsers"] = fmt.Errorf("list users: %w", procore.ErrUnavailable)
+	q := &enqueuer{}
+
+	_, err := e.drafts.Submit(ctx, e.user, d.ID, q)
+	var un *ErrUnresolved
+	if err == nil || errors.As(err, &un) || !errors.Is(err, procore.ErrUnavailable) {
+		t.Fatalf("Submit = %v, want the users lookup error", err)
+	}
+	got := e.mustGet(t, d.ID)
+	if got.Status != StatusExtracted || len(got.Unresolved) != 0 || len(q.drafts) != 0 {
+		t.Errorf("draft = status %q unresolved %+v, enqueued %d", got.Status, got.Unresolved, len(q.drafts))
+	}
+}
+
+// A sign-in failure or losing access to the project still fails Create.
+func TestCreate_TokenOrProjectAccessError_Fatal(t *testing.T) {
+	t.Run("project access", func(t *testing.T) {
+		e := newDraftsEnv(t)
+		e.fp.Err["GetProject"] = fmt.Errorf("%w: %w", procore.ErrPermissionDenied, &procore.APIError{Status: 403})
+		e.llm.Steps = []llmtest.Step{{Final: twistedFinal}}
+		if _, err := e.drafts.Create(context.Background(), e.input(uuid.New())); !errors.Is(err, procore.ErrPermissionDenied) {
+			t.Fatalf("Create = %v, want ErrPermissionDenied", err)
+		}
+	})
+	t.Run("token", func(t *testing.T) {
+		e := newDraftsEnv(t)
+		e.llm.Steps = []llmtest.Step{{Final: twistedFinal}}
+		// Project access is cached, so only the list fetches see the token error.
+		if _, err := e.drafts.lookups.Project(context.Background(), e.user, testCompany, testProject); err != nil {
+			t.Fatal(err)
+		}
+		e.tokens.setErr(e.user, fmt.Errorf("refresh: %w", procore.ErrUnavailable))
+		if _, err := e.drafts.Create(context.Background(), e.input(uuid.New())); err == nil {
+			t.Fatal("Create = nil, want the token error")
+		}
+		if len(e.llm.Requests) != 0 {
+			t.Errorf("extractor called %d times, want 0", len(e.llm.Requests))
+		}
+	})
+}
+
 func TestCreate_ToolHandler_FiltersRows(t *testing.T) {
 	e := newDraftsEnv(t)
 	e.llm.Steps = []llmtest.Step{
@@ -564,8 +646,8 @@ func TestCreate_ConcurrentSameID_OneExtraction(t *testing.T) {
 	id := uuid.New()
 	ctx := context.Background()
 	// Warm the cache first so the racing calls reach the extractor together.
-	if _, err := e.drafts.lookups.Warm(ctx, e.user, testCompany, testProject, draftsFeature{}.LookupKinds()); err != nil {
-		t.Fatal(err)
+	if _, errs := e.drafts.lookups.Warm(ctx, e.user, testCompany, testProject, draftsFeature{}.LookupKinds()); len(errs) != 0 {
+		t.Fatal(errs)
 	}
 
 	const n = 8

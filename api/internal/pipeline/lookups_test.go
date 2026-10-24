@@ -250,8 +250,8 @@ func TestLookups_UserNotOnProject_PermissionDenied(t *testing.T) {
 			if _, err := l.Project(ctx, outsider, testCompany, testProject); !errors.Is(err, procore.ErrPermissionDenied) {
 				t.Fatalf("Project err = %v, want ErrPermissionDenied", err)
 			}
-			if _, err := l.Warm(ctx, outsider, testCompany, testProject, []LookupKind{KindUsers}); !errors.Is(err, procore.ErrPermissionDenied) {
-				t.Fatalf("Warm err = %v, want ErrPermissionDenied", err)
+			if _, errs := l.Warm(ctx, outsider, testCompany, testProject, []LookupKind{KindUsers}); !errors.Is(errs[KindUsers], procore.ErrPermissionDenied) || !LookupErrorFatal(errs[KindUsers]) {
+				t.Fatalf("Warm errs = %v, want a fatal ErrPermissionDenied for users", errs)
 			}
 			if n := fp.CallCount("ListProjectUsers"); n != 0 {
 				t.Errorf("list calls = %d, want 0", n)
@@ -365,9 +365,9 @@ func TestLookups_Warm_ContinuesAfterError(t *testing.T) {
 	fp.Users = twoUsers()
 	fp.Err["ListLocations"] = procore.ErrUnavailable
 
-	got, err := l.Warm(context.Background(), uuid.New(), testCompany, testProject, []LookupKind{KindLocations, KindUsers})
-	if !errors.Is(err, procore.ErrUnavailable) {
-		t.Fatalf("err = %v, want ErrUnavailable", err)
+	got, errs := l.Warm(context.Background(), uuid.New(), testCompany, testProject, []LookupKind{KindLocations, KindUsers})
+	if len(errs) != 1 || !errors.Is(errs[KindLocations], procore.ErrUnavailable) || LookupErrorFatal(errs[KindLocations]) {
+		t.Fatalf("errs = %v, want a non-fatal ErrUnavailable for locations only", errs)
 	}
 	if _, ok := got[KindUsers]; !ok || len(got[KindUsers].Rows) != 2 {
 		t.Fatalf("users not warmed after locations failed: %+v", got)

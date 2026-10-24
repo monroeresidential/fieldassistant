@@ -236,9 +236,17 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 	if !ok {
 		return nil, nil, fmt.Errorf("pipeline: unknown feature %q", cur.Feature)
 	}
-	sets, err := d.lookups.Warm(ctx, userID, cur.CompanyID, cur.ProjectID, f.LookupKinds())
+	sets, failed, err := d.warm(ctx, userID, cur.CompanyID, cur.ProjectID, f)
 	if err != nil {
 		return nil, nil, err
+	}
+	// An ID cannot be judged without its list: rather than drop or flag a
+	// reviewer's choice during an outage, fail this call. Kinds no field
+	// uses (drawings for an RFI) never block.
+	for _, idf := range f.IDFields() {
+		if kerr, ok := failed[idf.Kind]; ok && !isEmptyValue(payload[idf.Field]) {
+			return nil, nil, fmt.Errorf("pipeline: %s lookup needed for %s: %w", idf.Kind, idf.Field, kerr)
+		}
 	}
 	project, err := d.lookups.Project(ctx, userID, cur.CompanyID, cur.ProjectID)
 	if err != nil {

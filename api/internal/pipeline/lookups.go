@@ -233,7 +233,7 @@ func (l *Lookups) requireAccess(ctx context.Context, userID uuid.UUID, companyID
 func (l *Lookups) fetchProject(ctx context.Context, userID uuid.UUID, companyID, projectID int64) (procore.ProjectDetail, error) {
 	token, err := l.tokens.AccessToken(ctx, userID)
 	if err != nil {
-		return procore.ProjectDetail{}, err
+		return procore.ProjectDetail{}, fmt.Errorf("%w: %w", ErrLookupToken, err)
 	}
 	detail, err := l.pc.GetProject(ctx, token, companyID, projectID)
 	if err != nil {
@@ -252,21 +252,32 @@ func (l *Lookups) fetchProject(ctx context.Context, userID uuid.UUID, companyID,
 }
 
 // Warm calls Get for each kind. A failure on one kind does not stop the
-// others. It returns the sets that succeeded and the first error.
-func (l *Lookups) Warm(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kinds []LookupKind) (map[LookupKind]LookupSet, error) {
+// others. It returns the sets that loaded and, for each kind that did not,
+// its error.
+func (l *Lookups) Warm(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kinds []LookupKind) (map[LookupKind]LookupSet, map[LookupKind]error) {
 	out := make(map[LookupKind]LookupSet, len(kinds))
-	var first error
+	errs := map[LookupKind]error{}
 	for _, k := range kinds {
 		set, err := l.Get(ctx, userID, companyID, projectID, k, false)
 		if err != nil {
-			if first == nil {
-				first = err
-			}
+			errs[k] = err
 			continue
 		}
 		out[k] = set
 	}
-	return out, first
+	return out, errs
+}
+
+// ErrLookupToken marks a lookup failure caused by the user's Procore token
+// (no token, a failed refresh), as opposed to the list fetch itself.
+var ErrLookupToken = errors.New("pipeline: access token for lookup")
+
+// LookupErrorFatal reports whether a lookup error must fail the whole
+// request rather than just leave that kind out: a token problem, a
+// rejected sign-in, or no access to the project.
+func LookupErrorFatal(err error) bool {
+	return errors.Is(err, ErrLookupToken) || errors.Is(err, auth.ErrReauthRequired) ||
+		errors.Is(err, procore.ErrUnauthorized) || errors.Is(err, procore.ErrPermissionDenied)
 }
 
 // Project returns the project detail. The caller must be able to see the
@@ -337,7 +348,7 @@ func (l *Lookups) save(ctx context.Context, companyID, projectID int64, kind Loo
 func (l *Lookups) fetch(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kind LookupKind) ([]LookupRow, error) {
 	token, err := l.tokens.AccessToken(ctx, userID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrLookupToken, err)
 	}
 	var items any
 	switch kind {

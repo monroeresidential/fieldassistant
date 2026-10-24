@@ -161,7 +161,7 @@ func (d *Drafts) create(ctx context.Context, in CreateInput) (Draft, error) {
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: load user: %w", err)
 	}
-	sets, err := d.lookups.Warm(ctx, in.UserID, in.CompanyID, in.ProjectID, f.LookupKinds())
+	sets, _, err := d.warm(ctx, in.UserID, in.CompanyID, in.ProjectID, f)
 	if err != nil {
 		return Draft{}, err
 	}
@@ -334,6 +334,29 @@ func (d *Drafts) SaveEdits(ctx context.Context, userID, id uuid.UUID, payload js
 		return Draft{}, err
 	}
 	return fromRow(row)
+}
+
+// warm loads f's lookup kinds for one extraction or validation. A fatal
+// error (see LookupErrorFatal) is returned. A kind that failed otherwise,
+// with no stale copy to serve, is logged and returned as an unavailable set
+// for this call only, so its tool is left out; its error is returned in
+// failed so a caller can refuse to judge IDs of that kind.
+func (d *Drafts) warm(ctx context.Context, userID uuid.UUID, companyID, projectID int64, f Feature) (sets map[LookupKind]LookupSet, failed map[LookupKind]error, err error) {
+	sets, failed = d.lookups.Warm(ctx, userID, companyID, projectID, f.LookupKinds())
+	for _, k := range f.LookupKinds() {
+		kerr, ok := failed[k]
+		if !ok {
+			continue
+		}
+		if LookupErrorFatal(kerr) {
+			return nil, nil, kerr
+		}
+	}
+	for k, kerr := range failed {
+		d.log.Warn("lookup unavailable for this call", "kind", k, "company_id", companyID, "project_id", projectID, "error", kerr)
+		sets[k] = LookupSet{Kind: k, Rows: []LookupRow{}, Unavailable: true, Reason: "could not be loaded from Procore"}
+	}
+	return sets, failed, nil
 }
 
 // finalInput is the decoded submit_draft tool input.
