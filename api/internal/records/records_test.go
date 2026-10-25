@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -393,6 +394,46 @@ func TestSync_PermissionDeniedIsFailedNotError(t *testing.T) {
 	s := e.state(t)
 	if !s.LastError.Valid || s.HighWater.Valid || s.LastPullAt.Valid || s.LastSweepAt.Valid {
 		t.Errorf("state after a denied first pull = %+v", s)
+	}
+}
+
+func TestSync_PermissionDeniedPurgesRows(t *testing.T) {
+	denied := fmt.Errorf("%w: %w", procore.ErrPermissionDenied, &procore.APIError{Status: 403})
+	a, b := rec(1, t0.Add(-2*time.Hour), "a"), rec(2, t0.Add(-time.Hour), "b")
+	e := newEnv(t, recordstest.Returns(a, b), recordstest.Fails(denied), recordstest.Returns(a))
+	wantStatus(t, e.sync(t, records.SyncOpts{}), "pulled", "")
+	if p := e.delta(t, 0, 100); len(p.Records) != 2 {
+		t.Fatalf("records before denial = %v, want 2", ids(p.Records))
+	}
+
+	e.clock.Advance(2 * time.Hour)
+	got := e.sync(t, records.SyncOpts{})
+	wantStatus(t, got, "failed", "procore_permission_denied")
+	if got.PulledAt != nil {
+		t.Errorf("PulledAt = %v, want nil once the mirror is purged", got.PulledAt)
+	}
+	p := e.delta(t, 0, 100)
+	if len(p.Records) != 0 || len(p.DeletedIDs) != 0 || p.SyncedAt != nil {
+		t.Errorf("delta after denial = records %v deleted %v synced_at %v, want empty", ids(p.Records), p.DeletedIDs, p.SyncedAt)
+	}
+	s := e.state(t)
+	if s.HighWater.Valid || s.LastPullAt.Valid || s.LastSweepAt.Valid {
+		t.Errorf("state after denial = %+v, want no high_water, last_pull_at or last_sweep_at", s)
+	}
+	if !s.LastError.Valid || !strings.HasPrefix(s.LastError.String, "procore_permission_denied") {
+		t.Errorf("last_error = %q, want procore_permission_denied", s.LastError.String)
+	}
+	if !s.LastRequestedAt.Time.Equal(t0.Add(2 * time.Hour)) {
+		t.Errorf("last_requested_at = %v, want the denied request's time", s.LastRequestedAt.Time)
+	}
+
+	// Access is back: the next pull is full.
+	wantStatus(t, e.sync(t, records.SyncOpts{}), "pulled", "")
+	if e.f.Calls[2] != nil {
+		t.Errorf("pull after denial since = %v, want nil (full)", *e.f.Calls[2])
+	}
+	if p := e.delta(t, 0, 100); !slices.Equal(ids(p.Records), []int64{1}) {
+		t.Errorf("records after access returns = %v, want [1]", ids(p.Records))
 	}
 }
 

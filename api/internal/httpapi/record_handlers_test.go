@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -246,9 +247,12 @@ func TestGetRecords_NoCacheForcesPull(t *testing.T) {
 
 func TestGetRecords_PermissionDeniedIsSoft(t *testing.T) {
 	srv, fp, token := newRecordServer(t)
+	if first := getRecordPage(t, srv, token, 0); len(first.Records) != 2 {
+		t.Fatalf("records before denial %d, want 2", len(first.Records))
+	}
 	fp.With(func(f *fakeProcore) { f.Forbidden["/projects/376187/rfis"] = true })
 
-	page := getRecordPage(t, srv, token, 0)
+	page := getRecordPage(t, srv, token, 0, "Cache-Control", "no-cache")
 	if page.Pull.Status != "failed" || page.Pull.Code == nil || *page.Pull.Code != "procore_permission_denied" {
 		t.Fatalf("pull %+v, want failed procore_permission_denied", page.Pull)
 	}
@@ -335,6 +339,9 @@ func TestGetRFIAttachment_StreamsAndRejectsForeign(t *testing.T) {
 	if cd := res.Header.Get("Content-Disposition"); cd != `attachment; filename="photo.jpg"` {
 		t.Fatalf("Content-Disposition %q", cd)
 	}
+	if ns := res.Header.Get("X-Content-Type-Options"); ns != "nosniff" {
+		t.Fatalf("X-Content-Type-Options %q, want nosniff", ns)
+	}
 
 	// An answer's attachment without a filename is named by its name.
 	path = "/v1/projects/376187/records/rfi/1001/attachments/" + strconv.FormatInt(answerAttachmentID(1001), 10)
@@ -359,6 +366,52 @@ func TestGetRFIAttachment_UpstreamFailureIs502(t *testing.T) {
 	path := "/v1/projects/376187/records/rfi/1001/attachments/" + strconv.FormatInt(attachmentID(1001), 10)
 	res, b := recordCall(t, srv, http.MethodGet, path, token, nil)
 	wantError(t, res, b, http.StatusBadGateway, "procore_unavailable")
+}
+
+func TestGetRFIAttachment_RFINotFoundIs404(t *testing.T) {
+	srv, _, token := newRecordServer(t)
+
+	res, b := recordCall(t, srv, http.MethodGet, "/v1/projects/376187/records/rfi/9999/attachments/1", token, nil)
+	wantError(t, res, b, http.StatusNotFound, "not_found")
+	if e := decode[Error](t, b); e.Message != "RFI not found" {
+		t.Fatalf("message %q, want RFI not found", e.Message)
+	}
+}
+
+func TestGetRFIAttachment_RefusesInsecureLocations(t *testing.T) {
+	srv, fp, token := newRecordServer(t)
+	var plainHits atomic.Int32
+	plainSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		plainHits.Add(1)
+		_, _ = w.Write([]byte("plain"))
+	}))
+	t.Cleanup(plainSrv.Close)
+	plain := plainSrv.URL + "/photo.jpg"
+	fp.With(func(f *fakeProcore) {
+		updated := f.Clock.now().Add(-time.Hour)
+		f.RecordRFIs[testProcoreUser.ID] = append(f.RecordRFIs[testProcoreUser.ID],
+			recordRFI(1003, "Plain http file", updated, plain),
+			recordRFI(1004, "Redirected file", updated, f.Server.URL+"/files/moved.jpg"),
+		)
+		f.Files["moved.jpg"] = fakeFile{RedirectTo: plain}
+	})
+
+	path := "/v1/projects/376187/records/rfi/1003/attachments/" + strconv.FormatInt(attachmentID(1003), 10)
+	res, b := recordCall(t, srv, http.MethodGet, path, token, nil)
+	wantError(t, res, b, http.StatusBadGateway, "procore_unavailable")
+	if e := decode[Error](t, b); e.Message != "attachment location is not usable" {
+		t.Fatalf("message %q", e.Message)
+	}
+
+	path = "/v1/projects/376187/records/rfi/1004/attachments/" + strconv.FormatInt(attachmentID(1004), 10)
+	res, b = recordCall(t, srv, http.MethodGet, path, token, nil)
+	wantError(t, res, b, http.StatusBadGateway, "procore_unavailable")
+	if n := fp.requestsTo("/files/moved.jpg"); n != 1 {
+		t.Fatalf("redirecting file requests %d, want 1", n)
+	}
+	if n := plainHits.Load(); n != 0 {
+		t.Fatalf("plain http server hit %d times, want 0", n)
+	}
 }
 
 func TestGetRecords_UndecodableBodyIsSkipped(t *testing.T) {

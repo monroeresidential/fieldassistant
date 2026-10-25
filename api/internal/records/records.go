@@ -149,9 +149,11 @@ func NewMirror(st *store.Store, fetchers map[Kind]Fetcher, tokens TokenSource, n
 // fetched. A pull is full (every record, then a sweep that soft-deletes the
 // rest) when opts.Full is set, no sweep has run, the last one is older than
 // SweepInterval, or there is no high-water mark; otherwise it lists records
-// updated since the high-water mark minus Overlap. A fetch error changes no
-// record rows and leaves the cursors as they were; it is recorded in
-// last_error and reported as a failed status.
+// updated since the high-water mark minus Overlap. A fetch error is recorded
+// in last_error and reported as a failed status. A permission denial deletes
+// the user's rows and cursors for the key, so nothing they can no longer see
+// is served and the next good pull is full; any other fetch error changes
+// no record rows and leaves the cursors as they were.
 func (m *Mirror) Sync(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kind Kind, opts SyncOpts) PullStatus {
 	return m.sync(ctx, userID, companyID, projectID, kind, opts, true)
 }
@@ -206,6 +208,19 @@ func (m *Mirror) sync(ctx context.Context, userID uuid.UUID, companyID, projectI
 		if err != nil {
 			fetchErr = err
 			code, msg := classify(err)
+			if code == CodePermissionDenied {
+				// The user lost access: drop their copy, and start over
+				// with a full pull once access returns.
+				if err := q.DeleteUserRecords(ctx, db.DeleteUserRecordsParams{
+					UserID: uid, ProjectID: projectID, Kind: string(kind),
+				}); err != nil {
+					return fmt.Errorf("records: purge after permission loss: %w", err)
+				}
+				state = db.UserSyncState{
+					CompanyID: companyID, UserID: uid, ProjectID: projectID, Kind: string(kind),
+					LastRequestedAt: state.LastRequestedAt,
+				}
+			}
 			state.LastError = pgtype.Text{String: code + ": " + err.Error(), Valid: true}
 			out = PullStatus{Kind: kind, Status: StatusFailed, PulledAt: timePtr(state.LastPullAt), Code: code, Message: msg}
 			return saveState(ctx, q, state)

@@ -3,6 +3,7 @@ package procore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -57,15 +58,34 @@ func (c *Client) GetRFIRaw(ctx context.Context, accessToken string, companyID, p
 	return body, nil
 }
 
+// errInsecureRedirect refuses a file redirect to anything but https.
+var errInsecureRedirect = errors.New("procore: file redirect is not https")
+
+// maxFileRedirects matches net/http's default redirect limit.
+const maxFileRedirects = 10
+
 // FetchURL GETs rawURL with the client's http.Client and none of the Procore
-// headers, for the pre-signed file URLs Procore returns. The caller closes the
-// response body and checks the status.
+// headers, for the pre-signed file URLs Procore returns. It follows
+// redirects only to https URLs. A URL that cannot be requested, a refused
+// redirect and a transport failure are all ErrUnavailable. The caller
+// checks the scheme of rawURL itself, closes the response body and checks
+// the status.
 func (c *Client) FetchURL(ctx context.Context, rawURL string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("procore: build file request: %w", err)
+		return nil, unavailable(ctx, fmt.Errorf("procore: build file request: %w", err))
 	}
-	resp, err := c.hc.Do(req)
+	hc := *c.hc
+	hc.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if next.URL.Scheme != "https" {
+			return errInsecureRedirect
+		}
+		if len(via) >= maxFileRedirects {
+			return errors.New("procore: too many file redirects")
+		}
+		return nil
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, unavailable(ctx, fmt.Errorf("procore: fetch file: %w", err))
 	}

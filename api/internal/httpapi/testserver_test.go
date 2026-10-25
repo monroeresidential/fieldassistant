@@ -142,6 +142,10 @@ func (f *fakeProcore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "no such file", http.StatusNotFound)
 			return
 		}
+		if file.RedirectTo != "" {
+			http.Redirect(w, r, file.RedirectTo, http.StatusFound)
+			return
+		}
 		w.Header().Set("Content-Type", file.ContentType)
 		_, _ = w.Write(file.Body)
 	default:
@@ -291,10 +295,12 @@ func projectRoute(path string) (id int64, sub string, ok bool) {
 	return id, sub, true
 }
 
-// fakeFile is a file the fake serves at /files/{name}.
+// fakeFile is a file the fake serves at /files/{name}. A non-empty
+// RedirectTo answers 302 to that URL instead.
 type fakeFile struct {
 	ContentType string
 	Body        []byte
+	RedirectTo  string
 }
 
 // filterUpdatedAt keeps the items whose "updated_at" falls in rng, Procore's
@@ -416,7 +422,8 @@ func startTestServer(t *testing.T, scheme string) testServer {
 
 		Clock: clock,
 	}
-	procoreSrv := httptest.NewServer(fp)
+	// TLS, so the attachment URLs it hands out are https like Procore's.
+	procoreSrv := httptest.NewTLSServer(fp)
 	t.Cleanup(procoreSrv.Close)
 	fp.Server = procoreSrv
 

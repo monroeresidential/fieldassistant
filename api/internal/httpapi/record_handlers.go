@@ -3,7 +3,9 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -117,6 +119,10 @@ func (s *Server) GetRFIAttachment(ctx context.Context, req GetRFIAttachmentReque
 	}
 	raw, err := s.deps.Procore.GetRFIRaw(ctx, token, companyID, req.ProjectId, req.RfiId)
 	if err != nil {
+		var pcErr *procore.APIError
+		if errors.As(err, &pcErr) && pcErr.Status == http.StatusNotFound {
+			return nil, &APIError{Status: http.StatusNotFound, Code: "not_found", Message: "RFI not found"}
+		}
 		return nil, s.procoreFailure("rfi attachment", err)
 	}
 	var d procore.RFIDetail
@@ -129,6 +135,12 @@ func (s *Server) GetRFIAttachment(ctx context.Context, req GetRFIAttachmentReque
 		return nil, &APIError{Status: http.StatusNotFound, Code: "not_found", Message: "attachment is not on this RFI"}
 	}
 
+	// Only an absolute https URL is fetched; FetchURL keeps redirects to
+	// https too.
+	if u, err := url.Parse(att.URL); err != nil || u.Scheme != "https" || u.Host == "" {
+		s.logger().Warn("unusable attachment location", "rfi_id", req.RfiId, "attachment_id", req.AttachmentId)
+		return nil, &APIError{Status: http.StatusBadGateway, Code: "procore_unavailable", Message: "attachment location is not usable"}
+	}
 	resp, err := s.deps.Procore.FetchURL(ctx, att.URL)
 	if err != nil {
 		return nil, s.procoreFailure("rfi attachment file", err)
@@ -152,14 +164,26 @@ func (s *Server) GetRFIAttachment(ctx context.Context, req GetRFIAttachmentReque
 	// The generated visitor omits Content-Length when it is 0, so an
 	// unknown length (-1) is passed as 0.
 	length := max(resp.ContentLength, 0)
-	return GetRFIAttachment200ApplicationoctetStreamResponse{
+	return nosniffAttachment{GetRFIAttachment200ApplicationoctetStreamResponse{
 		Body:          resp.Body,
 		ContentLength: length,
 		Headers: GetRFIAttachment200ResponseHeaders{
 			ContentType:        contentType,
 			ContentDisposition: `attachment; filename="` + quoteFilename(filename) + `"`,
 		},
-	}, nil
+	}}, nil
+}
+
+// nosniffAttachment is the generated 200 attachment response with
+// X-Content-Type-Options: nosniff added, so a client never sniffs
+// Procore-supplied bytes into a different type than the one declared.
+type nosniffAttachment struct {
+	GetRFIAttachment200ApplicationoctetStreamResponse
+}
+
+func (r nosniffAttachment) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	return r.GetRFIAttachment200ApplicationoctetStreamResponse.VisitGetRFIAttachmentResponse(w)
 }
 
 // findRFIAttachment finds attachment id among the RFI's questions and answers.

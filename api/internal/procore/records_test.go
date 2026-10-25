@@ -3,6 +3,7 @@ package procore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -161,6 +162,52 @@ func TestRFIDetail_NumberAsString(t *testing.T) {
 	}
 	if d.Number != "7.1" {
 		t.Errorf("number = %q", d.Number)
+	}
+}
+
+func TestFetchURL_RedirectsOnlyToHTTPS(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/to-https":
+			http.Redirect(w, r, "https://"+r.Host+"/file", http.StatusFound)
+		case "/to-http":
+			http.Redirect(w, r, "http://"+r.Host+"/file", http.StatusFound)
+		case "/file":
+			_, _ = w.Write([]byte("bytes"))
+		}
+	}))
+	defer srv.Close()
+	c := NewClient("http://unused.invalid", srv.Client(), nil, nil)
+
+	resp, err := c.FetchURL(context.Background(), srv.URL+"/to-https")
+	if err != nil {
+		t.Fatalf("https redirect: %v", err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(b) != "bytes" {
+		t.Fatalf("https redirect body %q", b)
+	}
+
+	resp, err = c.FetchURL(context.Background(), srv.URL+"/to-http")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("redirect to http was followed")
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("redirect to http error %v, want ErrUnavailable", err)
+	}
+}
+
+func TestFetchURL_MalformedURLIsUnavailable(t *testing.T) {
+	c := NewClient("http://unused.invalid", http.DefaultClient, nil, nil)
+	resp, err := c.FetchURL(context.Background(), "://no scheme")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("malformed URL was fetched")
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("error %v, want ErrUnavailable", err)
 	}
 }
 
