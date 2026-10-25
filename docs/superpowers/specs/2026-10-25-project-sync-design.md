@@ -52,7 +52,7 @@ The backend keeps, in Postgres, a mirror of each synced project's records **as s
 - **Freshness window**: a pull triggered by a phone is skipped when `last_pull_at` is under 60 seconds old (my call); the phone still gets its delta from the mirror. A manual Sync forces the pull.
 - **Own submits**: the submit worker is not changed. When the phone returns from the Result screen to Home it requests a forced delta pull (bypassing the freshness window); the delta's five-minute overlap catches the RFI Procore just created. (My call, so the idempotent submit job and its tests stay as they are.)
 - **Keep-warm job**: a River periodic job every 15 minutes pulls deltas for each (user, project) synced in the last 24 hours (my call) using that user's refresh token, so the open-app sync is usually a delta of nothing. A user whose refresh fails is skipped until their next sign-in.
-- **Pulls that fail** with 401 or 403 record `last_error` and leave the mirror as it was; the phone shows "Sync failed, showing what you have".
+- **Pulls that fail** record `last_error`. A 401 or an unavailable Procore leaves the mirror as it was and the phone shows "Sync failed, showing what you have". A 403 (the user lost the project or the RFI tool) soft-deletes every row of that user's mirror for the kind, so the next delta carries them in `deleted_ids` and the phone drops them, and resets the cursor so a later successful pull is full; the phone shows "No RFI access on this project". (Ruled during implementation 2026-10-25 after a security review: serving a cached copy after Procore revoked access contradicted the anti-goal.)
 
 ### Visibility
 

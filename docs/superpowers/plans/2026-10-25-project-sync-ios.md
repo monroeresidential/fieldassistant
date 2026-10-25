@@ -15,7 +15,7 @@
 - Only the backend talks to Procore; the phone calls `getRecords`, `syncProject` and `getRFIAttachment` only.
 - Records and sync state are cleared on sign-out (like lookups); drafts are untouched.
 - Sync runs only for the selected project; it is cancelled on project change and in `AppState.endSession` (the session epoch pattern from `loadMe` applies: a page that arrives after sign-out is dropped).
-- Every screen shows sync status honestly: "Synced <relative time>", a spinner while syncing, "Sync failed, showing what you have" with Retry; a `pull.status == "failed"` with `code == "procore_permission_denied"` shows "No RFI access on this project" on the list.
+- Every screen shows sync status honestly: "Synced <relative time>", a spinner while syncing, "Sync failed, showing what you have" with Retry; a `pull.status == "failed"` with `code == "procore_permission_denied"` shows "No RFI access on this project" on the list (the backend soft-deletes the user's rows on a 403, so they arrive in `deleted_ids` and the list empties).
 - Delta pages are applied in one `ModelContext.save()` per page; no per-row saves.
 - Copy and styling use the handoff tokens (`docs/design/2026-10-23-ios-handoff/`) with plain `List` rows; the design pass restyles later.
 - The generated Swift type names in this plan (`Components.Schemas.RecordPage`, `.RFIRecord`, `Operations.getRecords`, `Operations.syncProject`, `Operations.getRFIAttachment`) are the generator's defaults for contract 1.5.0; the Task 1 implementer confirms them against `ios/Packages/FieldAssistantAPI` and reports any difference.
@@ -147,7 +147,7 @@ func testRecordsSortedByNumberDescending()      // numbers "12","9","RFI-10","3"
 func testQueryMatchesNumberOrSubject()
 func testStatusAndBallInCourtFilters()
 func testClearAllRemovesRecordsAndState()
-func testApplyFailedPullKeepsRowsAndRecordsError()  // pull.status failed code procore_permission_denied → rows unchanged, state.lastErrorCode set
+func testApplyFailedPullKeepsRowsAndRecordsError()  // pull.status failed code procore_permission_denied with deleted_ids listing the rows → rows removed (they arrive in deleted_ids), state.lastErrorCode set
 ```
 
 - [ ] **Step 2: Run to verify fail, implement, run to verify pass**
