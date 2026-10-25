@@ -63,7 +63,7 @@ func NewClient(pool *pgxpool.Pool, s Submitter, w Warmer, logger *slog.Logger) (
 	if err := river.AddWorkerSafely(workers, &WarmRecordsWorker{Warmer: w}); err != nil {
 		return nil, fmt.Errorf("jobs: add warm worker: %w", err)
 	}
-	c, err := river.NewClient(riverpgxv5.New(pool), riverConfig(workers, s, w, logger))
+	c, err := river.NewClient(riverpgxv5.New(pool), riverConfig(workers, s, logger))
 	if err != nil {
 		return nil, fmt.Errorf("jobs: river client: %w", err)
 	}
@@ -71,7 +71,7 @@ func NewClient(pool *pgxpool.Pool, s Submitter, w Warmer, logger *slog.Logger) (
 }
 
 // riverConfig is the River configuration NewClient uses.
-func riverConfig(workers *river.Workers, s Submitter, _ Warmer, logger *slog.Logger) *river.Config {
+func riverConfig(workers *river.Workers, s Submitter, logger *slog.Logger) *river.Config {
 	return &river.Config{
 		Queues:                      map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 4}},
 		Workers:                     workers,

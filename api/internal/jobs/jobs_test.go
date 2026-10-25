@@ -108,7 +108,7 @@ func TestQueue_EnqueueTx_NewAttemptWhileOldRunning(t *testing.T) {
 
 // River keeps finished jobs for a week, so a client polling late finds them.
 func TestRiverConfig_RetainsFinishedJobsForAWeek(t *testing.T) {
-	cfg := riverConfig(river.NewWorkers(), newFakeSubmitter(), &fakeWarmer{}, quiet)
+	cfg := riverConfig(river.NewWorkers(), newFakeSubmitter(), quiet)
 	if cfg.CompletedJobRetentionPeriod != 7*24*time.Hour || cfg.DiscardedJobRetentionPeriod != 7*24*time.Hour {
 		t.Errorf("retention completed %s discarded %s, want 168h", cfg.CompletedJobRetentionPeriod, cfg.DiscardedJobRetentionPeriod)
 	}
@@ -301,5 +301,32 @@ func TestStatusFor_MapsRiverStates(t *testing.T) {
 		if got := statusFor(s); got != want[s] {
 			t.Errorf("statusFor(%s) = %q, want %q", s, got, want[s])
 		}
+	}
+}
+
+// A warm job is skipped while one is active, but a completed one (kept for a
+// week) must not block the next tick.
+func TestWarmJob_UniqueWhileActiveOnly(t *testing.T) {
+	st := storetest.New(t)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := context.Background()
+	args, opts := warmConstructor()
+	first, err := c.Insert(ctx, args, opts)
+	if err != nil || first.UniqueSkippedAsDuplicate {
+		t.Fatalf("first insert = %+v, %v", first, err)
+	}
+	second, err := c.Insert(ctx, args, opts)
+	if err != nil || !second.UniqueSkippedAsDuplicate || second.Job.ID != first.Job.ID {
+		t.Fatalf("second insert = %+v, %v; want skipped duplicate of %d", second, err, first.Job.ID)
+	}
+	if _, err := st.Pool.Exec(ctx, `update river_job set state = 'completed', finalized_at = now() where id = $1`, first.Job.ID); err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+	third, err := c.Insert(ctx, args, opts)
+	if err != nil || third.UniqueSkippedAsDuplicate || third.Job.ID == first.Job.ID {
+		t.Fatalf("third insert = %+v, %v; want a new job", third, err)
 	}
 }
