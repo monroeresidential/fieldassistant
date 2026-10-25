@@ -9,3 +9,5 @@ sql:
         out: internal/store/db
         sql_package: pgx/v5
         emit_json_tags: false
+        rename:
+          keep_ids: KeepIDs

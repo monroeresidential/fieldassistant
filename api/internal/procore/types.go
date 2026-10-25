@@ -204,3 +204,153 @@ func (r *RFICreated) UnmarshalJSON(b []byte) error {
 	r.Number = n
 	return nil
 }
+
+// Ref is a person or lookup record embedded in an RFI. Procore sends a
+// different subset of Label, Number, Description and FullCode per kind
+// (a specification section has label and number, a cost code full_code).
+type Ref struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Number      string `json:"number"`
+	Description string `json:"description"`
+	FullCode    string `json:"full_code"`
+}
+
+// UnmarshalJSON accepts Number as a JSON number, string or null.
+func (r *Ref) UnmarshalJSON(b []byte) error {
+	type plain Ref
+	var w struct {
+		plain
+		Number json.RawMessage `json:"number"`
+	}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	*r = Ref(w.plain)
+	n, err := numberString(w.Number)
+	if err != nil {
+		return err
+	}
+	r.Number = n
+	return nil
+}
+
+// Impact is an RFI's cost or schedule impact as Procore returns it.
+type Impact struct {
+	Status string `json:"status"`
+	Value  string `json:"value"`
+}
+
+// UnmarshalJSON accepts Value as a JSON number, string or null.
+func (i *Impact) UnmarshalJSON(b []byte) error {
+	var w struct {
+		Status LooseString     `json:"status"`
+		Value  json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	v, err := numberString(w.Value)
+	if err != nil {
+		return err
+	}
+	*i = Impact{Status: string(w.Status), Value: v}
+	return nil
+}
+
+// RFIAttachmentDetail is a file attached to an RFI question or answer. URL is
+// Procore's expiring download link.
+type RFIAttachmentDetail struct {
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	Filename    string     `json:"filename"`
+	URL         string     `json:"url"`
+	ContentType string     `json:"content_type"`
+	Size        LooseInt64 `json:"size"`
+}
+
+// RFIAnswerDetail is a response to an RFI question.
+type RFIAnswerDetail struct {
+	ID            int64                 `json:"id"`
+	AnswerDate    string                `json:"answer_date"`
+	PlainTextBody string                `json:"plain_text_body"`
+	RichTextBody  string                `json:"rich_text_body"`
+	CreatedBy     *Ref                  `json:"created_by"`
+	Attachments   []RFIAttachmentDetail `json:"attachments"`
+}
+
+// RFIQuestionDetail is a question on an RFI with its attachments and answers.
+type RFIQuestionDetail struct {
+	ID            int64                 `json:"id"`
+	QuestionDate  string                `json:"question_date"`
+	PlainTextBody string                `json:"plain_text_body"`
+	RichTextBody  string                `json:"rich_text_body"`
+	CreatedBy     *Ref                  `json:"created_by"`
+	Attachments   []RFIAttachmentDetail `json:"attachments"`
+	Answers       []RFIAnswerDetail     `json:"answers"`
+}
+
+// RFIDetail is Procore's Show RFI response. Every field tolerates null or
+// absence. Display strings whose JSON type is not pinned down by a captured
+// response are LooseString, so a number where a string was expected does
+// not fail the whole record.
+type RFIDetail struct {
+	ID                    int64               `json:"id"`
+	Number                string              `json:"number"`
+	FullNumber            LooseString         `json:"full_number"`
+	Prefix                LooseString         `json:"prefix"`
+	Subject               string              `json:"subject"`
+	Status                string              `json:"status"`
+	TranslatedStatus      string              `json:"translated_status"`
+	Draft                 bool                `json:"draft"`
+	Private               bool                `json:"private"`
+	DueDate               *string             `json:"due_date"`
+	InitiatedAt           *string             `json:"initiated_at"`
+	TimeResolved          *string             `json:"time_resolved"`
+	CreatedAt             string              `json:"created_at"`
+	UpdatedAt             string              `json:"updated_at"`
+	CreatedBy             *Ref                `json:"created_by"`
+	Assignee              *Ref                `json:"assignee"`
+	Assignees             []Ref               `json:"assignees"`
+	BallInCourt           *Ref                `json:"ball_in_court"`
+	BallInCourts          []Ref               `json:"ball_in_courts"`
+	BallInCourtRole       LooseString         `json:"ball_in_court_role"`
+	RFIManager            *Ref                `json:"rfi_manager"`
+	ReceivedFrom          *Ref                `json:"received_from"`
+	ResponsibleContractor *Ref                `json:"responsible_contractor"`
+	DistributionList      []Ref               `json:"distribution_list"`
+	Location              *Ref                `json:"location"`
+	SpecificationSection  *Ref                `json:"specification_section"`
+	CostCode              *Ref                `json:"cost_code"`
+	CostImpact            *Impact             `json:"cost_impact"`
+	ScheduleImpact        *Impact             `json:"schedule_impact"`
+	DrawingNumber         LooseString         `json:"drawing_number"`
+	DrawingIDs            []int64             `json:"drawing_ids"`
+	Reference             LooseString         `json:"reference"`
+	Revision              LooseString         `json:"revision"`
+	CurrentRevision       bool                `json:"current_revision"`
+	HasRevisions          bool                `json:"has_revisions"`
+	Questions             []RFIQuestionDetail `json:"questions"`
+	CustomFields          map[string]any      `json:"custom_fields"`
+	Link                  LooseString         `json:"link"`
+}
+
+// UnmarshalJSON accepts the RFI number as either a JSON number or string.
+func (r *RFIDetail) UnmarshalJSON(b []byte) error {
+	type plain RFIDetail
+	var w struct {
+		plain
+		Number json.RawMessage `json:"number"`
+	}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	*r = RFIDetail(w.plain)
+	n, err := numberString(w.Number)
+	if err != nil {
+		return err
+	}
+	r.Number = n
+	return nil
+}

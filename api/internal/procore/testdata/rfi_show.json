@@ -1,0 +1,63 @@
+{
+  "id": 182885,
+  "number": 12,
+  "full_number": "RFI-012",
+  "prefix": "RFI",
+  "subject": "Level 2 slab penetration at gridline C4",
+  "status": "open",
+  "translated_status": "Open",
+  "draft": false,
+  "private": false,
+  "due_date": "2026-11-02",
+  "initiated_at": "2026-10-20T14:05:00Z",
+  "time_resolved": null,
+  "created_at": "2026-10-20T14:05:00Z",
+  "updated_at": "2026-10-24T09:30:00Z",
+  "created_by": {"id": 301, "name": "Drew Monroe", "login": "drew@example.com"},
+  "assignee": {"id": 302, "name": "Ana Torres"},
+  "assignees": [{"id": 302, "name": "Ana Torres"}],
+  "ball_in_court": {"id": 302, "name": "Ana Torres"},
+  "ball_in_courts": [{"id": 302, "name": "Ana Torres"}],
+  "ball_in_court_role": "Architect",
+  "rfi_manager": {"id": 303, "name": "Sam Lee"},
+  "received_from": null,
+  "responsible_contractor": {"id": 55, "name": "Acme Concrete"},
+  "distribution_list": [{"id": 304, "name": "Kim Park"}, {"id": 305, "name": "Lou Diaz"}],
+  "location": {"id": 77, "name": "Level 2 / East"},
+  "specification_section": {"id": 88, "label": "03 30 00 - Cast-in-Place Concrete", "number": "03 30 00", "description": "Cast-in-Place Concrete"},
+  "cost_code": {"id": 99, "full_code": "03-300", "name": "Concrete"},
+  "cost_impact": {"status": "yes_known", "value": "1500.00"},
+  "schedule_impact": {"status": "no"},
+  "drawing_number": "S-201",
+  "drawing_ids": [4001, 4002],
+  "reference": "Addendum 3",
+  "revision": "0",
+  "current_revision": true,
+  "has_revisions": false,
+  "custom_fields": {"custom_field_1": "North stair", "custom_field_2": null},
+  "link": "https://sandbox.procore.com/4292442/project/rfi/show/182885",
+  "questions": [
+    {
+      "id": 5001,
+      "question_date": "2026-10-20T14:05:00Z",
+      "plain_text_body": "Can we core a 6 in. penetration through the slab at C4?",
+      "rich_text_body": "<p>Can we core a 6 in. penetration through the slab at C4?</p>",
+      "created_by": {"id": 301, "name": "Drew Monroe"},
+      "attachments": [
+        {"id": 9001, "name": "slab-photo.jpg", "filename": "slab-photo.jpg", "url": "https://procore-files.example.com/9001?sig=abc", "content_type": "image/jpeg", "size": 123456}
+      ],
+      "answers": [
+        {
+          "id": 6001,
+          "answer_date": "2026-10-23T16:00:00Z",
+          "plain_text_body": "Coring is acceptable if it clears the rebar by 2 in.",
+          "rich_text_body": "<p>Coring is acceptable if it clears the rebar by 2 in.</p>",
+          "created_by": {"id": 302, "name": "Ana Torres"},
+          "attachments": [
+            {"id": 9002, "name": "sketch.pdf", "filename": "sketch.pdf", "url": "https://procore-files.example.com/9002?sig=def"}
+          ]
+        }
+      ]
+    }
+  ]
+}

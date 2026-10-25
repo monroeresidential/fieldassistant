@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Field Assistant API
-  version: 1.4.2
+  version: 1.5.0
 servers:
   - url: /v1
 security:
@@ -210,6 +210,9 @@ paths:
   /projects/{projectId}/rfis:
     get:
       operationId: listRFIs
+      deprecated: true
+      description: >-
+        Replaced by getRecords; removed when the phone stops calling it.
       parameters:
         - name: projectId
           in: path
@@ -298,6 +301,166 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /projects/{projectId}/records/{kind}:
+    get:
+      operationId: getRecords
+      description: >-
+        A page of the project's records of one kind as the signed-in user may
+        see them in Procore, changed since the cursor. The backend pulls from
+        Procore first when its copy is older than 60 seconds; Cache-Control:
+        no-cache forces the pull. The first call sends since=0.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [rfi]
+        - name: X-Company-Id
+          in: header
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: since
+          in: query
+          required: false
+          description: Cursor from the previous page's `next_since`; 0 for the first call.
+          schema:
+            type: integer
+            format: int64
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            default: 500
+            minimum: 1
+            maximum: 500
+        - name: Cache-Control
+          in: header
+          required: false
+          description: '`no-cache` forces a pull from Procore before answering.'
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The page of records.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordPage'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /projects/{projectId}/sync:
+    post:
+      operationId: syncProject
+      description: >-
+        Pulls the requested kinds from Procore now, as the signed-in user, and
+        reports the outcome of each pull. `full` re-pulls everything instead of
+        only what changed.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: X-Company-Id
+          in: header
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncRequest'
+      responses:
+        '200':
+          description: The outcome of each pull.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResult'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /projects/{projectId}/records/rfi/{rfiId}/attachments/{attachmentId}:
+    get:
+      operationId: getRFIAttachment
+      description: >-
+        An RFI attachment streamed through the backend, so the phone never
+        sees Procore's expiring URL.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: rfiId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: attachmentId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: X-Company-Id
+          in: header
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: The attachment bytes.
+          headers:
+            Content-Disposition:
+              required: true
+              schema:
+                type: string
+            Content-Type:
+              required: true
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
           $ref: '#/components/responses/Error'
         '502':
           $ref: '#/components/responses/Error'
@@ -712,6 +875,256 @@ components:
         fetched_at:
           type: string
           format: date-time
+    PullStatus:
+      type: object
+      required: [kind, status]
+      properties:
+        kind:
+          type: string
+        status:
+          type: string
+          enum: [fresh, pulled, failed]
+        pulled_at:
+          type: string
+          format: date-time
+        code:
+          type: string
+        message:
+          type: string
+    RecordPage:
+      type: object
+      required: [records, deleted_ids, next_since, has_more, pull]
+      properties:
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecordEnvelope'
+        deleted_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        next_since:
+          type: integer
+          format: int64
+        has_more:
+          type: boolean
+        synced_at:
+          type: string
+          format: date-time
+        pull:
+          $ref: '#/components/schemas/PullStatus'
+    RecordEnvelope:
+      type: object
+      required: [id, kind, updated_at, change_seq]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        change_seq:
+          type: integer
+          format: int64
+        rfi:
+          $ref: '#/components/schemas/RFIRecord'
+    SyncRequest:
+      type: object
+      required: [kinds]
+      properties:
+        kinds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [rfi]
+        full:
+          type: boolean
+          default: false
+    SyncResult:
+      type: object
+      required: [pulls]
+      properties:
+        pulls:
+          type: array
+          items:
+            $ref: '#/components/schemas/PullStatus'
+    Ref:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+    ImpactRef:
+      type: object
+      description: Procore cost_impact or schedule_impact.
+      properties:
+        status:
+          type: string
+        value:
+          type: string
+    RFIAttachment:
+      type: object
+      required: [id, name, url]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        filename:
+          type: string
+        url:
+          type: string
+          description: The app's proxy path for the bytes, never Procore's expiring URL.
+    RFIAnswer:
+      type: object
+      required: [id, plain_text_body, attachments]
+      properties:
+        id:
+          type: integer
+          format: int64
+        answer_date:
+          type: string
+          format: date-time
+        plain_text_body:
+          type: string
+        rich_text_body:
+          type: string
+        created_by:
+          $ref: '#/components/schemas/Ref'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RFIAttachment'
+    RFIQuestion:
+      type: object
+      required: [id, plain_text_body, attachments, answers]
+      properties:
+        id:
+          type: integer
+          format: int64
+        question_date:
+          type: string
+          format: date-time
+        plain_text_body:
+          type: string
+        rich_text_body:
+          type: string
+        created_by:
+          $ref: '#/components/schemas/Ref'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RFIAttachment'
+        answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/RFIAnswer'
+    RFIRecord:
+      type: object
+      required: [id, number, subject, status, draft, private, created_at, updated_at, assignees, ball_in_courts, distribution_list, drawing_ids, current_revision, has_revisions, questions]
+      properties:
+        id:
+          type: integer
+          format: int64
+        number:
+          type: string
+        full_number:
+          type: string
+        prefix:
+          type: string
+        subject:
+          type: string
+        status:
+          type: string
+        translated_status:
+          type: string
+        draft:
+          type: boolean
+        private:
+          type: boolean
+        due_date:
+          type: string
+          format: date
+        initiated_at:
+          type: string
+          format: date-time
+        time_resolved:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        created_by:
+          $ref: '#/components/schemas/Ref'
+        assignee:
+          $ref: '#/components/schemas/Ref'
+        assignees:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ref'
+        ball_in_court:
+          $ref: '#/components/schemas/Ref'
+        ball_in_courts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ref'
+        ball_in_court_role:
+          type: string
+        rfi_manager:
+          $ref: '#/components/schemas/Ref'
+        received_from:
+          $ref: '#/components/schemas/Ref'
+        responsible_contractor:
+          $ref: '#/components/schemas/Ref'
+        distribution_list:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ref'
+        location:
+          $ref: '#/components/schemas/Ref'
+        specification_section:
+          $ref: '#/components/schemas/Ref'
+        cost_code:
+          $ref: '#/components/schemas/Ref'
+        cost_impact:
+          $ref: '#/components/schemas/ImpactRef'
+        schedule_impact:
+          $ref: '#/components/schemas/ImpactRef'
+        drawing_number:
+          type: string
+        drawing_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        reference:
+          type: string
+        revision:
+          type: string
+        current_revision:
+          type: boolean
+        has_revisions:
+          type: boolean
+        questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RFIQuestion'
+        custom_fields:
+          type: object
+          additionalProperties: true
+        link:
+          type: string
     CreateDraftRequest:
       type: object
       required: [id, feature, project_id, transcript, captured_at]

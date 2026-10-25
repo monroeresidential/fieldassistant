@@ -14,6 +14,7 @@ import (
 	"github.com/monroeresidential/fieldassistant/api/internal/config"
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
+	"github.com/monroeresidential/fieldassistant/api/internal/records"
 	"github.com/monroeresidential/fieldassistant/api/internal/store"
 )
 
@@ -35,6 +36,9 @@ type Deps struct {
 	Drafts *pipeline.Drafts
 	// Jobs is the River client that queues submit jobs and reports on them.
 	Jobs *river.Client[pgx.Tx]
+	// Records is the per-user Procore record mirror behind the records
+	// delta feed.
+	Records *records.Mirror
 }
 
 // NewRouter builds the HTTP handler for the API.

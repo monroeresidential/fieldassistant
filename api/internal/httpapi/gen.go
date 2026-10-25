@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -152,6 +153,27 @@ func (e LookupResponseKind) Valid() bool {
 	}
 }
 
+// Defines values for PullStatusStatus.
+const (
+	PullStatusStatusFailed PullStatusStatus = "failed"
+	PullStatusStatusFresh  PullStatusStatus = "fresh"
+	PullStatusStatusPulled PullStatusStatus = "pulled"
+)
+
+// Valid indicates whether the value is a known member of the PullStatusStatus enum.
+func (e PullStatusStatus) Valid() bool {
+	switch e {
+	case PullStatusStatusFailed:
+		return true
+	case PullStatusStatusFresh:
+		return true
+	case PullStatusStatusPulled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SubmitResponseStatus.
 const (
 	SubmitResponseStatusSubmitted  SubmitResponseStatus = "submitted"
@@ -164,6 +186,21 @@ func (e SubmitResponseStatus) Valid() bool {
 	case SubmitResponseStatusSubmitted:
 		return true
 	case SubmitResponseStatusSubmitting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SyncRequestKinds.
+const (
+	SyncRequestKindsRfi SyncRequestKinds = "rfi"
+)
+
+// Valid indicates whether the value is a known member of the SyncRequestKinds enum.
+func (e SyncRequestKinds) Valid() bool {
+	switch e {
+	case SyncRequestKindsRfi:
 		return true
 	default:
 		return false
@@ -224,6 +261,21 @@ func (e GetLookupParamsKind) Valid() bool {
 	case GetLookupParamsKindUsers:
 		return true
 	case GetLookupParamsKindVendors:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetRecordsParamsKind.
+const (
+	GetRecordsParamsKindRfi GetRecordsParamsKind = "rfi"
+)
+
+// Valid indicates whether the value is a known member of the GetRecordsParamsKind enum.
+func (e GetRecordsParamsKind) Valid() bool {
+	switch e {
+	case GetRecordsParamsKindRfi:
 		return true
 	default:
 		return false
@@ -324,6 +376,12 @@ type Impact struct {
 // ImpactStatus defines model for Impact.Status.
 type ImpactStatus string
 
+// ImpactRef Procore cost_impact or schedule_impact.
+type ImpactRef struct {
+	Status *string `json:"status,omitempty"`
+	Value  *string `json:"value,omitempty"`
+}
+
 // JobStatus defines model for JobStatus.
 type JobStatus struct {
 	DraftId openapi_types.UUID `json:"draft_id"`
@@ -362,6 +420,38 @@ type Project struct {
 	Name        string `json:"name"`
 }
 
+// PullStatus defines model for PullStatus.
+type PullStatus struct {
+	Code     *string          `json:"code,omitempty"`
+	Kind     string           `json:"kind"`
+	Message  *string          `json:"message,omitempty"`
+	PulledAt *time.Time       `json:"pulled_at,omitempty"`
+	Status   PullStatusStatus `json:"status"`
+}
+
+// PullStatusStatus defines model for PullStatus.Status.
+type PullStatusStatus string
+
+// RFIAnswer defines model for RFIAnswer.
+type RFIAnswer struct {
+	AnswerDate    *time.Time      `json:"answer_date,omitempty"`
+	Attachments   []RFIAttachment `json:"attachments"`
+	CreatedBy     *Ref            `json:"created_by,omitempty"`
+	Id            int64           `json:"id"`
+	PlainTextBody string          `json:"plain_text_body"`
+	RichTextBody  *string         `json:"rich_text_body,omitempty"`
+}
+
+// RFIAttachment defines model for RFIAttachment.
+type RFIAttachment struct {
+	Filename *string `json:"filename,omitempty"`
+	Id       int64   `json:"id"`
+	Name     string  `json:"name"`
+
+	// Url The app's proxy path for the bytes, never Procore's expiring URL.
+	Url string `json:"url"`
+}
+
 // RFIDraftPayload defines model for RFIDraftPayload.
 type RFIDraftPayload struct {
 	AssigneeIds             []int64             `json:"assignee_ids"`
@@ -381,6 +471,63 @@ type RFIDraftPayload struct {
 	Subject                 *string             `json:"subject,omitempty"`
 }
 
+// RFIQuestion defines model for RFIQuestion.
+type RFIQuestion struct {
+	Answers       []RFIAnswer     `json:"answers"`
+	Attachments   []RFIAttachment `json:"attachments"`
+	CreatedBy     *Ref            `json:"created_by,omitempty"`
+	Id            int64           `json:"id"`
+	PlainTextBody string          `json:"plain_text_body"`
+	QuestionDate  *time.Time      `json:"question_date,omitempty"`
+	RichTextBody  *string         `json:"rich_text_body,omitempty"`
+}
+
+// RFIRecord defines model for RFIRecord.
+type RFIRecord struct {
+	Assignee        *Ref    `json:"assignee,omitempty"`
+	Assignees       []Ref   `json:"assignees"`
+	BallInCourt     *Ref    `json:"ball_in_court,omitempty"`
+	BallInCourtRole *string `json:"ball_in_court_role,omitempty"`
+	BallInCourts    []Ref   `json:"ball_in_courts"`
+	CostCode        *Ref    `json:"cost_code,omitempty"`
+
+	// CostImpact Procore cost_impact or schedule_impact.
+	CostImpact            *ImpactRef              `json:"cost_impact,omitempty"`
+	CreatedAt             time.Time               `json:"created_at"`
+	CreatedBy             *Ref                    `json:"created_by,omitempty"`
+	CurrentRevision       bool                    `json:"current_revision"`
+	CustomFields          *map[string]interface{} `json:"custom_fields,omitempty"`
+	DistributionList      []Ref                   `json:"distribution_list"`
+	Draft                 bool                    `json:"draft"`
+	DrawingIds            []int64                 `json:"drawing_ids"`
+	DrawingNumber         *string                 `json:"drawing_number,omitempty"`
+	DueDate               *openapi_types.Date     `json:"due_date,omitempty"`
+	FullNumber            *string                 `json:"full_number,omitempty"`
+	HasRevisions          bool                    `json:"has_revisions"`
+	Id                    int64                   `json:"id"`
+	InitiatedAt           *time.Time              `json:"initiated_at,omitempty"`
+	Link                  *string                 `json:"link,omitempty"`
+	Location              *Ref                    `json:"location,omitempty"`
+	Number                string                  `json:"number"`
+	Prefix                *string                 `json:"prefix,omitempty"`
+	Private               bool                    `json:"private"`
+	Questions             []RFIQuestion           `json:"questions"`
+	ReceivedFrom          *Ref                    `json:"received_from,omitempty"`
+	Reference             *string                 `json:"reference,omitempty"`
+	ResponsibleContractor *Ref                    `json:"responsible_contractor,omitempty"`
+	Revision              *string                 `json:"revision,omitempty"`
+	RfiManager            *Ref                    `json:"rfi_manager,omitempty"`
+
+	// ScheduleImpact Procore cost_impact or schedule_impact.
+	ScheduleImpact       *ImpactRef `json:"schedule_impact,omitempty"`
+	SpecificationSection *Ref       `json:"specification_section,omitempty"`
+	Status               string     `json:"status"`
+	Subject              string     `json:"subject"`
+	TimeResolved         *time.Time `json:"time_resolved,omitempty"`
+	TranslatedStatus     *string    `json:"translated_status,omitempty"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
 // RFISummary defines model for RFISummary.
 type RFISummary struct {
 	Assignees []string            `json:"assignees"`
@@ -389,6 +536,31 @@ type RFISummary struct {
 	Number    string              `json:"number"`
 	Status    string              `json:"status"`
 	Subject   string              `json:"subject"`
+}
+
+// RecordEnvelope defines model for RecordEnvelope.
+type RecordEnvelope struct {
+	ChangeSeq int64      `json:"change_seq"`
+	Id        int64      `json:"id"`
+	Kind      string     `json:"kind"`
+	Rfi       *RFIRecord `json:"rfi,omitempty"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// RecordPage defines model for RecordPage.
+type RecordPage struct {
+	DeletedIds []int64          `json:"deleted_ids"`
+	HasMore    bool             `json:"has_more"`
+	NextSince  int64            `json:"next_since"`
+	Pull       PullStatus       `json:"pull"`
+	Records    []RecordEnvelope `json:"records"`
+	SyncedAt   *time.Time       `json:"synced_at,omitempty"`
+}
+
+// Ref defines model for Ref.
+type Ref struct {
+	Id   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 // SaveDraftRequest defines model for SaveDraftRequest.
@@ -411,6 +583,20 @@ type SubmitResponse struct {
 
 // SubmitResponseStatus defines model for SubmitResponse.Status.
 type SubmitResponseStatus string
+
+// SyncRequest defines model for SyncRequest.
+type SyncRequest struct {
+	Full  *bool              `json:"full,omitempty"`
+	Kinds []SyncRequestKinds `json:"kinds"`
+}
+
+// SyncRequestKinds defines model for SyncRequest.Kinds.
+type SyncRequestKinds string
+
+// SyncResult defines model for SyncResult.
+type SyncResult struct {
+	Pulls []PullStatus `json:"pulls"`
+}
 
 // TokenPair defines model for TokenPair.
 type TokenPair struct {
@@ -498,8 +684,32 @@ type GetLookupParams struct {
 // GetLookupParamsKind defines parameters for GetLookup.
 type GetLookupParamsKind string
 
+// GetRFIAttachmentParams defines parameters for GetRFIAttachment.
+type GetRFIAttachmentParams struct {
+	XCompanyId int64 `json:"X-Company-Id"`
+}
+
+// GetRecordsParams defines parameters for GetRecords.
+type GetRecordsParams struct {
+	// Since Cursor from the previous page's `next_since`; 0 for the first call.
+	Since      *int64 `form:"since,omitempty" json:"since,omitempty"`
+	Limit      *int32 `form:"limit,omitempty" json:"limit,omitempty"`
+	XCompanyId int64  `json:"X-Company-Id"`
+
+	// CacheControl `no-cache` forces a pull from Procore before answering.
+	CacheControl *string `json:"Cache-Control,omitempty"`
+}
+
+// GetRecordsParamsKind defines parameters for GetRecords.
+type GetRecordsParamsKind string
+
 // ListRFIsParams defines parameters for ListRFIs.
 type ListRFIsParams struct {
+	XCompanyId int64 `json:"X-Company-Id"`
+}
+
+// SyncProjectParams defines parameters for SyncProject.
+type SyncProjectParams struct {
 	XCompanyId int64 `json:"X-Company-Id"`
 }
 
@@ -520,6 +730,9 @@ type SaveDraftJSONRequestBody = SaveDraftRequest
 
 // PutMeSelectionJSONRequestBody defines body for PutMeSelection for application/json ContentType.
 type PutMeSelectionJSONRequestBody = Selection
+
+// SyncProjectJSONRequestBody defines body for SyncProject for application/json ContentType.
+type SyncProjectJSONRequestBody = SyncRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -572,8 +785,19 @@ type ServerInterface interface {
 	// (GET /projects/{projectId}/lookups/{kind})
 	GetLookup(w http.ResponseWriter, r *http.Request, projectId int64, kind GetLookupParamsKind, params GetLookupParams)
 
+	// (GET /projects/{projectId}/records/rfi/{rfiId}/attachments/{attachmentId})
+	GetRFIAttachment(w http.ResponseWriter, r *http.Request, projectId int64, rfiId int64, attachmentId int64, params GetRFIAttachmentParams)
+
+	// (GET /projects/{projectId}/records/{kind})
+	GetRecords(w http.ResponseWriter, r *http.Request, projectId int64, kind GetRecordsParamsKind, params GetRecordsParams)
+
 	// (GET /projects/{projectId}/rfis)
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListRFIs(w http.ResponseWriter, r *http.Request, projectId int64, params ListRFIsParams)
+
+	// (POST /projects/{projectId}/sync)
+	SyncProject(w http.ResponseWriter, r *http.Request, projectId int64, params SyncProjectParams)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -660,8 +884,25 @@ func (_ Unimplemented) GetLookup(w http.ResponseWriter, r *http.Request, project
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// (GET /projects/{projectId}/records/rfi/{rfiId}/attachments/{attachmentId})
+func (_ Unimplemented) GetRFIAttachment(w http.ResponseWriter, r *http.Request, projectId int64, rfiId int64, attachmentId int64, params GetRFIAttachmentParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /projects/{projectId}/records/{kind})
+func (_ Unimplemented) GetRecords(w http.ResponseWriter, r *http.Request, projectId int64, kind GetRecordsParamsKind, params GetRecordsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // (GET /projects/{projectId}/rfis)
+//
+// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 func (_ Unimplemented) ListRFIs(w http.ResponseWriter, r *http.Request, projectId int64, params ListRFIsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (POST /projects/{projectId}/sync)
+func (_ Unimplemented) SyncProject(w http.ResponseWriter, r *http.Request, projectId int64, params SyncProjectParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1313,6 +1554,186 @@ func (siw *ServerInterfaceWrapper) GetLookup(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// GetRFIAttachment operation middleware
+func (siw *ServerInterfaceWrapper) GetRFIAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", chi.URLParam(r, "projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "rfiId" -------------
+	var rfiId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "rfiId", chi.URLParam(r, "rfiId"), &rfiId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rfiId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", chi.URLParam(r, "attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRFIAttachmentParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRFIAttachment(w, r, projectId, rfiId, attachmentId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecords operation middleware
+func (siw *ServerInterfaceWrapper) GetRecords(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", chi.URLParam(r, "projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "kind" -------------
+	var kind GetRecordsParamsKind
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", chi.URLParam(r, "kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRecordsParams
+
+	// ------------- Optional query parameter "since" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "since"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	// ------------- Optional header parameter "Cache-Control" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Cache-Control")]; found {
+		var CacheControl string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Cache-Control", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Cache-Control", valueList[0], &CacheControl, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Cache-Control", Err: err})
+			return
+		}
+
+		params.CacheControl = &CacheControl
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecords(w, r, projectId, kind, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRFIs operation middleware
 func (siw *ServerInterfaceWrapper) ListRFIs(w http.ResponseWriter, r *http.Request) {
 
@@ -1358,6 +1779,60 @@ func (siw *ServerInterfaceWrapper) ListRFIs(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListRFIs(w, r, projectId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SyncProject operation middleware
+func (siw *ServerInterfaceWrapper) SyncProject(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", chi.URLParam(r, "projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SyncProjectParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SyncProject(w, r, projectId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1512,6 +1987,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/projects/{projectId}/lookups/{kind}", wrapper.GetLookup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/projects/{projectId}/records/{kind}", wrapper.GetRecords)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/projects/{projectId}/sync", wrapper.SyncProject)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/projects/{projectId}/records/rfi/{rfiId}/attachments/{attachmentId}", wrapper.GetRFIAttachment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/drafts", wrapper.ListDrafts)
@@ -2814,6 +3298,187 @@ func (response GetLookupdefaultJSONResponse) VisitGetLookupResponse(w http.Respo
 	return err
 }
 
+type GetRFIAttachmentRequestObject struct {
+	ProjectId    int64 `json:"projectId"`
+	RfiId        int64 `json:"rfiId"`
+	AttachmentId int64 `json:"attachmentId"`
+	Params       GetRFIAttachmentParams
+}
+
+type GetRFIAttachmentResponseObject interface {
+	VisitGetRFIAttachmentResponse(w http.ResponseWriter) error
+}
+
+type GetRFIAttachment200ResponseHeaders struct {
+	ContentDisposition string
+	ContentType        string
+}
+
+type GetRFIAttachment200ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	Headers       GetRFIAttachment200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetRFIAttachment200ApplicationoctetStreamResponse) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprint(response.Headers.ContentDisposition))
+	w.Header().Set("Content-Type", fmt.Sprint(response.Headers.ContentType))
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetRFIAttachment401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetRFIAttachment401JSONResponse) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRFIAttachment403JSONResponse Error
+
+func (response GetRFIAttachment403JSONResponse) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRFIAttachment404JSONResponse Error
+
+func (response GetRFIAttachment404JSONResponse) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRFIAttachment502JSONResponse Error
+
+func (response GetRFIAttachment502JSONResponse) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRFIAttachmentdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetRFIAttachmentdefaultJSONResponse) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRecordsRequestObject struct {
+	ProjectId int64                `json:"projectId"`
+	Kind      GetRecordsParamsKind `json:"kind"`
+	Params    GetRecordsParams
+}
+
+type GetRecordsResponseObject interface {
+	VisitGetRecordsResponse(w http.ResponseWriter) error
+}
+
+type GetRecords200JSONResponse RecordPage
+
+func (response GetRecords200JSONResponse) VisitGetRecordsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRecords401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetRecords401JSONResponse) VisitGetRecordsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRecords403JSONResponse Error
+
+func (response GetRecords403JSONResponse) VisitGetRecordsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRecordsdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetRecordsdefaultJSONResponse) VisitGetRecordsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListRFIsRequestObject struct {
 	ProjectId int64 `json:"projectId"`
 	Params    ListRFIsParams
@@ -2896,6 +3561,75 @@ func (response ListRFIsdefaultJSONResponse) VisitListRFIsResponse(w http.Respons
 	return err
 }
 
+type SyncProjectRequestObject struct {
+	ProjectId int64 `json:"projectId"`
+	Params    SyncProjectParams
+	Body      *SyncProjectJSONRequestBody
+}
+
+type SyncProjectResponseObject interface {
+	VisitSyncProjectResponse(w http.ResponseWriter) error
+}
+
+type SyncProject200JSONResponse SyncResult
+
+func (response SyncProject200JSONResponse) VisitSyncProjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SyncProject401JSONResponse struct{ ErrorJSONResponse }
+
+func (response SyncProject401JSONResponse) VisitSyncProjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SyncProject403JSONResponse Error
+
+func (response SyncProject403JSONResponse) VisitSyncProjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SyncProjectdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response SyncProjectdefaultJSONResponse) VisitSyncProjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 
@@ -2947,8 +3681,19 @@ type StrictServerInterface interface {
 	// (GET /projects/{projectId}/lookups/{kind})
 	GetLookup(ctx context.Context, request GetLookupRequestObject) (GetLookupResponseObject, error)
 
+	// (GET /projects/{projectId}/records/rfi/{rfiId}/attachments/{attachmentId})
+	GetRFIAttachment(ctx context.Context, request GetRFIAttachmentRequestObject) (GetRFIAttachmentResponseObject, error)
+
+	// (GET /projects/{projectId}/records/{kind})
+	GetRecords(ctx context.Context, request GetRecordsRequestObject) (GetRecordsResponseObject, error)
+
 	// (GET /projects/{projectId}/rfis)
+	//
+	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ListRFIs(ctx context.Context, request ListRFIsRequestObject) (ListRFIsResponseObject, error)
+
+	// (POST /projects/{projectId}/sync)
+	SyncProject(ctx context.Context, request SyncProjectRequestObject) (SyncProjectResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -3440,6 +4185,63 @@ func (sh *strictHandler) GetLookup(w http.ResponseWriter, r *http.Request, proje
 	}
 }
 
+// GetRFIAttachment operation middleware
+func (sh *strictHandler) GetRFIAttachment(w http.ResponseWriter, r *http.Request, projectId int64, rfiId int64, attachmentId int64, params GetRFIAttachmentParams) {
+	var request GetRFIAttachmentRequestObject
+
+	request.ProjectId = projectId
+	request.RfiId = rfiId
+	request.AttachmentId = attachmentId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRFIAttachment(ctx, request.(GetRFIAttachmentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRFIAttachment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRFIAttachmentResponseObject); ok {
+		if err := validResponse.VisitGetRFIAttachmentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRecords operation middleware
+func (sh *strictHandler) GetRecords(w http.ResponseWriter, r *http.Request, projectId int64, kind GetRecordsParamsKind, params GetRecordsParams) {
+	var request GetRecordsRequestObject
+
+	request.ProjectId = projectId
+	request.Kind = kind
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRecords(ctx, request.(GetRecordsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRecords")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRecordsResponseObject); ok {
+		if err := validResponse.VisitGetRecordsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListRFIs operation middleware
 func (sh *strictHandler) ListRFIs(w http.ResponseWriter, r *http.Request, projectId int64, params ListRFIsParams) {
 	var request ListRFIsRequestObject
@@ -3460,6 +4262,40 @@ func (sh *strictHandler) ListRFIs(w http.ResponseWriter, r *http.Request, projec
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListRFIsResponseObject); ok {
 		if err := validResponse.VisitListRFIsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SyncProject operation middleware
+func (sh *strictHandler) SyncProject(w http.ResponseWriter, r *http.Request, projectId int64, params SyncProjectParams) {
+	var request SyncProjectRequestObject
+
+	request.ProjectId = projectId
+	request.Params = params
+
+	var body SyncProjectJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SyncProject(ctx, request.(SyncProjectRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SyncProject")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SyncProjectResponseObject); ok {
+		if err := validResponse.VisitSyncProjectResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

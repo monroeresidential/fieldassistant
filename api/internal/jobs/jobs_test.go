@@ -80,7 +80,7 @@ func enqueueAttempt(ctx context.Context, st *store.Store, c *river.Client[pgx.Tx
 // settled), the next attempt gets a new job; the same attempt does not.
 func TestQueue_EnqueueTx_NewAttemptWhileOldRunning(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestRiverConfig_RetainsFinishedJobsForAWeek(t *testing.T) {
 // A job inserted in a transaction that rolls back does not exist.
 func TestQueue_EnqueueTx_RolledBack_NoJob(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestQueue_EnqueueTx_RolledBack_NoJob(t *testing.T) {
 
 func TestQueue_JobFinished(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestQueue_JobFinished(t *testing.T) {
 
 func TestEnqueue_SameDraftWhileActive_ReturnsExistingJob(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestEnqueue_SameDraftWhileActive_ReturnsExistingJob(t *testing.T) {
 
 func TestStatus_UnknownJob_NotFound(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestStatus_UnknownJob_NotFound(t *testing.T) {
 func TestWorker_RunsSubmitAndCompletes(t *testing.T) {
 	st := storetest.New(t)
 	fs := newFakeSubmitter()
-	c, err := NewClient(st.Pool, fs, quiet)
+	c, err := NewClient(st.Pool, fs, &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -301,5 +301,32 @@ func TestStatusFor_MapsRiverStates(t *testing.T) {
 		if got := statusFor(s); got != want[s] {
 			t.Errorf("statusFor(%s) = %q, want %q", s, got, want[s])
 		}
+	}
+}
+
+// A warm job is skipped while one is active, but a completed one (kept for a
+// week) must not block the next tick.
+func TestWarmJob_UniqueWhileActiveOnly(t *testing.T) {
+	st := storetest.New(t)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	ctx := context.Background()
+	args, opts := warmConstructor()
+	first, err := c.Insert(ctx, args, opts)
+	if err != nil || first.UniqueSkippedAsDuplicate {
+		t.Fatalf("first insert = %+v, %v", first, err)
+	}
+	second, err := c.Insert(ctx, args, opts)
+	if err != nil || !second.UniqueSkippedAsDuplicate || second.Job.ID != first.Job.ID {
+		t.Fatalf("second insert = %+v, %v; want skipped duplicate of %d", second, err, first.Job.ID)
+	}
+	if _, err := st.Pool.Exec(ctx, `update river_job set state = 'completed', finalized_at = now() where id = $1`, first.Job.ID); err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+	third, err := c.Insert(ctx, args, opts)
+	if err != nil || third.UniqueSkippedAsDuplicate || third.Job.ID == first.Job.ID {
+		t.Fatalf("third insert = %+v, %v; want a new job", third, err)
 	}
 }
