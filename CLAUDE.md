@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 implemented end to end (backend merged; iOS capture, review and submit on branch `milestone-2-ios`); next: on-device dictation check, then the design pass (roadmap 2b).
+Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. Next: the design pass (roadmap 2b) and a project-sync brainstorm before milestone 3.
 
 Governing documents:
 
