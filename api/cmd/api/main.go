@@ -18,6 +18,7 @@ import (
 	"github.com/monroeresidential/fieldassistant/api/internal/llm"
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
+	"github.com/monroeresidential/fieldassistant/api/internal/records"
 	"github.com/monroeresidential/fieldassistant/api/internal/store"
 )
 
@@ -137,7 +138,10 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	lookups := pipeline.NewLookups(st, pc, tokens, lookupCacheTTL, time.Now, logger)
 	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens,
 		map[string]pipeline.Feature{"rfi": rfi.New()}, cfg.LLM.ExtractModel, cfg.LLM.Timeout, time.Now, logger)
-	jobsClient, err := jobs.NewClient(st.Pool, drafts, logger)
+	mirror := records.NewMirror(st, map[records.Kind]records.Fetcher{
+		records.KindRFI: records.RFIFetcher{PC: pc},
+	}, tokens, time.Now, logger)
+	jobsClient, err := jobs.NewClient(st.Pool, drafts, mirror, logger)
 	if err != nil {
 		st.Close()
 		return httpapi.Deps{}, nil, err
@@ -154,5 +158,6 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 		Lookups:   lookups,
 		Drafts:    drafts,
 		Jobs:      jobsClient,
+		Records:   mirror,
 	}, st.Close, nil
 }

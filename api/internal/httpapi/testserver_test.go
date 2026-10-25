@@ -460,7 +460,10 @@ func startTestServer(t *testing.T, scheme string) testServer {
 	drafts := pipeline.NewDrafts(st, lookups, scripted, pc, tokens, features, "claude-configured", 20*time.Second, clock.now, logger)
 	// The River client works submit jobs for the whole test; it stops
 	// before the database lock is released.
-	riverClient, err := jobs.NewClient(st.Pool, drafts, logger)
+	mirror := records.NewMirror(st, map[records.Kind]records.Fetcher{
+		records.KindRFI: records.RFIFetcher{PC: pc},
+	}, tokens, clock.now, logger)
+	riverClient, err := jobs.NewClient(st.Pool, drafts, mirror, logger)
 	if err != nil {
 		t.Fatalf("river client: %v", err)
 	}
@@ -485,9 +488,7 @@ func startTestServer(t *testing.T, scheme string) testServer {
 		Lookups:   lookups,
 		Drafts:    drafts,
 		Jobs:      riverClient,
-		Records: records.NewMirror(st, map[records.Kind]records.Fetcher{
-			records.KindRFI: records.RFIFetcher{PC: pc},
-		}, tokens, clock.now, logger),
+		Records:   mirror,
 	})
 	api.Start()
 	t.Cleanup(api.Close)

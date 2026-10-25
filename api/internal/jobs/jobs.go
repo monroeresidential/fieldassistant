@@ -48,10 +48,11 @@ const (
 var ErrNotFound = errors.New("jobs: job not found")
 
 // NewClient builds a River client over pool with one default queue of four
-// workers running submit jobs through s. Call Start to begin working jobs
+// workers running submit jobs through s and a periodic job that keeps record
+// mirrors warm through w. Call Start to begin working jobs
 // and Stop on shutdown; an unstarted client can still insert and read jobs.
 // A nil logger means slog.Default().
-func NewClient(pool *pgxpool.Pool, s Submitter, logger *slog.Logger) (*river.Client[pgx.Tx], error) {
+func NewClient(pool *pgxpool.Pool, s Submitter, w Warmer, logger *slog.Logger) (*river.Client[pgx.Tx], error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -59,7 +60,10 @@ func NewClient(pool *pgxpool.Pool, s Submitter, logger *slog.Logger) (*river.Cli
 	if err := river.AddWorkerSafely(workers, &SubmitWorker{Submitter: s}); err != nil {
 		return nil, fmt.Errorf("jobs: add submit worker: %w", err)
 	}
-	c, err := river.NewClient(riverpgxv5.New(pool), riverConfig(workers, s, logger))
+	if err := river.AddWorkerSafely(workers, &WarmRecordsWorker{Warmer: w}); err != nil {
+		return nil, fmt.Errorf("jobs: add warm worker: %w", err)
+	}
+	c, err := river.NewClient(riverpgxv5.New(pool), riverConfig(workers, s, w, logger))
 	if err != nil {
 		return nil, fmt.Errorf("jobs: river client: %w", err)
 	}
@@ -67,7 +71,7 @@ func NewClient(pool *pgxpool.Pool, s Submitter, logger *slog.Logger) (*river.Cli
 }
 
 // riverConfig is the River configuration NewClient uses.
-func riverConfig(workers *river.Workers, s Submitter, logger *slog.Logger) *river.Config {
+func riverConfig(workers *river.Workers, s Submitter, _ Warmer, logger *slog.Logger) *river.Config {
 	return &river.Config{
 		Queues:                      map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 4}},
 		Workers:                     workers,
@@ -77,6 +81,7 @@ func riverConfig(workers *river.Workers, s Submitter, logger *slog.Logger) *rive
 		RescueStuckJobsAfter:        RescueStuckJobsAfter,
 		CompletedJobRetentionPeriod: JobRetention,
 		DiscardedJobRetentionPeriod: JobRetention,
+		PeriodicJobs:                []*river.PeriodicJob{warmPeriodicJob()},
 	}
 }
 

@@ -80,7 +80,7 @@ func enqueueAttempt(ctx context.Context, st *store.Store, c *river.Client[pgx.Tx
 // settled), the next attempt gets a new job; the same attempt does not.
 func TestQueue_EnqueueTx_NewAttemptWhileOldRunning(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestQueue_EnqueueTx_NewAttemptWhileOldRunning(t *testing.T) {
 
 // River keeps finished jobs for a week, so a client polling late finds them.
 func TestRiverConfig_RetainsFinishedJobsForAWeek(t *testing.T) {
-	cfg := riverConfig(river.NewWorkers(), newFakeSubmitter(), quiet)
+	cfg := riverConfig(river.NewWorkers(), newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if cfg.CompletedJobRetentionPeriod != 7*24*time.Hour || cfg.DiscardedJobRetentionPeriod != 7*24*time.Hour {
 		t.Errorf("retention completed %s discarded %s, want 168h", cfg.CompletedJobRetentionPeriod, cfg.DiscardedJobRetentionPeriod)
 	}
@@ -117,7 +117,7 @@ func TestRiverConfig_RetainsFinishedJobsForAWeek(t *testing.T) {
 // A job inserted in a transaction that rolls back does not exist.
 func TestQueue_EnqueueTx_RolledBack_NoJob(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestQueue_EnqueueTx_RolledBack_NoJob(t *testing.T) {
 
 func TestQueue_JobFinished(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestQueue_JobFinished(t *testing.T) {
 
 func TestEnqueue_SameDraftWhileActive_ReturnsExistingJob(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestEnqueue_SameDraftWhileActive_ReturnsExistingJob(t *testing.T) {
 
 func TestStatus_UnknownJob_NotFound(t *testing.T) {
 	st := storetest.New(t)
-	c, err := NewClient(st.Pool, newFakeSubmitter(), quiet)
+	c, err := NewClient(st.Pool, newFakeSubmitter(), &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestStatus_UnknownJob_NotFound(t *testing.T) {
 func TestWorker_RunsSubmitAndCompletes(t *testing.T) {
 	st := storetest.New(t)
 	fs := newFakeSubmitter()
-	c, err := NewClient(st.Pool, fs, quiet)
+	c, err := NewClient(st.Pool, fs, &fakeWarmer{}, quiet)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
