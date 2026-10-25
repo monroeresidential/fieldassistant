@@ -15,13 +15,15 @@ import (
 var ErrScriptExhausted = errors.New("recordstest: fetcher script exhausted")
 
 // FakeFetcher satisfies records.Fetcher. Each ListSince call consumes the
-// next Script entry and records its since argument in Calls. When Block is
+// next Script entry and records its since argument in Calls and its context
+// deadline in Deadlines (the zero time when there is none). When Block is
 // non-nil, ListSince waits for it to be closed (or the context to end)
 // before returning.
 type FakeFetcher struct {
-	Script []func(since *time.Time) ([]procore.RawRecord, error)
-	Calls  []*time.Time
-	Block  chan struct{}
+	Script    []func(since *time.Time) ([]procore.RawRecord, error)
+	Calls     []*time.Time
+	Deadlines []time.Time
+	Block     chan struct{}
 
 	mu sync.Mutex
 }
@@ -35,6 +37,8 @@ func (f *FakeFetcher) ListSince(ctx context.Context, _ string, _, _ int64, since
 		s = &v
 	}
 	f.Calls = append(f.Calls, s)
+	dl, _ := ctx.Deadline()
+	f.Deadlines = append(f.Deadlines, dl)
 	var step func(since *time.Time) ([]procore.RawRecord, error)
 	if len(f.Script) > 0 {
 		step, f.Script = f.Script[0], f.Script[1:]
