@@ -1,6 +1,6 @@
 # Project sync: a local, synced copy of a project's Procore records on the phone
 
-Date: 2026-10-25. Status: draft for Drew's review. Written from Drew's direction on 2026-10-24 without a question round; every choice not his is marked "(my call)".
+Date: 2026-10-25. Status: approved by Drew 2026-10-25 (per-user mirror, no offline attachments). Written from Drew's direction on 2026-10-24 without a question round; every choice not his is marked "(my call)".
 
 ## Intent
 
@@ -88,10 +88,10 @@ Adding a kind means: a Procore fetcher (`list since`, `list ids`) and a projecti
 - One phone opening the app ten times in a minute causes one Procore pull.
 - A private RFI never reaches a phone whose user is not on it, and an RFI that turns private disappears from that phone after the next full sweep (test with the sandbox's Test Architect and API Support accounts).
 
-## Open to Drew (answers change the design)
+## Decided by Drew (2026-10-25)
 
-1. Whether attachments should be stored offline after all (photos on an RFI are often why someone opens it in the field). This doubles storage and adds a download queue; it is left out here.
-2. Whether a mirror per user is acceptable against the alternative of one shared mirror pulled by a designated Procore admin account. Per user is correct by construction and needs no new credential; shared is cheaper on Procore calls but needs an admin login kept on the server and our own copy of Procore's visibility rules.
+1. Attachments are not stored offline for now; metadata syncs and files open through the backend with signal.
+2. A mirror per user is fine; no shared mirror and no designated Procore admin account.
 
 ## Left to the builder
 
