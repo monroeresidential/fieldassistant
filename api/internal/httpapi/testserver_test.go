@@ -25,6 +25,7 @@ import (
 	"github.com/monroeresidential/fieldassistant/api/internal/llm/llmtest"
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
+	"github.com/monroeresidential/fieldassistant/api/internal/records"
 	"github.com/monroeresidential/fieldassistant/api/internal/store"
 	"github.com/monroeresidential/fieldassistant/api/internal/store/storetest"
 )
@@ -54,6 +55,7 @@ func (c *fakeClock) Advance(d time.Duration) {
 type fakeRequest struct {
 	Method string
 	Path   string
+	Query  url.Values
 	Header http.Header
 }
 
@@ -92,6 +94,16 @@ type fakeProcore struct {
 	RFICreateResponse func(body []byte) (int, string)
 	RFICreateBodies   [][]byte // bodies posted to /projects/{id}/rfis
 
+	// RecordRFIs are raw Show RFI bodies by Procore user id, for the record
+	// mirror. For a user with an entry, GET /projects/{id}/rfis lists them
+	// (in any project) instead of RFIs, keeping only those whose updated_at
+	// falls in filters[updated_at] when it is sent, and
+	// GET /projects/{id}/rfis/{rfi} answers with the one whose id matches.
+	RecordRFIs map[int64][]map[string]any
+	// Files are served without auth at GET /files/{name}; a missing name
+	// is 404.
+	Files map[string]fakeFile
+
 	Revoked  []string      // tokens posted to /oauth/revoke
 	Requests []fakeRequest // every request, in arrival order
 
@@ -114,7 +126,7 @@ func (f *fakeProcore) With(fn func(f *fakeProcore)) {
 func (f *fakeProcore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.Requests = append(f.Requests, fakeRequest{Method: r.Method, Path: r.URL.Path, Header: r.Header.Clone()})
+	f.Requests = append(f.Requests, fakeRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.Query(), Header: r.Header.Clone()})
 
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/oauth/token":
@@ -124,6 +136,14 @@ func (f *fakeProcore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	case strings.HasPrefix(r.URL.Path, "/rest/v1.0/"), strings.HasPrefix(r.URL.Path, "/rest/v1.1/"):
 		f.rest(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/files/"):
+		file, ok := f.Files[strings.TrimPrefix(r.URL.Path, "/files/")]
+		if !ok {
+			http.Error(w, "no such file", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", file.ContentType)
+		_, _ = w.Write(file.Body)
 	default:
 		http.Error(w, "unexpected request", http.StatusNotFound)
 	}
@@ -186,7 +206,11 @@ func (f *fakeProcore) rest(w http.ResponseWriter, r *http.Request) {
 	route := r.Method + " " + version + " " + path
 	if isProject {
 		route = r.Method + " " + version + " /projects/{id}" + sub
+		if strings.HasPrefix(sub, "/rfis/") {
+			route = r.Method + " " + version + " /projects/{id}/rfis/{rfi}"
+		}
 	}
+	recordRFIs, hasRecordRFIs := f.RecordRFIs[id]
 	switch route {
 	case "GET v1.0 /me":
 		writeJSON(w, me)
@@ -203,7 +227,25 @@ func (f *fakeProcore) rest(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, detail)
 	case "GET v1.0 /projects/{id}/rfis":
-		writeJSON(w, pageOf(f.RFIs[projectID], firstPage))
+		if !hasRecordRFIs {
+			writeJSON(w, pageOf(f.RFIs[projectID], firstPage))
+			return
+		}
+		items, ok := filterUpdatedAt(recordRFIs, r.URL.Query().Get("filters[updated_at]"))
+		if !ok {
+			http.Error(w, `{"errors":"bad filters[updated_at]"}`, http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, pageOf(items, firstPage))
+	case "GET v1.0 /projects/{id}/rfis/{rfi}":
+		rfiID, _ := strconv.ParseInt(strings.TrimPrefix(sub, "/rfis/"), 10, 64)
+		for _, item := range recordRFIs {
+			if n, _ := item["id"].(int64); n == rfiID {
+				writeJSON(w, item)
+				return
+			}
+		}
+		http.Error(w, `{"errors":"not found"}`, http.StatusNotFound)
 	case "POST v1.0 /projects/{id}/rfis":
 		body, _ := io.ReadAll(r.Body)
 		f.RFICreateBodies = append(f.RFICreateBodies, body)
@@ -247,6 +289,36 @@ func projectRoute(path string) (id int64, sub string, ok bool) {
 		sub = "/" + tail
 	}
 	return id, sub, true
+}
+
+// fakeFile is a file the fake serves at /files/{name}.
+type fakeFile struct {
+	ContentType string
+	Body        []byte
+}
+
+// filterUpdatedAt keeps the items whose "updated_at" falls in rng, Procore's
+// "<RFC3339 start>...<RFC3339 end>" range; an empty rng keeps every item. ok
+// is false when rng is malformed.
+func filterUpdatedAt(items []map[string]any, rng string) (kept []map[string]any, ok bool) {
+	if rng == "" {
+		return items, true
+	}
+	startS, endS, found := strings.Cut(rng, "...")
+	start, err1 := time.Parse(time.RFC3339, startS)
+	end, err2 := time.Parse(time.RFC3339, endS)
+	if !found || err1 != nil || err2 != nil {
+		return nil, false
+	}
+	kept = []map[string]any{}
+	for _, item := range items {
+		s, _ := item["updated_at"].(string)
+		at, err := time.Parse(time.RFC3339, s)
+		if err == nil && !at.Before(start) && !at.After(end) {
+			kept = append(kept, item)
+		}
+	}
+	return kept, true
 }
 
 // requestsTo returns how many requests the fake received for path.
@@ -339,6 +411,8 @@ func startTestServer(t *testing.T, scheme string) testServer {
 		Vendors:        map[int64][]procore.Vendor{},
 		Drawings:       map[int64][]procore.Drawing{},
 		ProjectDetails: map[int64]procore.ProjectDetail{},
+		RecordRFIs:     map[int64][]map[string]any{},
+		Files:          map[string]fakeFile{},
 
 		Clock: clock,
 	}
@@ -404,6 +478,9 @@ func startTestServer(t *testing.T, scheme string) testServer {
 		Lookups:   lookups,
 		Drafts:    drafts,
 		Jobs:      riverClient,
+		Records: records.NewMirror(st, map[records.Kind]records.Fetcher{
+			records.KindRFI: records.RFIFetcher{PC: pc},
+		}, tokens, clock.now, logger),
 	})
 	api.Start()
 	t.Cleanup(api.Close)
