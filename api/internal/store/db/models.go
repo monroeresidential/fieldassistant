@@ -100,3 +100,29 @@ type User struct {
 	LastProjectID  pgtype.Int8
 	CreatedAt      pgtype.Timestamptz
 }
+
+type UserRecord struct {
+	CompanyID        int64
+	UserID           pgtype.UUID
+	ProjectID        int64
+	Kind             string
+	ProcoreID        int64
+	ProcoreUpdatedAt pgtype.Timestamptz
+	Body             []byte
+	BodyHash         string
+	DeletedAt        pgtype.Timestamptz
+	ChangeSeq        int64
+	SyncedAt         pgtype.Timestamptz
+}
+
+type UserSyncState struct {
+	CompanyID       int64
+	UserID          pgtype.UUID
+	ProjectID       int64
+	Kind            string
+	HighWater       pgtype.Timestamptz
+	LastPullAt      pgtype.Timestamptz
+	LastSweepAt     pgtype.Timestamptz
+	LastRequestedAt pgtype.Timestamptz
+	LastError       pgtype.Text
+}

@@ -53,7 +53,7 @@ func New(t *testing.T) *store.Store {
 		t.Fatalf("storetest: migrate: %v", err)
 	}
 	// River's tables are truncated too, except river_migration.
-	if _, err := s.Pool.Exec(ctx, "truncate users, sessions, procore_tokens, auth_states, auth_codes, drafts, audit_events, lookup_cache, river_job, river_leader, river_queue, river_notification cascade"); err != nil {
+	if _, err := s.Pool.Exec(ctx, "truncate users, sessions, procore_tokens, auth_states, auth_codes, drafts, audit_events, lookup_cache, user_records, user_sync_state, river_job, river_leader, river_queue, river_notification cascade"); err != nil {
 		t.Fatalf("storetest: truncate: %v", err)
 	}
 	return s
