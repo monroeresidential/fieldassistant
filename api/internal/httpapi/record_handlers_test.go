@@ -247,19 +247,26 @@ func TestGetRecords_NoCacheForcesPull(t *testing.T) {
 
 func TestGetRecords_PermissionDeniedIsSoft(t *testing.T) {
 	srv, fp, token := newRecordServer(t)
-	if first := getRecordPage(t, srv, token, 0); len(first.Records) != 2 {
+	first := getRecordPage(t, srv, token, 0)
+	if len(first.Records) != 2 {
 		t.Fatalf("records before denial %d, want 2", len(first.Records))
 	}
 	fp.With(func(f *fakeProcore) { f.Forbidden["/projects/376187/rfis"] = true })
 
-	page := getRecordPage(t, srv, token, 0, "Cache-Control", "no-cache")
+	// The client at its cursor is told both records are gone.
+	page := getRecordPage(t, srv, token, first.NextSince, "Cache-Control", "no-cache")
+	if len(page.Records) != 0 || len(page.DeletedIds) != 2 {
+		t.Fatalf("page since cursor %+v, want 1001 and 1002 deleted", page)
+	}
+	// A fresh client gets no records.
+	page = getRecordPage(t, srv, token, 0)
 	if page.Pull.Status != "failed" || page.Pull.Code == nil || *page.Pull.Code != "procore_permission_denied" {
 		t.Fatalf("pull %+v, want failed procore_permission_denied", page.Pull)
 	}
 	if page.Pull.Message == nil || *page.Pull.Message == "" {
 		t.Fatal("failed pull has no message")
 	}
-	if len(page.Records) != 0 || len(page.DeletedIds) != 0 {
+	if len(page.Records) != 0 {
 		t.Fatalf("page %+v, want no records", page)
 	}
 }

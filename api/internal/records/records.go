@@ -150,10 +150,11 @@ func NewMirror(st *store.Store, fetchers map[Kind]Fetcher, tokens TokenSource, n
 // rest) when opts.Full is set, no sweep has run, the last one is older than
 // SweepInterval, or there is no high-water mark; otherwise it lists records
 // updated since the high-water mark minus Overlap. A fetch error is recorded
-// in last_error and reported as a failed status. A permission denial deletes
-// the user's rows and cursors for the key, so nothing they can no longer see
-// is served and the next good pull is full; any other fetch error changes
-// no record rows and leaves the cursors as they were.
+// in last_error and reported as a failed status. A permission denial
+// soft-deletes every live row for the key, so clients are told the records
+// are gone and nothing the user can no longer see is served, and clears the
+// cursors so the next good pull is full. Any other fetch error changes no
+// record rows and leaves the cursors as they were.
 func (m *Mirror) Sync(ctx context.Context, userID uuid.UUID, companyID, projectID int64, kind Kind, opts SyncOpts) PullStatus {
 	return m.sync(ctx, userID, companyID, projectID, kind, opts, true)
 }
@@ -209,10 +210,12 @@ func (m *Mirror) sync(ctx context.Context, userID uuid.UUID, companyID, projectI
 			fetchErr = err
 			code, msg := classify(err)
 			if code == CodePermissionDenied {
-				// The user lost access: drop their copy, and start over
-				// with a full pull once access returns.
-				if err := q.DeleteUserRecords(ctx, db.DeleteUserRecordsParams{
-					UserID: uid, ProjectID: projectID, Kind: string(kind),
+				// The user lost access: soft-delete their copy, so clients
+				// receive every id in deleted_ids, and start over with a
+				// full pull once access returns. The empty, non-nil keep
+				// list sweeps every live row.
+				if err := q.SoftDeleteMissingRecords(ctx, db.SoftDeleteMissingRecordsParams{
+					DeletedAt: ts(now), UserID: uid, ProjectID: projectID, Kind: string(kind), KeepIDs: []int64{},
 				}); err != nil {
 					return fmt.Errorf("records: purge after permission loss: %w", err)
 				}

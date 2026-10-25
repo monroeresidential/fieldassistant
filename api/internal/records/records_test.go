@@ -402,8 +402,9 @@ func TestSync_PermissionDeniedPurgesRows(t *testing.T) {
 	a, b := rec(1, t0.Add(-2*time.Hour), "a"), rec(2, t0.Add(-time.Hour), "b")
 	e := newEnv(t, recordstest.Returns(a, b), recordstest.Fails(denied), recordstest.Returns(a))
 	wantStatus(t, e.sync(t, records.SyncOpts{}), "pulled", "")
-	if p := e.delta(t, 0, 100); len(p.Records) != 2 {
-		t.Fatalf("records before denial = %v, want 2", ids(p.Records))
+	before := e.delta(t, 0, 100)
+	if len(before.Records) != 2 {
+		t.Fatalf("records before denial = %v, want 2", ids(before.Records))
 	}
 
 	e.clock.Advance(2 * time.Hour)
@@ -412,9 +413,15 @@ func TestSync_PermissionDeniedPurgesRows(t *testing.T) {
 	if got.PulledAt != nil {
 		t.Errorf("PulledAt = %v, want nil once the mirror is purged", got.PulledAt)
 	}
-	p := e.delta(t, 0, 100)
-	if len(p.Records) != 0 || len(p.DeletedIDs) != 0 || p.SyncedAt != nil {
-		t.Errorf("delta after denial = records %v deleted %v synced_at %v, want empty", ids(p.Records), p.DeletedIDs, p.SyncedAt)
+	// A client at the old cursor is told both records are gone.
+	p := e.delta(t, before.NextSince, 100)
+	gone := slices.Clone(p.DeletedIDs)
+	slices.Sort(gone)
+	if len(p.Records) != 0 || !slices.Equal(gone, []int64{1, 2}) {
+		t.Errorf("delta since cursor after denial = records %v deleted %v, want deleted [1 2]", ids(p.Records), p.DeletedIDs)
+	}
+	if p := e.delta(t, 0, 100); len(p.Records) != 0 || p.SyncedAt != nil {
+		t.Errorf("delta since 0 after denial = records %v synced_at %v, want no records and no synced_at", ids(p.Records), p.SyncedAt)
 	}
 	s := e.state(t)
 	if s.HighWater.Valid || s.LastPullAt.Valid || s.LastSweepAt.Valid {
@@ -432,8 +439,8 @@ func TestSync_PermissionDeniedPurgesRows(t *testing.T) {
 	if e.f.Calls[2] != nil {
 		t.Errorf("pull after denial since = %v, want nil (full)", *e.f.Calls[2])
 	}
-	if p := e.delta(t, 0, 100); !slices.Equal(ids(p.Records), []int64{1}) {
-		t.Errorf("records after access returns = %v, want [1]", ids(p.Records))
+	if p := e.delta(t, 0, 100); !slices.Equal(ids(p.Records), []int64{1}) || !slices.Equal(p.DeletedIDs, []int64{2}) {
+		t.Errorf("after access returns = records %v deleted %v, want records [1] deleted [2]", ids(p.Records), p.DeletedIDs)
 	}
 }
 
