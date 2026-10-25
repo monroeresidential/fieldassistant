@@ -245,7 +245,7 @@ type Impact struct {
 // UnmarshalJSON accepts Value as a JSON number, string or null.
 func (i *Impact) UnmarshalJSON(b []byte) error {
 	var w struct {
-		Status string          `json:"status"`
+		Status LooseString     `json:"status"`
 		Value  json.RawMessage `json:"value"`
 	}
 	if err := json.Unmarshal(b, &w); err != nil {
@@ -255,19 +255,19 @@ func (i *Impact) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return err
 	}
-	*i = Impact{Status: w.Status, Value: v}
+	*i = Impact{Status: string(w.Status), Value: v}
 	return nil
 }
 
 // RFIAttachmentDetail is a file attached to an RFI question or answer. URL is
 // Procore's expiring download link.
 type RFIAttachmentDetail struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	Filename    string `json:"filename"`
-	URL         string `json:"url"`
-	ContentType string `json:"content_type"`
-	Size        int64  `json:"size"`
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	Filename    string     `json:"filename"`
+	URL         string     `json:"url"`
+	ContentType string     `json:"content_type"`
+	Size        LooseInt64 `json:"size"`
 }
 
 // RFIAnswerDetail is a response to an RFI question.
@@ -292,12 +292,14 @@ type RFIQuestionDetail struct {
 }
 
 // RFIDetail is Procore's Show RFI response. Every field tolerates null or
-// absence.
+// absence. Display strings whose JSON type is not pinned down by a captured
+// response are LooseString, so a number where a string was expected does
+// not fail the whole record.
 type RFIDetail struct {
 	ID                    int64               `json:"id"`
 	Number                string              `json:"number"`
-	FullNumber            string              `json:"full_number"`
-	Prefix                string              `json:"prefix"`
+	FullNumber            LooseString         `json:"full_number"`
+	Prefix                LooseString         `json:"prefix"`
 	Subject               string              `json:"subject"`
 	Status                string              `json:"status"`
 	TranslatedStatus      string              `json:"translated_status"`
@@ -313,7 +315,7 @@ type RFIDetail struct {
 	Assignees             []Ref               `json:"assignees"`
 	BallInCourt           *Ref                `json:"ball_in_court"`
 	BallInCourts          []Ref               `json:"ball_in_courts"`
-	BallInCourtRole       string              `json:"ball_in_court_role"`
+	BallInCourtRole       LooseString         `json:"ball_in_court_role"`
 	RFIManager            *Ref                `json:"rfi_manager"`
 	ReceivedFrom          *Ref                `json:"received_from"`
 	ResponsibleContractor *Ref                `json:"responsible_contractor"`
@@ -323,15 +325,15 @@ type RFIDetail struct {
 	CostCode              *Ref                `json:"cost_code"`
 	CostImpact            *Impact             `json:"cost_impact"`
 	ScheduleImpact        *Impact             `json:"schedule_impact"`
-	DrawingNumber         string              `json:"drawing_number"`
+	DrawingNumber         LooseString         `json:"drawing_number"`
 	DrawingIDs            []int64             `json:"drawing_ids"`
-	Reference             string              `json:"reference"`
-	Revision              string              `json:"revision"`
+	Reference             LooseString         `json:"reference"`
+	Revision              LooseString         `json:"revision"`
 	CurrentRevision       bool                `json:"current_revision"`
 	HasRevisions          bool                `json:"has_revisions"`
 	Questions             []RFIQuestionDetail `json:"questions"`
 	CustomFields          map[string]any      `json:"custom_fields"`
-	Link                  string              `json:"link"`
+	Link                  LooseString         `json:"link"`
 }
 
 // UnmarshalJSON accepts the RFI number as either a JSON number or string.

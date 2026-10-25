@@ -70,12 +70,18 @@ const maxFileRedirects = 10
 // redirect and a transport failure are all ErrUnavailable. The caller
 // checks the scheme of rawURL itself, closes the response body and checks
 // the status.
+//
+// The client's Timeout is dropped for this request: http.Client.Timeout
+// also bounds reading the body, and a large file streamed to a phone on a
+// weak signal can take longer than an API call. ctx bounds the whole fetch
+// instead, body included; the transport's dial and TLS limits still apply.
 func (c *Client) FetchURL(ctx context.Context, rawURL string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, unavailable(ctx, fmt.Errorf("procore: build file request: %w", err))
 	}
 	hc := *c.hc
+	hc.Timeout = 0
 	hc.CheckRedirect = func(next *http.Request, via []*http.Request) error {
 		if next.URL.Scheme != "https" {
 			return errInsecureRedirect
