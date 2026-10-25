@@ -421,22 +421,74 @@ func TestGetRFIAttachment_RefusesInsecureLocations(t *testing.T) {
 	}
 }
 
-func TestGetRecords_UndecodableBodyIsSkipped(t *testing.T) {
+func TestGetRecords_UndecodableBodyStillShipsMinimalRecord(t *testing.T) {
 	srv, fp, token := newRecordServer(t)
+	var updated time.Time
 	fp.With(func(f *fakeProcore) {
-		bad := recordRFI(1003, "Broken", f.Clock.now().Add(-time.Hour), "")
+		updated = f.Clock.now().Add(-time.Hour).UTC().Truncate(time.Second)
+		bad := recordRFI(1003, "Broken", updated, "")
 		bad["assignees"] = "not a list"
+		bad["link"] = "https://app.procore.com/rfis/1003"
 		f.RecordRFIs[testProcoreUser.ID] = append(f.RecordRFIs[testProcoreUser.ID], bad)
 	})
 
 	page := getRecordPage(t, srv, token, 0)
-	if len(page.Records) != 2 {
-		t.Fatalf("records %d, want 2 with the undecodable one skipped", len(page.Records))
+	if len(page.Records) != 3 {
+		t.Fatalf("records %d, want 3 with the undecodable one shipped minimally", len(page.Records))
 	}
-	for _, r := range page.Records {
-		if r.Id == 1003 {
-			t.Fatal("undecodable record 1003 was returned")
+	var got *RecordEnvelope
+	for i := range page.Records {
+		if page.Records[i].Id == 1003 {
+			got = &page.Records[i]
 		}
+	}
+	if got == nil {
+		t.Fatal("record 1003 missing from the page")
+	}
+	r := got.Rfi
+	if r == nil {
+		t.Fatal("record 1003 has no rfi")
+	}
+	if r.Id != 1003 || r.Number != "3" || r.Subject != "Broken" || r.Status != "open" {
+		t.Errorf("minimal rfi = id %d number %q subject %q status %q", r.Id, r.Number, r.Subject, r.Status)
+	}
+	if !r.CreatedAt.Equal(updated) || !r.UpdatedAt.Equal(updated) {
+		t.Errorf("created %v updated %v, want %v", r.CreatedAt, r.UpdatedAt, updated)
+	}
+	if r.Link == nil || *r.Link != "https://app.procore.com/rfis/1003" {
+		t.Errorf("link = %v", r.Link)
+	}
+	if r.Assignees == nil || len(r.Assignees) != 0 || r.Questions == nil || len(r.Questions) != 0 {
+		t.Errorf("minimal rfi lists = assignees %v questions %v, want empty", r.Assignees, r.Questions)
+	}
+}
+
+func TestDecodeRFIRecord_SkipsOnlyWhenEvenTheMinimalDecodeFails(t *testing.T) {
+	if _, _, err := decodeRFIRecord(recordProject, []byte(`{"id":5,"number":2,"subject":"S","assignees":"x"}`)); err != nil {
+		t.Errorf("minimal decode failed: %v", err)
+	}
+	if _, _, err := decodeRFIRecord(recordProject, []byte(`{"id":"five","assignees":"x"}`)); err == nil {
+		t.Error("a body without a usable id decoded")
+	}
+	if _, _, err := decodeRFIRecord(recordProject, []byte(`not json`)); err == nil {
+		t.Error("a body that is not JSON decoded")
+	}
+}
+
+func TestCancelOnClose_ReleasesTheFetchContextOnClose(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	body := cancelOnClose{ReadCloser: io.NopCloser(bytes.NewReader([]byte("x"))), cancel: cancel}
+	if _, err := io.ReadAll(body); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("context ended before the body was closed")
+	}
+	if err := body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Err() == nil {
+		t.Error("closing the body did not release the context")
 	}
 }
 

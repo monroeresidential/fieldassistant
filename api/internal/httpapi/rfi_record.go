@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -9,6 +11,38 @@ import (
 
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
 )
+
+// decodeRFIRecord projects a mirrored RFI body. When the full decode fails
+// (detailErr is set), it projects a minimal record from the id, number,
+// subject, status, created_at, updated_at and link alone, so the record
+// still reaches the phone, whose cursor moves past it either way. err is
+// set only when even that fails, and the caller skips the record.
+func decodeRFIRecord(projectID int64, body []byte) (rec RFIRecord, detailErr, err error) {
+	var d procore.RFIDetail
+	detailErr = json.Unmarshal(body, &d)
+	if detailErr == nil {
+		return rfiRecord(projectID, d), nil, nil
+	}
+	var m struct {
+		ID        int64               `json:"id"`
+		Number    procore.LooseString `json:"number"`
+		Subject   procore.LooseString `json:"subject"`
+		Status    procore.LooseString `json:"status"`
+		CreatedAt procore.LooseString `json:"created_at"`
+		UpdatedAt procore.LooseString `json:"updated_at"`
+		Link      procore.LooseString `json:"link"`
+	}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return RFIRecord{}, detailErr, err
+	}
+	if m.ID == 0 {
+		return RFIRecord{}, detailErr, errors.New("rfi body has no id")
+	}
+	return rfiRecord(projectID, procore.RFIDetail{
+		ID: m.ID, Number: string(m.Number), Subject: string(m.Subject), Status: string(m.Status),
+		CreatedAt: string(m.CreatedAt), UpdatedAt: string(m.UpdatedAt), Link: m.Link,
+	}), detailErr, nil
+}
 
 // rfiRecord projects Procore's Show RFI body onto the API's RFIRecord.
 // Optional refs are omitted when Procore's object is null or has id 0, empty

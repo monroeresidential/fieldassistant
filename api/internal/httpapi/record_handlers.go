@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,6 +17,11 @@ import (
 // recordsSyncTimeout bounds the Procore pull GetRecords runs before reading
 // the mirror, so a slow Procore still gets the user the page they have.
 const recordsSyncTimeout = 30 * time.Second
+
+// attachmentFetchTimeout bounds fetching an attachment from Procore and
+// streaming it to the phone, which can be slow for a drawing-sized file on
+// site signal.
+const attachmentFetchTimeout = 5 * time.Minute
 
 // GetRecords pulls the project's records of one kind into the user's mirror
 // when they are stale (always with Cache-Control: no-cache), then returns the
@@ -54,12 +60,16 @@ func (s *Server) GetRecords(ctx context.Context, req GetRecordsRequestObject) (G
 		env := RecordEnvelope{Id: r.ID, Kind: string(r.Kind), UpdatedAt: r.UpdatedAt, ChangeSeq: r.ChangeSeq}
 		switch r.Kind {
 		case records.KindRFI:
-			var d procore.RFIDetail
-			if err := json.Unmarshal(r.Body, &d); err != nil {
-				s.logger().Warn("skipping undecodable record", "kind", r.Kind, "id", r.ID, "error", err)
+			rec, detailErr, err := decodeRFIRecord(req.ProjectId, r.Body)
+			if err != nil {
+				// The cursor moves past this record; it reaches the phone
+				// only once its body changes in Procore.
+				s.logger().Error("skipping undecodable record", "kind", r.Kind, "id", r.ID, "error", err, "detail_error", detailErr)
 				continue
 			}
-			rec := rfiRecord(req.ProjectId, d)
+			if detailErr != nil {
+				s.logger().Error("record shipped with minimal fields", "kind", r.Kind, "id", r.ID, "error", detailErr)
+			}
 			env.Rfi = &rec
 		}
 		envs = append(envs, env)
@@ -141,12 +151,17 @@ func (s *Server) GetRFIAttachment(ctx context.Context, req GetRFIAttachmentReque
 		s.logger().Warn("unusable attachment location", "rfi_id", req.RfiId, "attachment_id", req.AttachmentId)
 		return nil, &APIError{Status: http.StatusBadGateway, Code: "procore_unavailable", Message: "attachment location is not usable"}
 	}
-	resp, err := s.deps.Procore.FetchURL(ctx, att.URL)
+	// The fetch and the copy to the phone share one deadline, released when
+	// the generated visitor closes the body after copying.
+	fetchCtx, cancel := context.WithTimeout(ctx, attachmentFetchTimeout)
+	resp, err := s.deps.Procore.FetchURL(fetchCtx, att.URL)
 	if err != nil {
+		cancel()
 		return nil, s.procoreFailure("rfi attachment file", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
+		cancel()
 		s.logger().Warn("procore file fetch failed", "op", "rfi attachment file", "status", resp.StatusCode)
 		return nil, &APIError{Status: http.StatusBadGateway, Code: "procore_unavailable", Message: "Procore file download failed"}
 	}
@@ -165,13 +180,25 @@ func (s *Server) GetRFIAttachment(ctx context.Context, req GetRFIAttachmentReque
 	// unknown length (-1) is passed as 0.
 	length := max(resp.ContentLength, 0)
 	return nosniffAttachment{GetRFIAttachment200ApplicationoctetStreamResponse{
-		Body:          resp.Body,
+		Body:          cancelOnClose{ReadCloser: resp.Body, cancel: cancel},
 		ContentLength: length,
 		Headers: GetRFIAttachment200ResponseHeaders{
 			ContentType:        contentType,
 			ContentDisposition: `attachment; filename="` + quoteFilename(filename) + `"`,
 		},
 	}}, nil
+}
+
+// cancelOnClose releases a fetch context when its response body is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
 
 // nosniffAttachment is the generated 200 attachment response with
