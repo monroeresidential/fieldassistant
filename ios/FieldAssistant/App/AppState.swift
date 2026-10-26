@@ -59,7 +59,10 @@ final class AppState {
         didSet {
             Self.persist(selectedProjectID, forKey: Keys.selectedProjectID, in: defaults)
             // While `loadMe` fills the selection the phase is not signed in yet; it prefetches itself.
-            if selectedProjectID != oldValue, case .signedIn = phase { prefetchLookups() }
+            if selectedProjectID != oldValue, case .signedIn = phase {
+                prefetchLookups()
+                startRecordSync()
+            }
         }
     }
 
@@ -75,11 +78,16 @@ final class AppState {
     @ObservationIgnored private(set) var prefetchTask: Task<Void, Never>?
     /// The drafts captured on this phone.
     @ObservationIgnored let drafts: DraftStore
+    /// The on-device mirror of project records, filled by `recordSync`.
+    @ObservationIgnored let records: RecordStore
     @ObservationIgnored let settings: Settings
     /// Whether the phone has a network path. Home observes it for the "No signal" banner.
     @ObservationIgnored let reachability: ReachabilityProviding
     /// Resends waiting drafts and reconciles submitting ones while a user is signed in; `nil` otherwise.
     @ObservationIgnored private(set) var draftSync: DraftSync?
+    /// Keeps the selected project's records current while a user is signed in; `nil` otherwise.
+    /// Observed, so a screen that read `nil` updates when the driver is created or replaced.
+    private(set) var recordSync: RecordSync?
     /// While the session is `offline`, retries `/me` each time the network path comes back.
     @ObservationIgnored private var offlineRetry: Task<Void, Never>?
     /// Advances each time the session ends. A `/me` that was started before then (an offline retry,
@@ -101,6 +109,7 @@ final class AppState {
         self.defaults = defaults
         self.reachability = reachability ?? Reachability()
         drafts = DraftStore(context: modelContext)
+        records = RecordStore(context: modelContext)
         settings = Settings(defaults: defaults)
         selectedCompanyID = Self.storedID(forKey: Keys.selectedCompanyID, in: defaults)
         selectedProjectID = Self.storedID(forKey: Keys.selectedProjectID, in: defaults)
@@ -207,7 +216,14 @@ final class AppState {
             await bootstrap()
         } else {
             await draftSync?.runOnce()
+            await recordSync?.runOnce()
         }
+    }
+
+    /// Syncs the selected project's records now. `force` has the backend pull from Procore first;
+    /// `full` makes that pull a full sweep. Does nothing while no project sync is running.
+    func syncRecords(force: Bool, full: Bool) async {
+        await recordSync?.runOnce(force: force, full: full)
     }
 
     // MARK: - Private
@@ -258,6 +274,7 @@ final class AppState {
             offlineRetry = nil
             prefetchLookups()
             startDraftSync()
+            startRecordSync()
         case .unauthorized:
             try? store.clear()
             endSession()
@@ -276,7 +293,7 @@ final class AppState {
 
     /// The selection belongs to the signed-in user, so it is dropped whenever the session ends.
     /// Setting the IDs to nil also removes their `UserDefaults` keys.
-    /// The cached lookups belong to the signed-in user too, so they are deleted here as well.
+    /// The cached lookups and mirrored records belong to the signed-in user too, so they are deleted here as well.
     private func endSession() {
         sessionEpoch += 1
         cancelPrefetch()
@@ -284,7 +301,10 @@ final class AppState {
         offlineRetry = nil
         draftSync?.stop()
         draftSync = nil
+        recordSync?.stop()
+        recordSync = nil
         lookups.clearAll()
+        try? records.clearAll()
         selectedCompanyID = nil
         selectedProjectID = nil
         // Drafts stay on the phone (a forced re-sign-in must not lose field work); they are hidden
@@ -336,6 +356,25 @@ final class AppState {
         )
         draftSync = sync
         sync.start()
+    }
+
+    /// Starts a fresh record sync for the selected project, replacing any running one, and runs it
+    /// once. Without a selected project there is no driver.
+    private func startRecordSync() {
+        recordSync?.stop()
+        recordSync = nil
+        guard let companyID = selectedCompanyID, let projectID = selectedProjectID else { return }
+        let client: Client = client
+        let sync = RecordSync(
+            store: records,
+            service: { RecordService(client: client) },
+            companyID: companyID,
+            projectID: projectID,
+            kinds: [.rfi],
+            reachability: reachability
+        )
+        recordSync = sync
+        Task { await sync.runOnce() }
     }
 
     private func cancelPrefetch() {
