@@ -1,0 +1,121 @@
+{
+  "id": 182885,
+  "link": "https://sandbox.procore.com/376187/project/rfi/show/182885",
+  "draft": true,
+  "title": "Is additional support or a steel plate upgrade needed for twisted wood column below new AHU?",
+  "number": null,
+  "prefix": null,
+  "status": "draft",
+  "private": false,
+  "sub_job": null,
+  "subject": "Is additional support or a steel plate upgrade needed for twisted wood column below new AHU?",
+  "accepted": false,
+  "assignee": {
+    "id": 100299,
+    "name": "Test Architect (Architect TEST Company)",
+    "login": "implementation+arch@procore.com",
+    "locale": null
+  },
+  "due_date": null,
+  "location": null,
+  "priority": {
+    "name": null,
+    "value": null
+  },
+  "revision": "0",
+  "assignees": [
+    {
+      "id": 100299,
+      "name": "Test Architect (Architect TEST Company)",
+      "login": "implementation+arch@procore.com",
+      "locale": null,
+      "response_required": false
+    }
+  ],
+  "cost_code": null,
+  "questions": [
+    {
+      "id": 182884,
+      "answers": [],
+      "created_by": "Field User",
+      "attachments": [],
+      "question_date": "2026-10-24T18:01:04Z",
+      "rich_text_body": "Please review the twisting wood column and determine if we need to provide additional support or upgrade the steel plate.\n\nAt 401 West Ontario there is a twisted wood column currently supported by a steel plate and threaded bolts. The column is directly below the new air handler. Photos of the column and the plan are attached.\n\nField notes:\nRFI. We are at 401 West Ontario and we have a twisted wood column that is currently supported by a steel plate and some threaded bolts. The column is directly below the new air handler. I took a few pictures of the column and the plan. Send this to Ben West the architect and ask him to review the twisting column and determine if we need to provide additional support or upgrade the steel plate.",
+      "plain_text_body": "Please review the twisting wood column and determine if we need to provide additional support or upgrade the steel plate.\n\nAt 401 West Ontario there is a twisted wood column currently supported by a steel plate and threaded bolts. The column is directly below the new air handler. Photos of the column and the plan are attached.\n\nField notes:\nRFI. We are at 401 West Ontario and we have a twisted wood column that is currently supported by a steel plate and some threaded bolts. The column is directly below the new air handler. I took a few pictures of the column and the plan. Send this to Ben West the architect and ask him to review the twisting column and determine if we need to provide additional support or upgrade the steel plate."
+    }
+  ],
+  "reference": null,
+  "created_at": "2026-10-24T18:01:04Z",
+  "created_by": {
+    "id": 256705,
+    "name": "Field User",
+    "login": "field.user@example.com",
+    "locale": null,
+    "vendor": {
+      "id": 3806191,
+      "name": "Field Assistant"
+    }
+  },
+  "updated_at": "2026-10-24T18:01:04Z",
+  "cost_impact": {
+    "value": null,
+    "status": null
+  },
+  "drawing_ids": [],
+  "full_number": null,
+  "location_id": null,
+  "rfi_manager": {
+    "id": 99519,
+    "name": "API Support",
+    "login": "implementation+demo@procore.com"
+  },
+  "initiated_at": null,
+  "instructions": [],
+  "ball_in_court": {
+    "id": 99519,
+    "name": "API Support (Procore (Test Companies))",
+    "login": "implementation+demo@procore.com",
+    "locale": null
+  },
+  "change_events": [],
+  "custom_fields": {},
+  "has_revisions": false,
+  "project_stage": null,
+  "received_from": null,
+  "time_resolved": null,
+  "ball_in_courts": [
+    {
+      "id": 99519,
+      "name": "API Support (Procore (Test Companies))",
+      "login": "implementation+demo@procore.com",
+      "locale": null
+    }
+  ],
+  "drawing_number": null,
+  "correspondences": [],
+  "schedule_impact": {
+    "value": null,
+    "status": null
+  },
+  "current_revision": false,
+  "distribution_list": [],
+  "proposed_solution": null,
+  "translated_status": "Draft",
+  "ball_in_court_role": "rfi_manager",
+  "custom_textfield_1": {
+    "label": null,
+    "value": null
+  },
+  "custom_textfield_2": {
+    "label": null,
+    "value": null
+  },
+  "coordination_issues": [],
+  "linked_external_rfis": [],
+  "previous_revision_id": null,
+  "source_rfi_header_id": 182885,
+  "connect_export_origin": null,
+  "specification_section": null,
+  "responsible_contractor": null,
+  "connect_exported_project_ids": []
+}
