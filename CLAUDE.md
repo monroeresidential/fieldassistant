@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side follows `docs/superpowers/plans/2026-10-25-project-sync-ios.md`. Next after that: the design pass (roadmap 2b) before milestone 3.
+Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side (`docs/superpowers/plans/2026-10-25-project-sync-ios.md`, contract 1.5.1) is implemented on branch `project-sync-ios` as of 2026-10-26, with the device check pending. Next after that: the design pass (roadmap 2b) before milestone 3.
 
 Governing documents:
 
@@ -66,15 +66,16 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 | `api/internal/records` | Per-user mirror of a project's Procore records (RFIs first): delta pulls by updated_at, six-hourly full sweeps, cursor-paged deltas for the phone, keep-warm job. |
 | `api/internal/store` | Postgres access: migrations, sqlc queries and generated code in `db/`. |
 | `api/internal/store/storetest` | Shared test helper: migrates and truncates the test database. |
-| `ios/FieldAssistant/App` | App entry, root view, Home and Settings screens, app state, build-time config. |
+| `ios/FieldAssistant/App` | App entry, root view, Home and Settings screens, Home sync header, app state, build-time config. |
 | `ios/FieldAssistant/Core/Auth` | Sign-in flow, Keychain session store, token refresh. |
 | `ios/FieldAssistant/Core/Network` | API client wrapper, auth middleware, failure mapping. |
 | `ios/FieldAssistant/Core/Scope` | Company and project selection and its persistence. |
 | `ios/FieldAssistant/Core/Capture` | Capture model, on-device speech transcriber, one-shot location, photo saving. |
 | `ios/FieldAssistant/Core/Drafts` | Local draft store, submit and resend sync, reconcile on launch. |
 | `ios/FieldAssistant/Core/Lookups` | Lookup lists fetched from the backend and cached locally for review pickers. |
+| `ios/FieldAssistant/Core/Records` | Per-user mirror of the project's Procore records on the phone: SwiftData models, delta sync driver, local queries. |
 | `ios/FieldAssistant/Core/Review` | Review screen rows, lookup picker, unresolved-field rows, footer. |
-| `ios/FieldAssistant/Features/RFI` | RFI list, capture, review and result screens; review model. |
+| `ios/FieldAssistant/Features/RFI` | Local RFI list and detail from the project mirror, attachment viewer, capture, review and result screens; review model. |
 | `ios/Packages/FieldAssistantAPI` | Generated Swift client package; holds a synced copy of the contract. |
 | `deploy/` | Droplet Compose file, Caddyfile, backup script, runbook. |
 | `.github/workflows/` | `api.yml` and `ios.yml` (CI), `deploy-api.yml` (droplet deploy). |
@@ -89,7 +90,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 - DB tests serialize through an advisory lock in `storetest`; do not bypass it.
 - The iOS `.xcodeproj` is generated and never committed. Swift package pins live in `ios/Package.resolved`.
 - Error bodies are `{code,message}` with a fixed code set: `bad_request`, `unauthorized`, `reauth_required`, `forbidden_scope`, `procore_permission_denied`, `not_found`, `procore_unavailable`, `internal`. `not_found` is emitted by the RFI attachment proxy for an RFI or attachment that is not there.
-- `listRFIs` is deprecated in the contract; the phone switches to `getRecords` in the iOS project-sync plan, whose last task removes it.
+- The phone reads RFIs from the local mirror (`getRecords`, `syncProject`); `listRFIs` was removed in contract 1.5.1. `getRFIAttachment` streams the file with Procore's real `Content-Type` (declared `*/*` in the contract).
 - `procore_validation` is a draft-level error code carried in `DraftResponse.error` and `JobStatus.error`, not an HTTP error-body code.
 - On iOS only `AuthRefreshError.rejected` signs the user out; other refresh failures keep the session.
 
