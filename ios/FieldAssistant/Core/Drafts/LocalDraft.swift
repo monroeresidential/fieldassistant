@@ -53,6 +53,9 @@ final class LocalDraft {
     var subject: String?
     var resultNumber: String?
     var resultURL: String?
+    /// The Procore id of the RFI the submit created; nil until submitted or for drafts stored
+    /// before the field existed (their Recent row opens the Result screen instead of the mirror).
+    var resultProcoreID: Int64?
     var errorMessage: String?
     var updatedAt: Date
 
@@ -100,6 +103,7 @@ final class LocalDraft {
         subject = response.payload.subject
         resultNumber = response.result?.number
         resultURL = response.result?.url
+        resultProcoreID = response.result?.procore_id
         errorMessage = response.error?.message
         server = response
         updatedAt = response.updated_at
