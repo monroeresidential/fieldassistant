@@ -42,7 +42,7 @@
       "question_date": "2026-10-20T14:05:00Z",
       "plain_text_body": "Can we core a 6 in. penetration through the slab at C4?",
       "rich_text_body": "<p>Can we core a 6 in. penetration through the slab at C4?</p>",
-      "created_by": {"id": 301, "name": "Drew Monroe"},
+      "created_by": "Drew Monroe",
       "attachments": [
         {"id": 9001, "name": "slab-photo.jpg", "filename": "slab-photo.jpg", "url": "https://procore-files.example.com/9001?sig=abc", "content_type": "image/jpeg", "size": 123456}
       ],

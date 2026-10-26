@@ -16,7 +16,8 @@ type RFIFetcher struct{ PC *procore.Client }
 var _ Fetcher = RFIFetcher{}
 
 // ListSince lists the project's RFIs updated since since, or all of them
-// when since is nil.
+// when since is nil, each with its full Show RFI body (questions with text,
+// attachments and answers), which Procore's list items do not carry.
 func (f RFIFetcher) ListSince(ctx context.Context, token string, companyID, projectID int64, since *time.Time) ([]procore.RawRecord, error) {
-	return f.PC.ListRFIsRaw(ctx, token, companyID, projectID, since)
+	return f.PC.ListRFIsDetailed(ctx, token, companyID, projectID, since)
 }

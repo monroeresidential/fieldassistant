@@ -217,8 +217,19 @@ type Ref struct {
 	FullCode    string `json:"full_code"`
 }
 
-// UnmarshalJSON accepts Number as a JSON number, string or null.
+// UnmarshalJSON accepts Number as a JSON number, string or null, and the
+// whole value as a bare JSON string, which becomes Name with no ID: the
+// Show RFI response gives a question's created_by that way (Procore's
+// reference sample and the sandbox, 2026-10-25).
 func (r *Ref) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var name string
+		if err := json.Unmarshal(b, &name); err != nil {
+			return err
+		}
+		*r = Ref{Name: name}
+		return nil
+	}
 	type plain Ref
 	var w struct {
 		plain
