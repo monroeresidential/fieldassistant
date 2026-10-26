@@ -6,6 +6,7 @@ import SwiftUI
 /// review change statuses.
 struct RecentDraftsView: View {
     let onOpen: (Route) -> Void
+    @Environment(AppState.self) private var appState
     @Query private var drafts: [LocalDraft]
 
     /// `owner` is the signed-in Procore user; other users' drafts on the phone never show.
@@ -28,7 +29,7 @@ struct RecentDraftsView: View {
         } else {
             ForEach(drafts) { draft in
                 Button {
-                    onOpen(Self.route(for: draft))
+                    onOpen(Self.route(for: draft, isSynced: isSynced))
                 } label: {
                     DraftRow(draft: draft)
                 }
@@ -38,11 +39,23 @@ struct RecentDraftsView: View {
         }
     }
 
-    /// Waiting drafts open Review, which sends them first; a submitted one opens its result.
-    static func route(for draft: LocalDraft) -> Route {
+    /// Whether the project's mirror holds the RFI with this Procore id.
+    private func isSynced(_ procoreID: Int64, projectID: Int64) -> Bool {
+        appState.records.record(projectID: projectID, kind: .rfi, procoreID: procoreID) != nil
+    }
+
+    /// Waiting drafts open Review, which sends them first. A submitted one opens the synced RFI
+    /// when the mirror has it, otherwise the Result screen (the RFI has not synced yet, or the
+    /// draft predates `resultProcoreID`).
+    static func route(for draft: LocalDraft, isSynced: (_ procoreID: Int64, _ projectID: Int64) -> Bool) -> Route {
         switch draft.status {
-        case .submitted: .result(draft.id)
-        case .waiting, .draft, .submitting, .failed: .review(draft.id)
+        case .submitted:
+            if let procoreID = draft.resultProcoreID, isSynced(procoreID, draft.projectID) {
+                return .rfi(procoreID)
+            }
+            return .result(draft.id)
+        case .waiting, .draft, .submitting, .failed:
+            return .review(draft.id)
         }
     }
 
@@ -51,7 +64,7 @@ struct RecentDraftsView: View {
         case .waiting: "Sends the draft, then opens it for review"
         case .draft, .failed: "Opens the draft for review"
         case .submitting: "Shows the draft while Procore confirms it"
-        case .submitted: "Shows the RFI created in Procore"
+        case .submitted: "Opens the RFI created in Procore"
         }
     }
 }
@@ -142,4 +155,5 @@ struct DraftStatusChip: View {
         Section("Recent") { RecentDraftsView(projectID: 7, owner: 42) { _ in } }
     }
     .modelContainer(container)
+    .environment(AppState.preview(container: container))
 }
