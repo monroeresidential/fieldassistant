@@ -57,6 +57,35 @@ final class RecordSyncTests: XCTestCase {
     }
 
     @MainActor
+    func testForcedCallJoiningUnforcedRunRunsOneMorePass() async throws {
+        let inner = StubTransport([
+            RecordStub.page(ids: [1], nextSince: 1, hasMore: false),
+            APIStub.json(.ok, #"{"pulls":[{"kind":"rfi","status":"pulled"}]}"#),
+            RecordStub.page(ids: [2], nextSince: 2, hasMore: false),
+        ])
+        let gate = GateTransport(inner)
+        let (sync, store) = makeSync(gate)
+
+        // Queued in order on the main actor: the forced call joins the unforced run before the gate opens.
+        let unforced = Task { await sync.runOnce() }
+        let forced = Task { await sync.runOnce(force: true) }
+        try await gate.waitUntilHeld()
+        gate.release()
+        await unforced.value
+        await forced.value
+
+        let requests = inner.requests
+        guard requests.count == 3 else {
+            return XCTFail("expected exactly one extra pass, got \(requests.compactMap(\.request.path))")
+        }
+        XCTAssertTrue(try XCTUnwrap(requests[0].request.path).contains("since=0"))
+        XCTAssertEqual(requests[1].request.method, .post)
+        XCTAssertEqual(requests[1].request.path, "/projects/7/sync")
+        XCTAssertTrue(try XCTUnwrap(requests[2].request.path).contains("since=1"))
+        XCTAssertEqual(store.records(projectID: 7, kind: .rfi, query: "", filter: .all).count, 2)
+    }
+
+    @MainActor
     func testRunOnceOfflineKeepsRowsAndReportsFailure() async throws {
         let transport = ScriptedTransport([
             .response(RecordStub.page(ids: [1, 2], nextSince: 2, hasMore: false)),
@@ -162,6 +191,8 @@ final class RecordSyncTests: XCTestCase {
         try await gate.waitUntilHeld()
 
         sync.stop()
+        let syncedAt = try XCTUnwrap(store.state(projectID: 7, kind: .rfi)?.lastSyncedAt)
+        XCTAssertEqual(sync.status, .synced(syncedAt), "a stopped driver shows the last sync, not a spinner")
         gate.release()
         await run.value
 
@@ -169,6 +200,7 @@ final class RecordSyncTests: XCTestCase {
         XCTAssertEqual(store.records(projectID: 7, kind: .rfi, query: "", filter: .all).map(\.procoreID), [2, 1])
         XCTAssertEqual(store.state(projectID: 7, kind: .rfi)?.nextSince, 2)
         XCTAssertNil(store.state(projectID: 7, kind: .rfi)?.lastErrorCode, "a cancelled run records nothing")
+        XCTAssertEqual(sync.status, .synced(syncedAt))
     }
 
     // MARK: - Helpers

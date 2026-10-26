@@ -26,6 +26,9 @@ final class RecordSync {
     @ObservationIgnored private var run: Task<Void, Never>?
     /// Identifies `run`, so a pass cancelled by `stop` cannot clear its successor when it ends.
     @ObservationIgnored private var runID = 0
+    /// Set by calls that join the running pass, so the run can tell whether it owes them another pass.
+    @ObservationIgnored private var pendingForce = false
+    @ObservationIgnored private var pendingFull = false
 
     init(
         store: RecordStore,
@@ -45,26 +48,51 @@ final class RecordSync {
 
     /// Runs one pass, or, if one is running, waits for it and returns. `force` asks the backend to
     /// pull from Procore first even without a network path showing; `full` makes that pull a full sweep.
+    /// A forced or full call that joins a pass which was neither makes the run do one more pass with
+    /// those flags, so a manual Sync during a foreground run still reaches the sync endpoint.
     func runOnce(force: Bool = false, full: Bool = false) async {
         if let run {
+            pendingForce = pendingForce || force
+            pendingFull = pendingFull || full
             await run.value
             return
         }
         runID += 1
         let id = runID
+        pendingForce = false
+        pendingFull = false
         let task = Task { [weak self] in
             guard let self else { return }
-            await performPass(force: force, full: full)
+            var passForce = force
+            var passFull = full
+            while true {
+                await performPass(force: passForce, full: passFull)
+                if Task.isCancelled { break }
+                // Consume what joined during this pass (or before it started).
+                let joinedForce = pendingForce
+                let joinedFull = pendingFull
+                pendingForce = false
+                pendingFull = false
+                guard (joinedForce && !passForce) || (joinedFull && !passFull) else { break }
+                passForce = passForce || joinedForce
+                passFull = passFull || joinedFull
+            }
             if runID == id { run = nil }
         }
         run = task
         await task.value
     }
 
-    /// Cancels the running pass. A cancelled pass applies nothing more and records nothing.
+    /// Cancels the running pass. A cancelled pass applies nothing more and records nothing; the
+    /// status falls back to the last sync so a stopped driver never shows a spinner.
     func stop() {
         run?.cancel()
         run = nil
+        pendingForce = false
+        pendingFull = false
+        if status == .syncing {
+            status = lastSyncedAt().map(Status.synced) ?? .idle
+        }
     }
 
     // MARK: - Private

@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import OpenAPIRuntime
 import OpenAPIURLSession
+import os
 import SwiftData
 
 /// App-wide session state: who is signed in and which company/project is selected.
@@ -33,6 +34,8 @@ final class AppState {
         /// The server refused it; the draft stays `waiting` with the message.
         case failed(String)
     }
+
+    private static let log = Logger(subsystem: "FieldAssistant", category: "AppState")
 
     private(set) var phase: Phase = .loading
     /// True after a send found no connection, until a later send gets through. Home shows the
@@ -304,7 +307,11 @@ final class AppState {
         recordSync?.stop()
         recordSync = nil
         lookups.clearAll()
-        try? records.clearAll()
+        do {
+            try records.clearAll()
+        } catch {
+            Self.log.error("Clearing the record mirror failed: \(error.localizedDescription, privacy: .public)")
+        }
         selectedCompanyID = nil
         selectedProjectID = nil
         // Drafts stay on the phone (a forced re-sign-in must not lose field work); they are hidden
