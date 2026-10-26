@@ -114,7 +114,8 @@ struct HomeView: View {
             .frame(minWidth: 44, minHeight: 44)
         }
         .buttonStyle(.borderless)
-        .disabled(isSyncing || appState.recordSync == nil)
+        // Enabled offline too: the driver reports an unreachable server as a failed sync.
+        .disabled(isSyncing)
         .contextMenu {
             Button("Full resync", systemImage: "arrow.clockwise") {
                 Task { await appState.syncRecords(force: true, full: true) }

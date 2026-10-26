@@ -521,6 +521,121 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.records.records(projectID: 99, kind: .rfi, query: "", filter: .all).map(\.procoreID), [2, 1])
     }
 
+    @MainActor
+    func testOfflineLaunchWithSelectionShowsLastSync() async throws {
+        let first = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        first.selectedCompanyID = 7
+        first.selectedProjectID = 99
+        let syncedAt = Date(timeIntervalSince1970: 1_793_000_000)
+        let context = try XCTUnwrap(container).mainContext
+        context.insert(ProjectSyncState(projectID: 99, kind: .rfi, nextSince: 2, lastSyncedAt: syncedAt))
+        try context.save()
+        let transport = ScriptedTransport([.failure(URLError(.notConnectedToInternet))])
+        let state = makeState(
+            store: InMemorySessionStore(validSession()), transport: transport,
+            reachability: FakeReachability(isReachable: false)
+        )
+
+        await state.bootstrap()
+
+        XCTAssertEqual(state.phase, .offline)
+        let sync = try XCTUnwrap(state.recordSync, "offline Home needs the driver for its header")
+        XCTAssertEqual(sync.status, .synced(syncedAt))
+        XCTAssertEqual(transport.requests.map(\.path), ["/me"], "the offline driver is not run")
+    }
+
+    @MainActor
+    func testOfflineLaunchNeverSyncedIsIdle() async throws {
+        let first = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        first.selectedCompanyID = 7
+        first.selectedProjectID = 99
+        let state = makeState(
+            store: InMemorySessionStore(validSession()),
+            transport: ScriptedTransport([.failure(URLError(.notConnectedToInternet))]),
+            reachability: FakeReachability(isReachable: false)
+        )
+
+        await state.bootstrap()
+
+        XCTAssertEqual(state.phase, .offline)
+        XCTAssertEqual(try XCTUnwrap(state.recordSync).status, .idle)
+    }
+
+    @MainActor
+    func testOfflineLaunchWithoutSelectionHasNoDriver() async throws {
+        let state = makeState(
+            store: InMemorySessionStore(validSession()),
+            transport: ScriptedTransport([.failure(URLError(.notConnectedToInternet))]),
+            reachability: FakeReachability(isReachable: false)
+        )
+
+        await state.bootstrap()
+
+        XCTAssertEqual(state.phase, .offline)
+        XCTAssertNil(state.recordSync)
+    }
+
+    @MainActor
+    func testSuccessfulBootstrapReplacesOfflineDriver() async throws {
+        let first = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        first.selectedCompanyID = 7
+        first.selectedProjectID = 99
+        let transport = ScriptedTransport([
+            .failure(URLError(.notConnectedToInternet)),
+            .response(APIStub.me(lastCompanyID: 7, lastProjectID: 99)),
+        ])
+        let state = makeState(
+            store: InMemorySessionStore(validSession()), transport: transport,
+            reachability: FakeReachability(isReachable: false)
+        )
+        await state.bootstrap()
+        let offlineSync = try XCTUnwrap(state.recordSync)
+
+        await state.bootstrap()
+
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+        let sync = try XCTUnwrap(state.recordSync)
+        XCTAssertFalse(sync === offlineSync, "a running driver replaces the offline one")
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testSignOutRemovesDownloadedAttachments() async throws {
+        let file = try placeAttachmentFile()
+        let transport = StubTransport([APIStub.me()])
+        transport.enqueue(.noContent)
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+
+        await state.signOut()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AttachmentFiles.directory.path))
+    }
+
+    @MainActor
+    func testBootstrapWithoutSessionClearsRecordsAndAttachments() async throws {
+        let state = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        let context = try XCTUnwrap(container).mainContext
+        for id: Int64 in [1, 2] {
+            context.insert(CachedRecord(
+                projectID: 99, kind: .rfi, procoreID: id, changeSeq: id, updatedAt: Date(), bodyData: Data(),
+                number: "\(id)", subject: "Subject", status: "open", ballInCourt: "", dueDate: nil
+            ))
+        }
+        context.insert(ProjectSyncState(projectID: 99, kind: .rfi, nextSince: 2, lastSyncedAt: Date()))
+        try context.save()
+        let file = try placeAttachmentFile()
+
+        await state.bootstrap()
+
+        XCTAssertEqual(state.phase, .signedOut)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CachedRecord>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<ProjectSyncState>()), 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -556,11 +671,29 @@ final class AppStateTests: XCTestCase {
         Session(accessToken: "acc1", refreshToken: "ref1", accessExpiresAt: Date().addingTimeInterval(3600))
     }
 
+    /// A file in the attachment download directory, as `AttachmentViewerModel` would leave one.
+    private func placeAttachmentFile() throws -> URL {
+        let directory = AttachmentFiles.directory.appendingPathComponent("123", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("plan.pdf")
+        try Data("pdf".utf8).write(to: file)
+        return file
+    }
+
+    /// Stops the sync and prefetch a signed-in state started, so they do not outlive the test.
+    @MainActor
+    private func cancelBackgroundWork(_ state: AppState) {
+        state.recordSync?.stop()
+        state.draftSync?.stop()
+        state.prefetchTask?.cancel()
+    }
+
     @MainActor
     private func makeState(
         store: InMemorySessionStore,
         transport: ClientTransport,
-        presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError())
+        presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError()),
+        reachability: ReachabilityProviding? = nil
     ) -> AppState {
         let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true))
         self.container = container
@@ -570,7 +703,8 @@ final class AppStateTests: XCTestCase {
             baseURL: APIStub.baseURL,
             modelContext: container.mainContext,
             transport: transport,
-            defaults: UserDefaults(suiteName: suiteName)!
+            defaults: UserDefaults(suiteName: suiteName)!,
+            reachability: reachability
         )
     }
 }

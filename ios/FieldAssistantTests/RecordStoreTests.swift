@@ -55,7 +55,7 @@ final class RecordStoreTests: XCTestCase {
         let rows = store.records(projectID: 7, kind: .rfi, query: "", filter: .all)
         XCTAssertEqual(rows.map(\.procoreID), [1])
         XCTAssertEqual(rows.first?.subject, "Changed")
-        XCTAssertEqual(rows.first?.changeSeq, 3)
+        XCTAssertEqual(store.record(projectID: 7, kind: .rfi, procoreID: 1)?.changeSeq, 3)
         XCTAssertNil(store.record(projectID: 7, kind: .rfi, procoreID: 2))
         XCTAssertEqual(store.state(projectID: 7, kind: .rfi)?.nextSince, 3)
         XCTAssertNotNil(store.state(projectID: 7, kind: .rfi)?.lastSyncedAt)
@@ -140,6 +140,39 @@ final class RecordStoreTests: XCTestCase {
 
         XCTAssertTrue(store.records(projectID: 7, kind: .rfi, query: "", filter: .all).isEmpty)
         XCTAssertNil(store.state(projectID: 7, kind: .rfi))
+    }
+
+    @MainActor
+    func testRecordsReturnsSnapshotsThatOutliveTheirRows() throws {
+        let (store, _) = try makeStore()
+        let row = Row(id: 5, seq: 1, number: "5", subject: "Slab edge", status: "open", ballInCourt: "Ana Ruiz", due: "2026-11-02")
+        try store.apply(Self.page([row], nextSince: 1), projectID: 7, kind: .rfi)
+        let snapshot = try XCTUnwrap(store.records(projectID: 7, kind: .rfi, query: "", filter: .all).first)
+
+        try store.apply(Self.page([], deleted: [5], nextSince: 2), projectID: 7, kind: .rfi)
+
+        XCTAssertNil(store.record(projectID: 7, kind: .rfi, procoreID: 5))
+        XCTAssertEqual(snapshot.id, 5)
+        XCTAssertEqual(snapshot.number, "5")
+        XCTAssertEqual(snapshot.subject, "Slab edge")
+        XCTAssertEqual(snapshot.status, "open")
+        XCTAssertEqual(snapshot.ballInCourt, "Ana Ruiz")
+        XCTAssertNotNil(snapshot.dueDate)
+    }
+
+    @MainActor
+    func testClearDropsOneProjectsRowsAndState() throws {
+        let (store, _) = try makeStore()
+        try store.apply(Self.page([Row(id: 1, seq: 1, number: "1"), Row(id: 2, seq: 2, number: "2")], nextSince: 2), projectID: 7, kind: .rfi)
+        try store.apply(Self.page([Row(id: 3, seq: 3, number: "3")], nextSince: 3), projectID: 8, kind: .rfi)
+
+        try store.clear(projectID: 7, kind: .rfi)
+
+        XCTAssertFalse(store.context.hasChanges)
+        XCTAssertTrue(store.records(projectID: 7, kind: .rfi, query: "", filter: .all).isEmpty)
+        XCTAssertNil(store.state(projectID: 7, kind: .rfi))
+        XCTAssertEqual(store.records(projectID: 8, kind: .rfi, query: "", filter: .all).map(\.procoreID), [3])
+        XCTAssertEqual(store.state(projectID: 8, kind: .rfi)?.nextSince, 3)
     }
 
     @MainActor

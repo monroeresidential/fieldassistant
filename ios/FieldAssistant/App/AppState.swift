@@ -62,9 +62,16 @@ final class AppState {
         didSet {
             Self.persist(selectedProjectID, forKey: Keys.selectedProjectID, in: defaults)
             // While `loadMe` fills the selection the phase is not signed in yet; it prefetches itself.
-            if selectedProjectID != oldValue, case .signedIn = phase {
+            guard selectedProjectID != oldValue else { return }
+            switch phase {
+            case .signedIn:
                 prefetchLookups()
                 startRecordSync()
+            case .offline:
+                // No `/me` yet: a driver for the new project, not run until a tap or reconnect.
+                startRecordSync(run: false)
+            case .loading, .signedOut:
+                break
             }
         }
     }
@@ -88,7 +95,8 @@ final class AppState {
     @ObservationIgnored let reachability: ReachabilityProviding
     /// Resends waiting drafts and reconciles submitting ones while a user is signed in; `nil` otherwise.
     @ObservationIgnored private(set) var draftSync: DraftSync?
-    /// Keeps the selected project's records current while a user is signed in; `nil` otherwise.
+    /// Keeps the selected project's records current while a user is signed in, and reports the last
+    /// sync (not running until asked) while the session is offline; `nil` otherwise.
     /// Observed, so a screen that read `nil` updates when the driver is created or replaced.
     private(set) var recordSync: RecordSync?
     /// While the session is `offline`, retries `/me` each time the network path comes back.
@@ -153,6 +161,8 @@ final class AppState {
             session = nil
         }
         guard session != nil else {
+            // Whatever a previous user left behind (a session lost without a sign-out) is not shown.
+            clearUserFiles()
             phase = .signedOut
             return
         }
@@ -307,17 +317,28 @@ final class AppState {
         recordSync?.stop()
         recordSync = nil
         lookups.clearAll()
-        do {
-            try records.clearAll()
-        } catch {
-            Self.log.error("Clearing the record mirror failed: \(error.localizedDescription, privacy: .public)")
-        }
+        clearUserFiles()
         selectedCompanyID = nil
         selectedProjectID = nil
         // Drafts stay on the phone (a forced re-sign-in must not lose field work); they are hidden
         // until their owner signs in again.
         draftOwnerID = nil
         phase = .signedOut
+    }
+
+    /// Deletes the mirrored records and downloaded attachments. Failures are logged, not thrown:
+    /// the session ends either way.
+    private func clearUserFiles() {
+        do {
+            try records.clearAll()
+        } catch {
+            Self.log.error("Clearing the record mirror failed: \(error.localizedDescription, privacy: .public)")
+        }
+        do {
+            try AttachmentFiles.removeAll()
+        } catch {
+            Self.log.error("Removing downloaded attachments failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Refreshes the selected project's lookup lists in the background, replacing any running
@@ -340,6 +361,9 @@ final class AppState {
     /// listener is cancelled. Signing out cancels it too.
     private func enterOffline() {
         phase = .offline
+        // Home shows the stored mirror offline, so its header needs a driver for the last sync time
+        // and the Sync button. It is not run here; `/me` succeeding replaces it with a running one.
+        if recordSync == nil { startRecordSync(run: false) }
         guard offlineRetry == nil else { return }
         let updates = reachability.updates
         offlineRetry = Task { [weak self] in
@@ -366,8 +390,8 @@ final class AppState {
     }
 
     /// Starts a fresh record sync for the selected project, replacing any running one, and runs it
-    /// once. Without a selected project there is no driver.
-    private func startRecordSync() {
+    /// once unless `run` is false. Without a selected project there is no driver.
+    private func startRecordSync(run: Bool = true) {
         recordSync?.stop()
         recordSync = nil
         guard let companyID = selectedCompanyID, let projectID = selectedProjectID else { return }
@@ -381,7 +405,7 @@ final class AppState {
             reachability: reachability
         )
         recordSync = sync
-        Task { await sync.runOnce() }
+        if run { Task { await sync.runOnce() } }
     }
 
     private func cancelPrefetch() {

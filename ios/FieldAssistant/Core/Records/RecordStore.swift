@@ -7,6 +7,28 @@ enum RecordFilter: Equatable {
     case ballInCourt(userName: String)
 }
 
+/// One record in a list, copied out of SwiftData. Views hold these rather than `CachedRecord`, so a
+/// sync that deletes a row can never leave a screen reading an invalidated model.
+struct RecordRow: Identifiable, Equatable {
+    let procoreID: Int64
+    let number: String
+    let subject: String
+    let status: String
+    let ballInCourt: String
+    let dueDate: Date?
+
+    var id: Int64 { procoreID }
+
+    init(_ record: CachedRecord) {
+        procoreID = record.procoreID
+        number = record.number
+        subject = record.subject
+        status = record.status
+        ballInCourt = record.ballInCourt
+        dueDate = record.dueDate
+    }
+}
+
 /// The on-device mirror of a project's records in SwiftData. Applies delta pages from the backend
 /// and serves the local list.
 @MainActor
@@ -87,8 +109,8 @@ final class RecordStore {
         try context.save()
     }
 
-    /// The project's records, highest number first, then by number text.
-    func records(projectID: Int64, kind: RecordKind, query: String, filter: RecordFilter) -> [CachedRecord] {
+    /// The project's records as value snapshots, highest number first, then by number text.
+    func records(projectID: Int64, kind: RecordKind, query: String, filter: RecordFilter) -> [RecordRow] {
         let kindName = kind.rawValue
         let descriptor = FetchDescriptor<CachedRecord>(
             predicate: #Predicate { $0.projectID == projectID && $0.kind == kindName }
@@ -110,7 +132,7 @@ final class RecordStore {
         }
         return rows.sorted {
             $0.numberSort != $1.numberSort ? $0.numberSort > $1.numberSort : $0.number > $1.number
-        }
+        }.map(RecordRow.init)
     }
 
     func record(projectID: Int64, kind: RecordKind, procoreID: Int64) -> CachedRecord? {
@@ -118,6 +140,18 @@ final class RecordStore {
         var descriptor = FetchDescriptor<CachedRecord>(predicate: #Predicate { $0.key == key })
         descriptor.fetchLimit = 1
         return try? context.fetch(descriptor).first
+    }
+
+    /// Drops one project's records and cursor for `kind`, so the next pull pages from 0. One save.
+    func clear(projectID: Int64, kind: RecordKind) throws {
+        let kindName = kind.rawValue
+        try context.delete(
+            model: CachedRecord.self,
+            where: #Predicate { $0.projectID == projectID && $0.kind == kindName }
+        )
+        let key = ProjectSyncState.key(projectID: projectID, kind: kind)
+        try context.delete(model: ProjectSyncState.self, where: #Predicate { $0.key == key })
+        try context.save()
     }
 
     /// Drops every mirrored record and cursor, for sign-out.

@@ -8,10 +8,11 @@ struct RFIRecordListView: View {
     @Environment(AppState.self) private var appState
     @State private var query = ""
     @State private var choice: FilterChoice = .all
-    @State private var rows: [CachedRecord] = []
+    /// Value snapshots, never `CachedRecord`: a sync may delete the model a row came from.
+    @State private var rows: [RecordRow] = []
 
     var body: some View {
-        List(rows, id: \.procoreID) { record in
+        List(rows) { record in
             NavigationLink(value: Route.rfi(record.procoreID)) {
                 RFIRecordRow(record: record)
             }
@@ -114,7 +115,7 @@ struct RFIRecordListView: View {
 
 /// One RFI in the list: number, subject, status tag, ball in court and due date.
 private struct RFIRecordRow: View {
-    let record: CachedRecord
+    let record: RecordRow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

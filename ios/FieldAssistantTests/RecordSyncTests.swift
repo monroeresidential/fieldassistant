@@ -203,6 +203,56 @@ final class RecordSyncTests: XCTestCase {
         XCTAssertEqual(sync.status, .synced(syncedAt))
     }
 
+    @MainActor
+    func testFullResyncClearsRowsAndPagesFromZero() async throws {
+        let (seed, store) = makeSync(StubTransport([RecordStub.page(ids: [10, 11], nextSince: 50, hasMore: false)]))
+        await seed.runOnce()
+        XCTAssertEqual(store.state(projectID: 7, kind: .rfi)?.nextSince, 50)
+
+        let transport = StubTransport([
+            APIStub.json(.ok, #"{"pulls":[{"kind":"rfi","status":"pulled"}]}"#),
+            RecordStub.page(ids: [1, 2], nextSince: 2, hasMore: false),
+        ])
+        let sync = makeSync(transport, store: store)
+
+        await sync.runOnce(force: true, full: true)
+
+        let requests = transport.requests
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[0].request.method, .post)
+        XCTAssertEqual(requests[0].request.path, "/projects/7/sync")
+        XCTAssertTrue(try XCTUnwrap(requests[1].request.path).contains("since=0"), requests[1].request.path ?? "")
+        XCTAssertEqual(store.records(projectID: 7, kind: .rfi, query: "", filter: .all).map(\.procoreID), [2, 1])
+        XCTAssertEqual(store.state(projectID: 7, kind: .rfi)?.nextSince, 2)
+        XCTAssertEqual(sync.status, .synced(try XCTUnwrap(store.state(projectID: 7, kind: .rfi)?.lastSyncedAt)))
+    }
+
+    @MainActor
+    func testFullResyncWhoseSyncCallFailsKeepsRows() async throws {
+        let (seed, store) = makeSync(StubTransport([RecordStub.page(ids: [10, 11], nextSince: 50, hasMore: false)]))
+        await seed.runOnce()
+        let transport = StubTransport([APIStub.error(.serviceUnavailable, code: "procore_unavailable", message: "down")])
+        let sync = makeSync(transport, store: store)
+
+        await sync.runOnce(force: true, full: true)
+
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(store.records(projectID: 7, kind: .rfi, query: "", filter: .all).map(\.procoreID), [11, 10])
+        XCTAssertEqual(store.state(projectID: 7, kind: .rfi)?.nextSince, 50)
+    }
+
+    @MainActor
+    func testNewDriverSeedsStatusFromLastSync() async throws {
+        let (seed, store) = makeSync(StubTransport([RecordStub.page(ids: [1], nextSince: 1, hasMore: false)]))
+        XCTAssertEqual(seed.status, .idle, "never synced")
+        await seed.runOnce()
+        let syncedAt = try XCTUnwrap(store.state(projectID: 7, kind: .rfi)?.lastSyncedAt)
+
+        let fresh = makeSync(StubTransport([]), store: store)
+
+        XCTAssertEqual(fresh.status, .synced(syncedAt))
+    }
+
     // MARK: - Helpers
 
     @MainActor

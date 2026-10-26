@@ -6,6 +6,20 @@ import SwiftUI
 
 typealias RFIAttachment = Components.Schemas.RFIAttachment
 
+/// Where downloaded RFI attachments are kept. They belong to the signed-in user, so `AppState`
+/// removes the directory whenever the session ends.
+enum AttachmentFiles {
+    static var directory: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("RFIAttachments", isDirectory: true)
+    }
+
+    /// Deletes every downloaded attachment. Nothing to delete is not an error.
+    static func removeAll() throws {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        try FileManager.default.removeItem(at: directory)
+    }
+}
+
 /// Fetches one RFI attachment through the backend proxy into a temp file for Quick Look.
 /// Needs signal: the bytes are not part of the mirror.
 @MainActor
@@ -44,8 +58,7 @@ final class AttachmentViewerModel {
         state = .loading
         do {
             let (data, reported, _) = try await fetch()
-            let directory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("RFIAttachments", isDirectory: true)
+            let directory = AttachmentFiles.directory
                 .appendingPathComponent(String(attachment.id), isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let url = directory.appendingPathComponent(Self.fileName(reported: reported, attachment: attachment))

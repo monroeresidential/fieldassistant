@@ -44,10 +44,13 @@ final class RecordSync {
         self.projectID = projectID
         self.kinds = kinds
         self.reachability = reachability
+        // A driver created without running (an offline launch) still shows the last sync.
+        status = lastSyncedAt().map(Status.synced) ?? .idle
     }
 
     /// Runs one pass, or, if one is running, waits for it and returns. `force` asks the backend to
-    /// pull from Procore first even without a network path showing; `full` makes that pull a full sweep.
+    /// pull from Procore first even without a network path showing; `full` makes that pull a full sweep
+    /// and, once it succeeds, drops the local rows and cursor so the delta pages from 0.
     /// A forced or full call that joins a pass which was neither makes the run do one more pass with
     /// those flags, so a manual Sync during a foreground run still reaches the sync endpoint.
     func runOnce(force: Bool = false, full: Bool = false) async {
@@ -111,6 +114,11 @@ final class RecordSync {
             if force || full {
                 _ = try await service().sync(companyID: companyID, projectID: projectID, kinds: kinds, full: full)
                 if Task.isCancelled { return }
+                // A full resync re-pages from 0, so a phone whose cursor is ahead of the backend
+                // (after a restore, say) catches up.
+                if full {
+                    for kind in kinds { try store.clear(projectID: projectID, kind: kind) }
+                }
             }
             for kind in kinds {
                 guard try await pageAll(kind) else { return }

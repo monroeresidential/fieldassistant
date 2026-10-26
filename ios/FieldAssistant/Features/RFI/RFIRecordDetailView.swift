@@ -9,13 +9,19 @@ struct RFIRecordDetailView: View {
 
     @Environment(AppState.self) private var appState
     @Environment(\.openURL) private var openURL
-    @State private var record: CachedRecord?
+    /// Decoded values only, never `CachedRecord`: a sync may delete the model while this screen is open.
     @State private var rfi: RFIRecord?
+    @State private var dueDate: Date?
+    /// Set once the RFI has been shown, so a later sync that removes it says so.
+    @State private var wasShown = false
 
     var body: some View {
         Group {
             if let rfi {
                 content(rfi)
+            } else if wasShown {
+                ContentUnavailableView("This RFI is no longer in the project", systemImage: "doc.questionmark",
+                                       description: Text("It was removed in Procore, or you no longer have access to it."))
             } else {
                 ContentUnavailableView("RFI not on this phone", systemImage: "doc.questionmark",
                                        description: Text("Sync the project to fetch it again."))
@@ -28,8 +34,10 @@ struct RFIRecordDetailView: View {
     }
 
     private func reload() {
-        record = appState.records.record(projectID: projectID, kind: .rfi, procoreID: procoreID)
+        let record = appState.records.record(projectID: projectID, kind: .rfi, procoreID: procoreID)
         rfi = record?.rfi
+        dueDate = record?.dueDate
+        if rfi != nil { wasShown = true }
     }
 
     // MARK: - Content
@@ -75,7 +83,7 @@ struct RFIRecordDetailView: View {
             field("Subject", rfi.subject)
             ReviewField(label: "Status") { StatusTag(status: rfi.status) }
             field("Ball in court", rfi.ball_in_court?.name ?? Self.names(rfi.ball_in_courts))
-            field("Due", record?.dueDate.map(RecordFormat.dueDate))
+            field("Due", dueDate.map(RecordFormat.dueDate))
             field("Created", Self.joined(rfi.created_by?.name, rfi.created_at.formatted(date: .abbreviated, time: .shortened)))
             field("RFI manager", rfi.rfi_manager?.name)
             field("Assignees", Self.names(rfi.assignees) ?? rfi.assignee?.name)
