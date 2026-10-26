@@ -1,0 +1,89 @@
+import SwiftUI
+import UIKit
+
+/// Design tokens from the iOS design handoff (docs/design/2026-10-23-ios-handoff/README.md).
+enum Theme {
+    /// Colour tokens. Adaptive tokens carry a light and a dark value; the rest are fixed.
+    enum Color {
+        // Fixed
+        static let brand = fixed(0xF26122)
+        static let charcoal = fixed(0x2F3437)
+        static let panel = fixed(0x3A4044)
+        static let muted = fixed(0x5C6368)
+        static let tertiary = fixed(0x8A9196)
+        static let accentTint = fixed(0xFEF0E8)
+        static let textOnDarkBody = fixed(0xE9EBEC)
+        static let textOnDarkSecondary = fixed(0xB6BCC0)
+        static let tagline = fixed(0xD5D9DC)
+        static let groundDark = fixed(0x2F3437)
+
+        // Adaptive: light / dark
+        static let accent = adaptive(light: 0xC2410C, dark: 0xF26122)
+        static let textPrimary = adaptive(light: 0x2F3437, dark: 0xFFFFFF)
+        static let textSecondary = adaptive(light: 0x5C6368, dark: 0xB6BCC0)
+        static let hairline = adaptive(light: 0xE1E4E6, dark: 0xFFFFFF, darkAlpha: 0.12)
+        static let hairlineStrong = adaptive(light: 0xE1E4E6, dark: 0xFFFFFF, darkAlpha: 0.18)
+        static let surface = adaptive(light: 0xF4F5F6, dark: 0x3A4044)
+        static let ground = adaptive(light: 0xFFFFFF, dark: 0x2F3437)
+        static let halo = adaptive(light: 0xFEF0E8, dark: 0xF26122, darkAlpha: 0.18)
+        static let flaggedBackground = adaptive(light: 0xFEF0E8, dark: 0x3A4044)
+
+        private static func fixed(_ hex: UInt32) -> SwiftUI.Color {
+            SwiftUI.Color(uiColor: uiColor(hex))
+        }
+
+        private static func adaptive(light: UInt32, dark: UInt32, darkAlpha: CGFloat = 1) -> SwiftUI.Color {
+            let lightColor = uiColor(light)
+            let darkColor = uiColor(dark, alpha: darkAlpha)
+            return SwiftUI.Color(uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark ? darkColor : lightColor
+            })
+        }
+
+        private static func uiColor(_ hex: UInt32, alpha: CGFloat = 1) -> UIColor {
+            UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255,
+                    green: CGFloat((hex >> 8) & 0xFF) / 255,
+                    blue: CGFloat(hex & 0xFF) / 255,
+                    alpha: alpha)
+        }
+    }
+
+    /// A type-scale entry: Public Sans font, letter-spacing in points and extra line spacing in points.
+    struct TextStyle: Sendable {
+        let font: Font
+        let tracking: CGFloat
+        let lineSpacing: CGFloat
+
+        /// `em` is the handoff's letter-spacing; `lineHeight` its line-height multiple.
+        /// Line heights below 1 (the hero) give no extra spacing: SwiftUI cannot tighten lines.
+        init(_ size: CGFloat, _ weight: Font.Weight, relativeTo textStyle: Font.TextStyle,
+             em: CGFloat = 0, lineHeight: CGFloat = 1, monospacedDigits: Bool = false) {
+            let font = Font.publicSans(size, weight: weight, relativeTo: textStyle)
+            self.font = monospacedDigits ? font.monospacedDigit() : font
+            self.tracking = size * em
+            self.lineSpacing = max(0, size * (lineHeight - 1))
+        }
+    }
+
+    /// The handoff's type scale. Uppercase kickers and labels upper-case their text at the call site.
+    enum Text {
+        static let screenTitle = TextStyle(32, .bold, relativeTo: .largeTitle, em: -0.02)
+        static let hero = TextStyle(56, .bold, relativeTo: .largeTitle, em: -0.03, lineHeight: 0.98)
+        static let heroKicker = TextStyle(13, .bold, relativeTo: .footnote, em: 0.16)
+        static let resultNumber = TextStyle(84, .bold, relativeTo: .largeTitle, em: -0.04, monospacedDigits: true)
+        static let body = TextStyle(15, .regular, relativeTo: .body, lineHeight: 1.55)
+        static let rowTitle = TextStyle(15, .medium, relativeTo: .body)
+        static let rowTitleStrong = TextStyle(17, .semibold, relativeTo: .body)
+        static let label = TextStyle(11, .bold, relativeTo: .caption2, em: 0.1)
+        static let kicker = TextStyle(11, .bold, relativeTo: .caption2, em: 0.14)
+        static let cardKicker = TextStyle(10, .bold, relativeTo: .caption2, em: 0.12)
+        static let cardTitle = TextStyle(20, .bold, relativeTo: .title3)
+        static let meta12 = TextStyle(12, .regular, relativeTo: .caption)
+        static let meta13 = TextStyle(13, .regular, relativeTo: .footnote)
+        static let transcript = TextStyle(24, .medium, relativeTo: .title2, em: -0.01, lineHeight: 1.35)
+        static let sectionTitle = TextStyle(24, .bold, relativeTo: .title2, em: -0.02)
+        static let buttonLarge = TextStyle(17, .bold, relativeTo: .headline, em: 0.01)
+        static let buttonMedium = TextStyle(15, .bold, relativeTo: .subheadline)
+        static let tagText = TextStyle(11, .bold, relativeTo: .caption2)
+    }
+}
