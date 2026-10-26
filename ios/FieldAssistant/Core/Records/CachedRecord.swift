@@ -66,7 +66,7 @@ final class CachedRecord {
         "\(projectID)/\(kind.rawValue)/\(procoreID)"
     }
 
-    private static func numberSort(for number: String) -> Int64 {
+    static func numberSort(for number: String) -> Int64 {
         let digits = number.drop { !$0.isASCII || !$0.isNumber }.prefix { $0.isASCII && $0.isNumber }
         return Int64(digits) ?? 0
     }
