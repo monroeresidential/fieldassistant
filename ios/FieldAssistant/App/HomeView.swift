@@ -2,15 +2,17 @@ import FieldAssistantAPI
 import SwiftData
 import SwiftUI
 
-/// The screens pushed from Home. Each carries the draft id the screen works on.
+/// The screens pushed from Home. Draft screens carry the draft id; `rfi` carries the Procore RFI id.
 enum Route: Hashable {
     case capture(UUID)
     case review(UUID)
     case result(UUID)
+    case rfis
+    case rfi(Int64)
 }
 
-/// The signed-in home screen for the selected project: the record button, recent drafts, a link
-/// to the project's Procore RFIs, and project and account controls.
+/// The signed-in home screen for the selected project: the sync header, the record button, recent
+/// drafts, a link to the project's Procore RFIs, and project and account controls.
 struct HomeView: View {
     let companyID: Int64
     let projectID: Int64
@@ -19,19 +21,19 @@ struct HomeView: View {
     @State private var project: Project?
     @State private var path: [Route] = []
     @State private var showsSettings = false
-    @State private var showsRFIs = false
     @State private var isRetrying = false
 
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                syncSection
                 recordSection
                 Section("Recent") {
                     RecentDraftsView(projectID: projectID, owner: appState.draftOwnerID ?? -1) { path.append($0) }
                 }
                 Section {
                     Button {
-                        showsRFIs = true
+                        path.append(.rfis)
                     } label: {
                         HStack {
                             Label("Procore RFIs", systemImage: "list.bullet.rectangle")
@@ -62,18 +64,88 @@ struct HomeView: View {
             }
             .navigationDestination(for: Route.self, destination: destination)
             .navigationDestination(isPresented: $showsSettings) { SettingsView() }
-            .navigationDestination(isPresented: $showsRFIs) {
-                RFIListView(client: appState.client, companyID: companyID, projectID: projectID)
-                    // A fresh list model per project; reloads within a project follow `sessionGeneration`.
-                    .id(projectID)
-                    .navigationTitle("Procore RFIs")
-                    .navigationBarTitleDisplayMode(.inline)
-            }
         }
         .task(id: TitleKey(projectID: projectID, sessionGeneration: appState.sessionGeneration)) { await loadProject() }
     }
 
     // MARK: - Sections
+
+    /// Project name, the state of the RFI mirror, and a Sync button (long press for a full resync).
+    private var syncSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(project.map(Self.title) ?? "This project")
+                            .font(.headline)
+                        TimelineView(.periodic(from: .now, by: 30)) { context in
+                            Text(Self.syncLine(appState.recordSync?.status, now: context.date))
+                                .font(.footnote)
+                                .foregroundStyle(RecordPalette.muted)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    if case .failed(let code, _) = appState.recordSync?.status, code != "procore_permission_denied" {
+                        Button("Retry") {
+                            Task { await appState.syncRecords(force: true, full: false) }
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(RecordPalette.accent)
+                        .buttonStyle(.borderless)
+                        .frame(minHeight: 44)
+                        .accessibilityLabel("Retry sync")
+                    }
+                }
+                Spacer()
+                syncButton
+            }
+            .frame(minHeight: 44)
+        }
+    }
+
+    private var syncButton: some View {
+        let isSyncing = appState.recordSync?.status == .syncing
+        return Button {
+            Task { await appState.syncRecords(force: true, full: false) }
+        } label: {
+            Group {
+                if isSyncing { ProgressView() } else { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
+            }
+            .frame(minWidth: 44, minHeight: 44)
+        }
+        .buttonStyle(.borderless)
+        .disabled(isSyncing || appState.recordSync == nil)
+        .contextMenu {
+            Button("Full resync", systemImage: "arrow.clockwise") {
+                Task { await appState.syncRecords(force: true, full: true) }
+            }
+            .accessibilityLabel("Full resync")
+        }
+        .accessibilityLabel(isSyncing ? "Syncing RFIs" : "Sync RFIs")
+        .accessibilityHint("Fetches changes from Procore. Long press for a full resync.")
+        .accessibilityAction(named: "Full resync") {
+            Task { await appState.syncRecords(force: true, full: true) }
+        }
+    }
+
+    /// One line describing the mirror: "Synced 2 min ago", "Syncing…", or why it failed.
+    static func syncLine(_ status: RecordSync.Status?, now: Date) -> String {
+        switch status {
+        case nil, .idle:
+            return "Not synced yet"
+        case .syncing:
+            return "Syncing…"
+        case .synced(let date):
+            if now.timeIntervalSince(date) < 60 { return "Synced just now" }
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .short
+            return "Synced \(formatter.localizedString(for: date, relativeTo: now))"
+        case .failed(code: "procore_permission_denied", _):
+            return "No RFI access on this project"
+        case .failed:
+            return "Sync failed, showing what you have"
+        }
+    }
 
     private var recordSection: some View {
         Section {
@@ -134,8 +206,16 @@ struct HomeView: View {
             ResultScreen(
                 draftID: id,
                 onNewRFI: { path = [.capture(UUID())] },
-                onDone: { path = [] }
+                onDone: {
+                    path = []
+                    // Pick up the RFI just created in Procore.
+                    Task { await appState.syncRecords(force: true, full: false) }
+                }
             )
+        case .rfis:
+            RFIRecordListView(projectID: projectID)
+        case .rfi(let procoreID):
+            RFIRecordDetailView(projectID: projectID, procoreID: procoreID)
         }
     }
 
