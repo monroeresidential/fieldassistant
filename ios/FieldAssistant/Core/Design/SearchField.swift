@@ -17,7 +17,7 @@ struct SearchField: View {
                 .foregroundStyle(Theme.Color.tertiary)
                 .accessibilityHidden(true)
             TextField(placeholder, text: $text)
-                .font(.publicSans(15, weight: .regular, relativeTo: .body))
+                .textStyle(Theme.Text.body)
                 .foregroundStyle(Theme.Color.textPrimary)
                 .autocorrectionDisabled()
                 .submitLabel(.search)

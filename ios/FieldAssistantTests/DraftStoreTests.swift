@@ -73,7 +73,7 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(LocalDraftStatus(server: .submitting), .submitting)
         XCTAssertEqual(LocalDraftStatus(server: .submitted), .submitted)
         XCTAssertEqual(LocalDraftStatus(server: .failed), .failed)
-        XCTAssertEqual(LocalDraftStatus.submitting.label, "Sending")
+        XCTAssertEqual(LocalDraftStatus.submitting.label, "Queued")
         XCTAssertEqual(LocalDraftStatus.failed.label, "Fix")
     }
 

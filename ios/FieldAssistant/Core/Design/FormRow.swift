@@ -22,7 +22,7 @@ struct FormRow<Value: View>: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Kicker(label, style: .label, color: flagged ? Theme.Color.accent : nil)
                     value
-                        .font(.publicSans(15, weight: .regular, relativeTo: .body))
+                        .textStyle(Theme.Text.body)
                         .foregroundStyle(Theme.Color.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }

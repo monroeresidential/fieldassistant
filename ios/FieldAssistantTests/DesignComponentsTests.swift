@@ -35,6 +35,7 @@ final class DesignComponentsTests: XCTestCase {
         // Tag text keeps the draft list's words.
         XCTAssertEqual(StatusTag.style(for: .waiting).text, LocalDraftStatus.waiting.label)
         XCTAssertEqual(StatusTag.style(for: .draft).text, LocalDraftStatus.draft.label)
+        XCTAssertEqual(StatusTag.style(for: .queued).text, "Queued")
         XCTAssertEqual(StatusTag.style(for: .queued).text, LocalDraftStatus.submitting.label)
         XCTAssertEqual(StatusTag.style(for: .fix).text, LocalDraftStatus.failed.label)
     }
@@ -43,7 +44,9 @@ final class DesignComponentsTests: XCTestCase {
         XCTAssertEqual(StatusTag.state(forRFIStatus: "open", draft: false), .open)
         XCTAssertEqual(StatusTag.state(forRFIStatus: "Closed", draft: false), .closed)
         XCTAssertEqual(StatusTag.state(forRFIStatus: "open", draft: true), .draft)
+        // The list has no draft flag, so the status string alone must give the detail's answer.
         XCTAssertEqual(StatusTag.state(forRFIStatus: "draft", draft: false), .draft)
+        XCTAssertEqual(StatusTag.state(forRFIStatus: "Draft", draft: false), .draft)
         XCTAssertEqual(StatusTag.state(forRFIStatus: "pending", draft: false), .custom("Pending"))
         XCTAssertEqual(StatusTag.state(forRFIStatus: "", draft: false), .custom("Unknown"))
     }

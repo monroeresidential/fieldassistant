@@ -15,7 +15,7 @@ struct OfflineBanner: View {
                 .font(.system(size: 16, weight: .medium))
                 .accessibilityHidden(true)
             Text(text)
-                .font(.publicSans(13, weight: .medium, relativeTo: .footnote))
+                .textStyle(Theme.Text.meta13Medium)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .foregroundStyle(Color.white)

@@ -85,6 +85,7 @@ enum Theme {
         static let cardTitle = TextStyle(20, .bold, relativeTo: .title3)
         static let meta12 = TextStyle(12, .regular, relativeTo: .caption)
         static let meta13 = TextStyle(13, .regular, relativeTo: .footnote)
+        static let meta13Medium = TextStyle(13, .medium, relativeTo: .footnote)
         static let transcript = TextStyle(24, .medium, relativeTo: .title2, em: -0.01, lineHeight: 1.35)
         static let sectionTitle = TextStyle(24, .bold, relativeTo: .title2, em: -0.02)
         static let buttonLarge = TextStyle(17, .bold, relativeTo: .headline, em: 0.01)
