@@ -52,7 +52,14 @@ final class CachedRecord {
 
     /// The decoded RFI projection, or nil when `bodyData` does not decode.
     var rfi: RFIRecord? {
-        try? Self.decoder.decode(RFIRecord.self, from: bodyData)
+        do {
+            return try Self.decoder.decode(RFIRecord.self, from: bodyData)
+        } catch {
+            #if DEBUG
+            print("CachedRecord \(key): bodyData does not decode: \(error)")
+            #endif
+            return nil
+        }
     }
 
     static func key(projectID: Int64, kind: RecordKind, procoreID: Int64) -> String {
@@ -64,10 +71,21 @@ final class CachedRecord {
         return Int64(digits) ?? 0
     }
 
-    /// Matches the generated client's JSON coding, which writes dates as RFC 3339.
-    private static var decoder: JSONDecoder {
+    /// Codes `RFIRecord` the way the API sends it: ISO 8601 dates, with or without fractional seconds.
+    static var decoder: JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            try LenientISO8601DateTranscoder().decode(decoder.singleValueContainer().decode(String.self))
+        }
         return decoder
+    }
+
+    static var encoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(LenientISO8601DateTranscoder().encode(date))
+        }
+        return encoder
     }
 }

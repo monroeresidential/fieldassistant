@@ -89,6 +89,22 @@ final class RecordServiceTests: XCTestCase {
         ).rfi)
     }
 
+    func testRFIBodyWithFractionalSecondsDecodesAndRoundTrips() throws {
+        let body = Self.rfiJSON.replacingOccurrences(of: "2026-10-24T09:30:00Z", with: "2026-10-24T09:30:00.123Z")
+        let decoded = try CachedRecord.decoder.decode(RFIRecord.self, from: Data(body.utf8))
+        let record = CachedRecord(
+            projectID: 7, kind: .rfi, procoreID: 501, changeSeq: 1, updatedAt: Date(),
+            bodyData: Data(body.utf8), number: "12", subject: "", status: "", ballInCourt: "", dueDate: nil
+        )
+        XCTAssertEqual(record.rfi, decoded)
+
+        let stored = CachedRecord(
+            projectID: 7, kind: .rfi, procoreID: 501, changeSeq: 1, updatedAt: Date(),
+            bodyData: try CachedRecord.encoder.encode(decoded), number: "12", subject: "", status: "", ballInCourt: "", dueDate: nil
+        )
+        XCTAssertEqual(stored.rfi, decoded)
+    }
+
     func testNumberSortTakesNumericPart() {
         func sort(_ number: String) -> Int64 {
             CachedRecord(
