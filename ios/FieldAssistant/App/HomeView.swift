@@ -9,97 +9,119 @@ enum Route: Hashable {
     case result(UUID)
     case rfis
     case rfi(Int64)
+    case drafts
 }
 
-/// The signed-in home screen for the selected project: the sync header, the record button, recent
-/// drafts, a link to the project's Procore RFIs, and project and account controls.
+/// The signed-in home screen for the selected project: the company and project with the sync
+/// state, the feature cards, the record button, recent drafts and a link to the project's
+/// Procore RFIs. The project name opens the picker; the gear pushes Settings.
 struct HomeView: View {
     let companyID: Int64
     let projectID: Int64
 
     @Environment(AppState.self) private var appState
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var project: Project?
+    @State private var companyName: String?
     @State private var path: [Route] = []
     @State private var showsSettings = false
     @State private var isRetrying = false
 
     var body: some View {
         NavigationStack(path: $path) {
-            List {
-                syncSection
-                recordSection
-                Section("Recent") {
-                    RecentDraftsView(projectID: projectID, owner: appState.draftOwnerID ?? -1) { path.append($0) }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    offlineBanner
+                    header
+                    featureGrid
+                    recordBlock
+                    recentSection
+                    procoreRFIsRow
                 }
-                Section {
-                    Button {
-                        path.append(.rfis)
-                    } label: {
-                        HStack {
-                            Label("Procore RFIs", systemImage: "list.bullet.rectangle")
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                .accessibilityHidden(true)
-                        }
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel("Procore RFIs")
-                    .accessibilityHint("Shows the RFIs already in Procore for this project")
-                }
+                .padding(20)
             }
-            .navigationTitle(project.map(Self.title) ?? "Field Assistant")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { toolbar }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if appState.phase == .offline {
-                    noSignalBanner
-                } else if let owner = appState.draftOwnerID,
-                          !appState.reachability.isReachable || appState.sendingWaitsForSignal {
-                    WaitingDraftsGate(owner: owner) { noSignalBanner }
-                }
-            }
+            .background(Theme.Color.ground.ignoresSafeArea())
+            .navigationTitle("Home")
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Route.self, destination: destination)
             .navigationDestination(isPresented: $showsSettings) { SettingsView() }
         }
-        .task(id: TitleKey(projectID: projectID, sessionGeneration: appState.sessionGeneration)) { await loadProject() }
+        .task(id: TitleKey(projectID: projectID, sessionGeneration: appState.sessionGeneration)) { await loadTitles() }
     }
 
-    // MARK: - Sections
+    // MARK: - Header
 
-    /// Project name, the state of the RFI mirror, and a Sync button (long press for a full resync).
-    private var syncSection: some View {
-        Section {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(project.map(Self.title) ?? "This project")
-                            .font(.headline)
-                        TimelineView(.periodic(from: .now, by: 30)) { context in
-                            Text(Self.syncLine(appState.recordSync?.status, now: context.date))
-                                .font(.footnote)
-                                .foregroundStyle(Theme.Color.muted)
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                    if case .failed(let code, _) = appState.recordSync?.status, code != "procore_permission_denied" {
-                        Button("Retry") {
-                            Task { await appState.syncRecords(force: true, full: false) }
-                        }
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.Color.accent)
-                        .buttonStyle(.borderless)
-                        .frame(minHeight: 44)
-                        .accessibilityLabel("Retry sync")
-                    }
+    /// Company kicker over the project name (opens the picker) and the sync line; Settings on the right.
+    private var header: some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                if let companyName {
+                    Kicker(companyName, style: .section)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                 }
-                Spacer()
-                syncButton
+                projectButton
+                syncRow
             }
-            .frame(minHeight: 44)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            settingsButton
+        }
+    }
+
+    private var projectTitle: String { project.map(Self.title) ?? "This project" }
+
+    private var projectButton: some View {
+        Button {
+            // Keep the company so the picker opens on its projects.
+            appState.selectedProjectID = nil
+        } label: {
+            // One Text so the chevron follows the last word when the name wraps.
+            let chevron = Text(Image(systemName: "chevron.down"))
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Theme.Color.brand)
+            Text("\(Text(projectTitle).foregroundStyle(Theme.Color.textPrimary))\u{2009}\(chevron)")
+                .textStyle(Theme.Text.projectTitle)
+                .multilineTextAlignment(.leading)
+                .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Change project")
+        .accessibilityValue(projectTitle)
+    }
+
+    private var settingsButton: some View {
+        Button {
+            showsSettings = true
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(Theme.Color.textPrimary)
+                .frame(width: 44, height: 44)
+                .background(Theme.Color.ground, in: Circle())
+                .overlay { Circle().strokeBorder(Theme.Color.hairline, lineWidth: 1) }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Settings")
+    }
+
+    /// The state of the RFI mirror, Retry after a failure, and Sync (long press for a full resync).
+    private var syncRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                Text(Self.syncLine(appState.recordSync?.status, now: context.date))
+                    .textStyle(Theme.Text.meta13)
+                    .foregroundStyle(Theme.Color.muted)
+            }
+            if case .failed(let code, _) = appState.recordSync?.status, code != "procore_permission_denied" {
+                Button("Retry") {
+                    Task { await appState.syncRecords(force: true, full: false) }
+                }
+                .buttonStyle(TextLinkButtonStyle(size: 13))
+                .accessibilityLabel("Retry sync")
+            }
+            syncButton
         }
     }
 
@@ -108,12 +130,13 @@ struct HomeView: View {
         return Button {
             Task { await appState.syncRecords(force: true, full: false) }
         } label: {
-            Group {
-                if isSyncing { ProgressView() } else { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
+            if isSyncing {
+                ProgressView().frame(minWidth: 44)
+            } else {
+                Text("Sync").frame(minWidth: 44)
             }
-            .frame(minWidth: 44, minHeight: 44)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(TextLinkButtonStyle(size: 13))
         // Enabled offline too: the driver reports an unreachable server as a failed sync.
         .disabled(isSyncing)
         .contextMenu {
@@ -148,42 +171,74 @@ struct HomeView: View {
         }
     }
 
-    private var recordSection: some View {
-        Section {
-            Button {
+    // MARK: - Features
+
+    /// RFI is the one feature v1 ships; the others show as coming. One column at accessibility sizes.
+    private var featureGrid: some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 10),
+                            count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
+        return LazyVGrid(columns: columns, spacing: 10) {
+            FeatureCard(title: "RFI", isSelected: true)
+            FeatureCard(title: "Observation", isSelected: false)
+            FeatureCard(title: "Punch item", isSelected: false)
+            FeatureCard(title: "Daily log", isSelected: false)
+        }
+    }
+
+    // MARK: - Record
+
+    private var recordBlock: some View {
+        VStack(spacing: 0) {
+            RecordButton(glyph: .mic, size: 116, halo: 10, isEnabled: true) {
                 path.append(.capture(UUID()))
-            } label: {
-                VStack(spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.accentColor.opacity(0.15))
-                            .frame(width: 136, height: 136)
-                        Circle()
-                            .fill(Color.accentColor)
-                            .frame(width: 116, height: 116)
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 46, weight: .semibold))
-                            .foregroundStyle(.white)
-                    }
-                    VStack(spacing: 4) {
-                        Text("Record an RFI")
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                        Text("Tap, talk, review, send")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityElement(children: .ignore)
             .accessibilityLabel("Record an RFI")
             .accessibilityHint("Starts recording. Tap, talk, review, send.")
-            .accessibilityAddTraits(.isButton)
+            Text("Record an RFI")
+                .textStyle(Theme.Text.label17)
+                .foregroundStyle(Theme.Color.textPrimary)
+                .padding(.top, 8)
+                .accessibilityHidden(true)
+            Text("Under a minute, start to Procore")
+                .textStyle(Theme.Text.meta13)
+                .foregroundStyle(Theme.Color.muted)
+                .padding(.top, 10)
+                .accessibilityHidden(true)
         }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - Recent
+
+    private var recentSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Kicker("Recent", style: .section, color: Theme.Color.muted)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                Button("All drafts") { path.append(.drafts) }
+                    .buttonStyle(TextLinkButtonStyle(size: 13))
+            }
+            RecentDraftsView(projectID: projectID, owner: appState.draftOwnerID ?? -1, limit: 3) { path.append($0) }
+        }
+    }
+
+    private var procoreRFIsRow: some View {
+        Button {
+            path.append(.rfis)
+        } label: {
+            VStack(spacing: 0) {
+                FormRow(label: "Project", chevron: true) { Text("Procore RFIs") }
+                HairlineDivider()
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Procore RFIs")
+        .accessibilityHint("Shows the RFIs already in Procore for this project")
+        .accessibilityAddTraits(.isButton)
     }
 
     @ViewBuilder
@@ -217,60 +272,36 @@ struct HomeView: View {
             RFIRecordListView(projectID: projectID)
         case .rfi(let procoreID):
             RFIRecordDetailView(projectID: projectID, procoreID: procoreID)
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Button("Change project", systemImage: "arrow.left.arrow.right") {
-                // Keep the company so the picker opens on its projects.
-                appState.selectedProjectID = nil
-            }
-            .labelStyle(.titleAndIcon)
-            .frame(minHeight: 44)
-            .accessibilityLabel("Change project")
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Button("Settings", systemImage: "gearshape") {
-                    showsSettings = true
-                }
-                .accessibilityLabel("Settings")
-                Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                    Task { await appState.signOut() }
-                }
-                .accessibilityLabel("Sign out")
-            } label: {
-                Image(systemName: "person.crop.circle")
-                    .frame(minWidth: 44, minHeight: 44)
-            }
-            .accessibilityLabel("Account")
+        case .drafts:
+            DraftsListView(projectID: projectID, owner: appState.draftOwnerID ?? -1) { path.append($0) }
         }
     }
 
     // MARK: - No signal
 
+    /// Offline, or online with drafts waiting while the server is unreachable.
+    @ViewBuilder
+    private var offlineBanner: some View {
+        if appState.phase == .offline {
+            noSignalBanner
+        } else if let owner = appState.draftOwnerID,
+                  !appState.reachability.isReachable || appState.sendingWaitsForSignal {
+            WaitingDraftsGate(owner: owner) { noSignalBanner }
+        }
+    }
+
     private var noSignalBanner: some View {
-        HStack {
-            Label("No signal. Recording works; sending waits.", systemImage: "wifi.slash")
-                .font(.footnote.weight(.medium))
-            Spacer()
+        VStack(alignment: .trailing, spacing: 0) {
+            OfflineBanner()
             Button {
                 Task { await retry() }
             } label: {
-                if isRetrying {
-                    ProgressView()
-                } else {
-                    Text("Retry").font(.footnote.weight(.semibold))
-                }
+                if isRetrying { ProgressView().frame(minWidth: 44) } else { Text("Retry") }
             }
-            .frame(minWidth: 44, minHeight: 44)
+            .buttonStyle(TextLinkButtonStyle(size: 13))
             .disabled(isRetrying)
             .accessibilityLabel("Retry connecting")
         }
-        .padding(.horizontal)
-        .background(.yellow.opacity(0.25))
     }
 
     /// Reconnects the session if it started offline, then runs a sync pass, which sends waiting drafts.
@@ -283,10 +314,14 @@ struct HomeView: View {
 
     // MARK: - Title
 
-    /// Fetches the project for its title; the screen still works with a generic title if this fails.
-    private func loadProject() async {
-        guard let projects = try? await ScopeService(client: appState.client).projects(companyID: companyID) else { return }
-        project = projects.first { $0.id == projectID }
+    /// Fetches the project and company names for the header, as the picker does; the screen still
+    /// works with a generic title and no company kicker if this fails (offline).
+    private func loadTitles() async {
+        let scope = ScopeService(client: appState.client)
+        async let projects = scope.projects(companyID: companyID)
+        async let companies = scope.companies()
+        if let list = try? await projects { project = list.first { $0.id == projectID } }
+        if let list = try? await companies { companyName = list.first { $0.id == companyID }?.name }
     }
 
     private struct TitleKey: Equatable {
@@ -296,6 +331,38 @@ struct HomeView: View {
 
     static func title(_ project: Project) -> String {
         project.display_name.isEmpty ? project.name : project.display_name
+    }
+}
+
+/// A feature card: the shipped feature selected (2 pt orange border, accent kicker), the rest
+/// coming (dashed hairline, tertiary text, not tappable).
+private struct FeatureCard: View {
+    let title: String
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Kicker(isSelected ? "Selected" : "Coming", style: .card,
+                   color: isSelected ? nil : Theme.Color.tertiary)
+            Spacer(minLength: 0)
+            Text(title)
+                .textStyle(Theme.Text.cardTitle)
+                .foregroundStyle(isSelected ? Theme.Color.textPrimary : Theme.Color.tertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.Color.brand, lineWidth: 2)
+            } else {
+                Color.clear.hairlineBorder(radius: 8, dashed: true)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isSelected ? title : "\(title), coming")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

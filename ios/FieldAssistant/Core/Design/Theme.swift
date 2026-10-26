@@ -75,6 +75,10 @@ enum Theme {
     /// The handoff's type scale. Uppercase kickers and labels upper-case their text at the call site.
     enum Text {
         static let screenTitle = TextStyle(32, .bold, relativeTo: .largeTitle, em: -0.02)
+        /// Home's project name.
+        static let projectTitle = TextStyle(28, .bold, relativeTo: .title, em: -0.02)
+        /// Home's "Record an RFI" label.
+        static let label17 = TextStyle(17, .bold, relativeTo: .headline)
         static let hero = TextStyle(56, .bold, relativeTo: .largeTitle, em: -0.03, lineHeight: 0.98)
         static let heroKicker = TextStyle(13, .bold, relativeTo: .footnote, em: 0.16)
         static let resultNumber = TextStyle(84, .bold, relativeTo: .largeTitle, em: -0.04, monospacedDigits: true)
