@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Field Assistant API
-  version: 1.5.0
+  version: 1.5.1
 servers:
   - url: /v1
 security:
@@ -199,42 +199,6 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Project'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '502':
-          $ref: '#/components/responses/Error'
-        default:
-          $ref: '#/components/responses/Error'
-  /projects/{projectId}/rfis:
-    get:
-      operationId: listRFIs
-      deprecated: true
-      description: >-
-        Replaced by getRecords; removed when the phone stops calling it.
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: integer
-            format: int64
-        - name: X-Company-Id
-          in: header
-          required: true
-          schema:
-            type: integer
-            format: int64
-      responses:
-        '200':
-          description: RFIs in the project.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/RFISummary'
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -452,7 +416,7 @@ paths:
               schema:
                 type: string
           content:
-            application/octet-stream:
+            '*/*':
               schema:
                 type: string
                 format: binary
@@ -824,26 +788,6 @@ components:
           type: string
         display_name:
           type: string
-    RFISummary:
-      type: object
-      required: [id, number, subject, status, assignees]
-      properties:
-        id:
-          type: integer
-          format: int64
-        number:
-          type: string
-        subject:
-          type: string
-        status:
-          type: string
-        due_date:
-          type: string
-          format: date
-        assignees:
-          type: array
-          items:
-            type: string
     LookupRow:
       type: object
       required: [id, label]

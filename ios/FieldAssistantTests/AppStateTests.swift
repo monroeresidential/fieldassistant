@@ -245,26 +245,30 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testBootstrapWithStoredSelectionPrefetchesLookups() async throws {
-        let transport = StubTransport([APIStub.me(lastCompanyID: 7, lastProjectID: 99)])
-        LookupKind.allCases.forEach { _ in transport.enqueue(.notModified) }
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route("/projects/99/lookups/", notModified(count: LookupKind.allCases.count))
         let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
 
         await state.bootstrap()
         await state.prefetchTask?.value
 
-        let paths = transport.requests.map { $0.request.path ?? "" }
+        // Record sync runs alongside the prefetch; this test is about lookups.
+        let requests = transport.requests.filter { !($0.path ?? "").contains("/records/") }
+        let paths = requests.map { $0.path ?? "" }
         XCTAssertEqual(paths.first, "/me")
         XCTAssertEqual(Set(paths.dropFirst()), Set(LookupKind.allCases.map { "/projects/99/lookups/\($0.rawValue)" }))
         XCTAssertEqual(paths.count, 1 + LookupKind.allCases.count, "one prefetch, not one per selection change")
-        XCTAssertTrue(transport.requests.dropFirst().allSatisfy {
-            $0.request.headerFields[HTTPField.Name("X-Company-Id")!] == "7"
+        XCTAssertTrue(requests.dropFirst().allSatisfy {
+            $0.headerFields[HTTPField.Name("X-Company-Id")!] == "7"
         })
     }
 
     @MainActor
     func testSelectingProjectPrefetchesLookups() async throws {
-        let transport = StubTransport([APIStub.me()])
-        LookupKind.allCases.forEach { _ in transport.enqueue(.notModified) }
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me())
+        transport.route("/projects/42/lookups/", notModified(count: LookupKind.allCases.count))
         let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
         await state.bootstrap()
         XCTAssertNil(state.prefetchTask, "no selection, nothing to prefetch")
@@ -273,16 +277,19 @@ final class AppStateTests: XCTestCase {
         state.selectedProjectID = 42
         await state.prefetchTask?.value
 
-        let lookupPaths = transport.requests.dropFirst().map { $0.request.path ?? "" }
+        let lookupPaths = transport.paths.filter { $0.contains("/lookups/") }
         XCTAssertEqual(Set(lookupPaths), Set(LookupKind.allCases.map { "/projects/42/lookups/\($0.rawValue)" }))
+        XCTAssertEqual(lookupPaths.count, LookupKind.allCases.count)
     }
 
     @MainActor
     func testReselectingProjectRevalidatesWithRawETag() async throws {
-        let transport = StubTransport(
-            [APIStub.me(lastCompanyID: 7, lastProjectID: 99)] + LookupKind.allCases.map { _ in APIStub.lookup(etag: #""u1""#) }
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route(
+            "/projects/99/lookups/",
+            LookupKind.allCases.map { _ in APIStub.lookup(etag: #""u1""#) } + notModified(count: LookupKind.allCases.count)
         )
-        LookupKind.allCases.forEach { _ in transport.enqueue(.notModified) }
         let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
         await state.bootstrap()
         await state.prefetchTask?.value
@@ -291,18 +298,20 @@ final class AppStateTests: XCTestCase {
         state.selectedProjectID = 99
         await state.prefetchTask?.value
 
-        let revalidations = transport.requests.suffix(LookupKind.allCases.count)
-        XCTAssertEqual(revalidations.map { $0.request.headerFields[.ifNoneMatch] }, Array(repeating: #""u1""#, count: 6))
+        let revalidations = transport.requests.filter { ($0.path ?? "").contains("/lookups/") }.suffix(LookupKind.allCases.count)
+        XCTAssertEqual(revalidations.map { $0.headerFields[.ifNoneMatch] }, Array(repeating: #""u1""#, count: 6))
         XCTAssertEqual(state.lookups.set(projectID: 99, kind: .users)?.etag, #""u1""#)
     }
 
     @MainActor
     func testSignOutClearsCachedLookups() async throws {
-        let transport = StubTransport(
-            [APIStub.me(lastCompanyID: 7, lastProjectID: 99)]
-                + LookupKind.allCases.map { _ in APIStub.lookup(rows: #"[{"id":11,"label":"Ben West"}]"#) }
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route(
+            "/projects/99/lookups/",
+            LookupKind.allCases.map { _ in APIStub.lookup(rows: #"[{"id":11,"label":"Ben West"}]"#) }
         )
-        transport.enqueue(.noContent)
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
         let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
         await state.bootstrap()
         await state.prefetchTask?.value
@@ -315,13 +324,14 @@ final class AppStateTests: XCTestCase {
         }
         let count = try XCTUnwrap(container).mainContext.fetchCount(FetchDescriptor<CachedLookup>())
         XCTAssertEqual(count, 0)
-        XCTAssertEqual(transport.requests.last?.request.path, "/auth/logout")
+        XCTAssertEqual(transport.paths.filter { !$0.contains("/records/") }.last, "/auth/logout")
     }
 
     @MainActor
     func testSignOutCancelsRunningPrefetch() async throws {
-        let transport = StubTransport([APIStub.me(lastCompanyID: 7, lastProjectID: 99)])
-        transport.enqueue(.noContent)
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
         let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
         await state.bootstrap()
         let prefetch = try XCTUnwrap(state.prefetchTask)
@@ -387,12 +397,13 @@ final class AppStateTests: XCTestCase {
 
     @MainActor
     func testSettingsRefreshIsCancelledBySignOut() async throws {
-        let inner = StubTransport([APIStub.me(lastCompanyID: 7, lastProjectID: 99)])
-        LookupKind.allCases.forEach { _ in inner.enqueue(.notModified) }
-        let state = makeState(store: InMemorySessionStore(validSession()), transport: inner)
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route("/projects/99/lookups/", notModified(count: LookupKind.allCases.count))
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
         await state.bootstrap()
         await state.prefetchTask?.value
-        inner.enqueue(.noContent)
 
         state.refreshLookups(force: true)
         let refresh = try XCTUnwrap(state.prefetchTask)
@@ -400,6 +411,229 @@ final class AppStateTests: XCTestCase {
 
         XCTAssertTrue(refresh.isCancelled)
         XCTAssertNil(state.prefetchTask)
+    }
+
+    @MainActor
+    func testSignedInWithProjectStartsRecordSync() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route("/projects/99/records/rfi", RecordStub.page(ids: [1, 2], nextSince: 2, hasMore: false))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+
+        await state.bootstrap()
+        let sync = try XCTUnwrap(state.recordSync)
+        await state.syncRecords(force: false, full: false)
+
+        XCTAssertEqual(state.records.records(projectID: 99, kind: .rfi, query: "", filter: .all).count, 2)
+        XCTAssertEqual(sync.status, .synced(try XCTUnwrap(state.records.state(projectID: 99, kind: .rfi)?.lastSyncedAt)))
+        XCTAssertEqual(
+            transport.paths.filter { $0.hasPrefix("/projects/99/records") }.count, 1,
+            "the launch run and the call coalesce"
+        )
+    }
+
+    @MainActor
+    func testSyncRecordsWithoutDriverDoesNothing() async throws {
+        let transport = RouteTransport()
+        let state = makeState(store: InMemorySessionStore(), transport: transport)
+        await state.bootstrap()
+
+        await state.syncRecords(force: true, full: true)
+
+        XCTAssertNil(state.recordSync)
+        XCTAssertTrue(transport.paths.isEmpty)
+    }
+
+    @MainActor
+    func testProjectSwitchMidSyncWritesNothingUnderNewProject() async throws {
+        let transport = RouteTransport { ($0.path ?? "").hasPrefix("/projects/99/records/rfi") && ($0.path ?? "").contains("since=2") }
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route(
+            "/projects/99/records/rfi",
+            RecordStub.page(ids: [1, 2], nextSince: 2, hasMore: true),
+            RecordStub.page(ids: [3, 4], nextSince: 4, hasMore: false)
+        )
+        transport.route(
+            "/projects/100/records/rfi",
+            RecordStub.page(ids: [], nextSince: 0, hasMore: false),
+            RecordStub.page(ids: [], nextSince: 0, hasMore: false)
+        )
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        let syncA = try XCTUnwrap(state.recordSync)
+        // Joins project 99's run, so awaiting it waits for that run to end.
+        let runA = Task { await syncA.runOnce() }
+        try await transport.waitUntilHeld()
+
+        state.selectedProjectID = 100
+        let syncB = try XCTUnwrap(state.recordSync)
+        XCTAssertFalse(syncA === syncB)
+        transport.release()
+        await runA.value
+        await state.syncRecords(force: false, full: false)
+
+        XCTAssertTrue(state.records.records(projectID: 100, kind: .rfi, query: "", filter: .all).isEmpty)
+        XCTAssertEqual(state.records.records(projectID: 99, kind: .rfi, query: "", filter: .all).map(\.procoreID), [2, 1])
+        XCTAssertEqual(state.records.state(projectID: 99, kind: .rfi)?.nextSince, 2, "the held page is dropped")
+    }
+
+    @MainActor
+    func testSignOutMidSyncDropsPageAndClears() async throws {
+        let transport = RouteTransport { ($0.path ?? "").hasPrefix("/projects/99/records/rfi") && ($0.path ?? "").contains("since=2") }
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
+        transport.route(
+            "/projects/99/records/rfi",
+            RecordStub.page(ids: [1, 2], nextSince: 2, hasMore: true),
+            RecordStub.page(ids: [3, 4], nextSince: 4, hasMore: false)
+        )
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        let sync = try XCTUnwrap(state.recordSync)
+        let run = Task { await sync.runOnce() }
+        try await transport.waitUntilHeld()
+
+        await state.signOut()
+        transport.release()
+        await run.value
+
+        XCTAssertNil(state.recordSync)
+        let context = try XCTUnwrap(container).mainContext
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CachedRecord>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<ProjectSyncState>()), 0)
+    }
+
+    @MainActor
+    func testBecameActiveRunsRecordSync() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route(
+            "/projects/99/records/rfi",
+            RecordStub.page(ids: [1], nextSince: 1, hasMore: false),
+            RecordStub.page(ids: [2], nextSince: 2, hasMore: false)
+        )
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        await state.syncRecords(force: false, full: false)
+
+        await state.becameActive()
+
+        XCTAssertEqual(state.records.records(projectID: 99, kind: .rfi, query: "", filter: .all).map(\.procoreID), [2, 1])
+    }
+
+    @MainActor
+    func testOfflineLaunchWithSelectionShowsLastSync() async throws {
+        let first = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        first.selectedCompanyID = 7
+        first.selectedProjectID = 99
+        let syncedAt = Date(timeIntervalSince1970: 1_793_000_000)
+        let context = try XCTUnwrap(container).mainContext
+        context.insert(ProjectSyncState(projectID: 99, kind: .rfi, nextSince: 2, lastSyncedAt: syncedAt))
+        try context.save()
+        let transport = ScriptedTransport([.failure(URLError(.notConnectedToInternet))])
+        let state = makeState(
+            store: InMemorySessionStore(validSession()), transport: transport,
+            reachability: FakeReachability(isReachable: false)
+        )
+
+        await state.bootstrap()
+
+        XCTAssertEqual(state.phase, .offline)
+        let sync = try XCTUnwrap(state.recordSync, "offline Home needs the driver for its header")
+        XCTAssertEqual(sync.status, .synced(syncedAt))
+        XCTAssertEqual(transport.requests.map(\.path), ["/me"], "the offline driver is not run")
+    }
+
+    @MainActor
+    func testOfflineLaunchNeverSyncedIsIdle() async throws {
+        let first = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        first.selectedCompanyID = 7
+        first.selectedProjectID = 99
+        let state = makeState(
+            store: InMemorySessionStore(validSession()),
+            transport: ScriptedTransport([.failure(URLError(.notConnectedToInternet))]),
+            reachability: FakeReachability(isReachable: false)
+        )
+
+        await state.bootstrap()
+
+        XCTAssertEqual(state.phase, .offline)
+        XCTAssertEqual(try XCTUnwrap(state.recordSync).status, .idle)
+    }
+
+    @MainActor
+    func testOfflineLaunchWithoutSelectionHasNoDriver() async throws {
+        let state = makeState(
+            store: InMemorySessionStore(validSession()),
+            transport: ScriptedTransport([.failure(URLError(.notConnectedToInternet))]),
+            reachability: FakeReachability(isReachable: false)
+        )
+
+        await state.bootstrap()
+
+        XCTAssertEqual(state.phase, .offline)
+        XCTAssertNil(state.recordSync)
+    }
+
+    @MainActor
+    func testSuccessfulBootstrapReplacesOfflineDriver() async throws {
+        let first = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        first.selectedCompanyID = 7
+        first.selectedProjectID = 99
+        let transport = ScriptedTransport([
+            .failure(URLError(.notConnectedToInternet)),
+            .response(APIStub.me(lastCompanyID: 7, lastProjectID: 99)),
+        ])
+        let state = makeState(
+            store: InMemorySessionStore(validSession()), transport: transport,
+            reachability: FakeReachability(isReachable: false)
+        )
+        await state.bootstrap()
+        let offlineSync = try XCTUnwrap(state.recordSync)
+
+        await state.bootstrap()
+
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+        let sync = try XCTUnwrap(state.recordSync)
+        XCTAssertFalse(sync === offlineSync, "a running driver replaces the offline one")
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testSignOutRemovesDownloadedAttachments() async throws {
+        let file = try placeAttachmentFile()
+        let transport = StubTransport([APIStub.me()])
+        transport.enqueue(.noContent)
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+
+        await state.signOut()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AttachmentFiles.directory.path))
+    }
+
+    @MainActor
+    func testBootstrapWithoutSessionClearsRecordsAndAttachments() async throws {
+        let state = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
+        let context = try XCTUnwrap(container).mainContext
+        for id: Int64 in [1, 2] {
+            context.insert(CachedRecord(
+                projectID: 99, kind: .rfi, procoreID: id, changeSeq: id, updatedAt: Date(), bodyData: Data(),
+                number: "\(id)", subject: "Subject", status: "open", ballInCourt: "", dueDate: nil
+            ))
+        }
+        context.insert(ProjectSyncState(projectID: 99, kind: .rfi, nextSince: 2, lastSyncedAt: Date()))
+        try context.save()
+        let file = try placeAttachmentFile()
+
+        await state.bootstrap()
+
+        XCTAssertEqual(state.phase, .signedOut)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CachedRecord>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<ProjectSyncState>()), 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
 
     // MARK: - Helpers
@@ -429,15 +663,37 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.sessionGeneration, 2, "re-sign-in tells screens to reload")
     }
 
+    private func notModified(count: Int) -> [(HTTPResponse, HTTPBody?)] {
+        Array(repeating: (HTTPResponse(status: .notModified), nil), count: count)
+    }
+
     private func validSession() -> Session {
         Session(accessToken: "acc1", refreshToken: "ref1", accessExpiresAt: Date().addingTimeInterval(3600))
+    }
+
+    /// A file in the attachment download directory, as `AttachmentViewerModel` would leave one.
+    private func placeAttachmentFile() throws -> URL {
+        let directory = AttachmentFiles.directory.appendingPathComponent("123", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("plan.pdf")
+        try Data("pdf".utf8).write(to: file)
+        return file
+    }
+
+    /// Stops the sync and prefetch a signed-in state started, so they do not outlive the test.
+    @MainActor
+    private func cancelBackgroundWork(_ state: AppState) {
+        state.recordSync?.stop()
+        state.draftSync?.stop()
+        state.prefetchTask?.cancel()
     }
 
     @MainActor
     private func makeState(
         store: InMemorySessionStore,
         transport: ClientTransport,
-        presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError())
+        presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError()),
+        reachability: ReachabilityProviding? = nil
     ) -> AppState {
         let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true))
         self.container = container
@@ -447,7 +703,8 @@ final class AppStateTests: XCTestCase {
             baseURL: APIStub.baseURL,
             modelContext: container.mainContext,
             transport: transport,
-            defaults: UserDefaults(suiteName: suiteName)!
+            defaults: UserDefaults(suiteName: suiteName)!,
+            reachability: reachability
         )
     }
 }

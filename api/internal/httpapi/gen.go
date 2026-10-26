@@ -528,16 +528,6 @@ type RFIRecord struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
-// RFISummary defines model for RFISummary.
-type RFISummary struct {
-	Assignees []string            `json:"assignees"`
-	DueDate   *openapi_types.Date `json:"due_date,omitempty"`
-	Id        int64               `json:"id"`
-	Number    string              `json:"number"`
-	Status    string              `json:"status"`
-	Subject   string              `json:"subject"`
-}
-
 // RecordEnvelope defines model for RecordEnvelope.
 type RecordEnvelope struct {
 	ChangeSeq int64      `json:"change_seq"`
@@ -703,11 +693,6 @@ type GetRecordsParams struct {
 // GetRecordsParamsKind defines parameters for GetRecords.
 type GetRecordsParamsKind string
 
-// ListRFIsParams defines parameters for ListRFIs.
-type ListRFIsParams struct {
-	XCompanyId int64 `json:"X-Company-Id"`
-}
-
 // SyncProjectParams defines parameters for SyncProject.
 type SyncProjectParams struct {
 	XCompanyId int64 `json:"X-Company-Id"`
@@ -790,11 +775,6 @@ type ServerInterface interface {
 
 	// (GET /projects/{projectId}/records/{kind})
 	GetRecords(w http.ResponseWriter, r *http.Request, projectId int64, kind GetRecordsParamsKind, params GetRecordsParams)
-
-	// (GET /projects/{projectId}/rfis)
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	ListRFIs(w http.ResponseWriter, r *http.Request, projectId int64, params ListRFIsParams)
 
 	// (POST /projects/{projectId}/sync)
 	SyncProject(w http.ResponseWriter, r *http.Request, projectId int64, params SyncProjectParams)
@@ -891,13 +871,6 @@ func (_ Unimplemented) GetRFIAttachment(w http.ResponseWriter, r *http.Request, 
 
 // (GET /projects/{projectId}/records/{kind})
 func (_ Unimplemented) GetRecords(w http.ResponseWriter, r *http.Request, projectId int64, kind GetRecordsParamsKind, params GetRecordsParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// (GET /projects/{projectId}/rfis)
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (_ Unimplemented) ListRFIs(w http.ResponseWriter, r *http.Request, projectId int64, params ListRFIsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1734,60 +1707,6 @@ func (siw *ServerInterfaceWrapper) GetRecords(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
-// ListRFIs operation middleware
-func (siw *ServerInterfaceWrapper) ListRFIs(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "projectId" -------------
-	var projectId int64
-
-	err = runtime.BindStyledParameterWithOptions("simple", "projectId", chi.URLParam(r, "projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
-		return
-	}
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params ListRFIsParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "X-Company-Id" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
-		var XCompanyId int64
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
-			return
-		}
-
-		params.XCompanyId = XCompanyId
-
-	} else {
-		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListRFIs(w, r, projectId, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // SyncProject operation middleware
 func (siw *ServerInterfaceWrapper) SyncProject(w http.ResponseWriter, r *http.Request) {
 
@@ -1981,9 +1900,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/companies/{companyId}/projects", wrapper.ListProjects)
-	})
-	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/projects/{projectId}/rfis", wrapper.ListRFIs)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/projects/{projectId}/lookups/{kind}", wrapper.GetLookup)
@@ -3314,15 +3230,16 @@ type GetRFIAttachment200ResponseHeaders struct {
 	ContentType        string
 }
 
-type GetRFIAttachment200ApplicationoctetStreamResponse struct {
+type GetRFIAttachment200AsteriskResponse struct {
 	Body          io.Reader
 	Headers       GetRFIAttachment200ResponseHeaders
+	ContentType   string
 	ContentLength int64
 }
 
-func (response GetRFIAttachment200ApplicationoctetStreamResponse) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
+func (response GetRFIAttachment200AsteriskResponse) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
 
-	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Type", response.ContentType)
 	if response.ContentLength != 0 {
 		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
 	}
@@ -3479,88 +3396,6 @@ func (response GetRecordsdefaultJSONResponse) VisitGetRecordsResponse(w http.Res
 	return err
 }
 
-type ListRFIsRequestObject struct {
-	ProjectId int64 `json:"projectId"`
-	Params    ListRFIsParams
-}
-
-type ListRFIsResponseObject interface {
-	VisitListRFIsResponse(w http.ResponseWriter) error
-}
-
-type ListRFIs200JSONResponse []RFISummary
-
-func (response ListRFIs200JSONResponse) VisitListRFIsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListRFIs401JSONResponse struct{ ErrorJSONResponse }
-
-func (response ListRFIs401JSONResponse) VisitListRFIsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListRFIs403JSONResponse Error
-
-func (response ListRFIs403JSONResponse) VisitListRFIsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListRFIs502JSONResponse Error
-
-func (response ListRFIs502JSONResponse) VisitListRFIsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(502)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type ListRFIsdefaultJSONResponse struct {
-	Body       Error
-	StatusCode int
-}
-
-func (response ListRFIsdefaultJSONResponse) VisitListRFIsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type SyncProjectRequestObject struct {
 	ProjectId int64 `json:"projectId"`
 	Params    SyncProjectParams
@@ -3686,11 +3521,6 @@ type StrictServerInterface interface {
 
 	// (GET /projects/{projectId}/records/{kind})
 	GetRecords(ctx context.Context, request GetRecordsRequestObject) (GetRecordsResponseObject, error)
-
-	// (GET /projects/{projectId}/rfis)
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	ListRFIs(ctx context.Context, request ListRFIsRequestObject) (ListRFIsResponseObject, error)
 
 	// (POST /projects/{projectId}/sync)
 	SyncProject(ctx context.Context, request SyncProjectRequestObject) (SyncProjectResponseObject, error)
@@ -4235,33 +4065,6 @@ func (sh *strictHandler) GetRecords(w http.ResponseWriter, r *http.Request, proj
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetRecordsResponseObject); ok {
 		if err := validResponse.VisitGetRecordsResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// ListRFIs operation middleware
-func (sh *strictHandler) ListRFIs(w http.ResponseWriter, r *http.Request, projectId int64, params ListRFIsParams) {
-	var request ListRFIsRequestObject
-
-	request.ProjectId = projectId
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListRFIs(ctx, request.(ListRFIsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListRFIs")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListRFIsResponseObject); ok {
-		if err := validResponse.VisitListRFIsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
