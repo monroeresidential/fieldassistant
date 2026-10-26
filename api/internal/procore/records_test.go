@@ -141,6 +141,13 @@ func TestRFIDetail_DecodesDocsSample(t *testing.T) {
 		t.Fatalf("questions = %d", len(d.Questions))
 	}
 	q := d.Questions[0]
+	// Procore gives a question's created_by as a bare name string.
+	if q.CreatedBy == nil || q.CreatedBy.Name != "Drew Monroe" || q.CreatedBy.ID != 0 {
+		t.Errorf("question created_by = %+v, want name only", q.CreatedBy)
+	}
+	if a := q.Answers[0].CreatedBy; a == nil || a.ID != 302 || a.Name != "Ana Torres" {
+		t.Errorf("answer created_by = %+v", a)
+	}
 	if len(q.Attachments) != 1 || q.Attachments[0].ID != 9001 {
 		t.Errorf("question attachments = %+v", q.Attachments)
 	}
