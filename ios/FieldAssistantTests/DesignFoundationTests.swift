@@ -17,8 +17,12 @@ final class DesignFoundationTests: XCTestCase {
         assertColor(Theme.Color.ground, in: dark, equals: 0x2F3437)
         assertColor(Theme.Color.accent, in: dark, equals: 0xF26122)
         assertColor(Theme.Color.surface, in: dark, equals: 0x3A4044)
+        assertColor(Theme.Color.muted, in: dark, equals: 0xB6BCC0)
+        assertColor(Theme.Color.accentTint, in: dark, equals: 0x3A4044)
         assertColor(Theme.Color.ground, in: light, equals: 0xFFFFFF)
         assertColor(Theme.Color.accent, in: light, equals: 0xC2410C)
+        assertColor(Theme.Color.muted, in: light, equals: 0x5C6368)
+        assertColor(Theme.Color.accentTint, in: light, equals: 0xFEF0E8)
     }
 
     func testTypeStylesScaleWithDynamicType() throws {
@@ -38,6 +42,16 @@ final class DesignFoundationTests: XCTestCase {
     func testKickerTrackingIsFourteenPercent() {
         XCTAssertEqual(Theme.Text.kicker.tracking, 11 * 0.14, accuracy: 0.01)
         XCTAssertEqual(Theme.Text.cardKicker.tracking, 10 * 0.12, accuracy: 0.01)
+    }
+
+    func testLineSpacingHitsHandoffLineHeights() throws {
+        let font = try XCTUnwrap(UIFont(name: Font.publicSansName(for: .regular), size: 15))
+        XCTAssertEqual(font.lineHeight / font.pointSize, Theme.TextStyle.naturalLineHeight, accuracy: 0.01)
+
+        XCTAssertEqual(Theme.Text.hero.lineSpacing, 56 * (0.98 - 1.175), accuracy: 0.2)  // about -10.9
+        XCTAssertEqual(Theme.Text.body.lineSpacing, 15 * (1.55 - 1.175), accuracy: 0.2)  // about 5.6
+        XCTAssertEqual(Theme.Text.transcript.lineSpacing, 24 * (1.35 - 1.175), accuracy: 0.2)
+        XCTAssertEqual(Theme.Text.rowTitle.lineSpacing, 0)
     }
 
     private func assertColor(_ color: SwiftUI.Color, in traits: UITraitCollection, equals hex: UInt32,

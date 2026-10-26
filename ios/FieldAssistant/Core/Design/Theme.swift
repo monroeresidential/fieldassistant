@@ -9,9 +9,7 @@ enum Theme {
         static let brand = fixed(0xF26122)
         static let charcoal = fixed(0x2F3437)
         static let panel = fixed(0x3A4044)
-        static let muted = fixed(0x5C6368)
         static let tertiary = fixed(0x8A9196)
-        static let accentTint = fixed(0xFEF0E8)
         static let textOnDarkBody = fixed(0xE9EBEC)
         static let textOnDarkSecondary = fixed(0xB6BCC0)
         static let tagline = fixed(0xD5D9DC)
@@ -19,6 +17,8 @@ enum Theme {
 
         // Adaptive: light / dark
         static let accent = adaptive(light: 0xC2410C, dark: 0xF26122)
+        static let accentTint = adaptive(light: 0xFEF0E8, dark: 0x3A4044)
+        static let muted = adaptive(light: 0x5C6368, dark: 0xB6BCC0)
         static let textPrimary = adaptive(light: 0x2F3437, dark: 0xFFFFFF)
         static let textSecondary = adaptive(light: 0x5C6368, dark: 0xB6BCC0)
         static let hairline = adaptive(light: 0xE1E4E6, dark: 0xFFFFFF, darkAlpha: 0.12)
@@ -54,14 +54,19 @@ enum Theme {
         let tracking: CGFloat
         let lineSpacing: CGFloat
 
-        /// `em` is the handoff's letter-spacing; `lineHeight` its line-height multiple.
-        /// Line heights below 1 (the hero) give no extra spacing: SwiftUI cannot tighten lines.
+        /// Public Sans's natural line height as a multiple of its size: hhea ascent 1900 + descent 450
+        /// over 2000 units per em. SwiftUI's `lineSpacing` adds to this height.
+        static let naturalLineHeight: CGFloat = 1.175
+
+        /// `em` is the handoff's letter-spacing; `lineHeight` its line-height multiple (nil keeps
+        /// the font's natural height). A multiple below the natural height gives negative spacing,
+        /// which tightens the lines (the hero's .98).
         init(_ size: CGFloat, _ weight: Font.Weight, relativeTo textStyle: Font.TextStyle,
-             em: CGFloat = 0, lineHeight: CGFloat = 1, monospacedDigits: Bool = false) {
+             em: CGFloat = 0, lineHeight: CGFloat? = nil, monospacedDigits: Bool = false) {
             let font = Font.publicSans(size, weight: weight, relativeTo: textStyle)
             self.font = monospacedDigits ? font.monospacedDigit() : font
             self.tracking = size * em
-            self.lineSpacing = max(0, size * (lineHeight - 1))
+            self.lineSpacing = lineHeight.map { size * ($0 - Self.naturalLineHeight) } ?? 0
         }
     }
 
