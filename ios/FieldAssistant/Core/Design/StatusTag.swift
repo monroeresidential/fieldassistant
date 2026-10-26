@@ -40,7 +40,9 @@ struct StatusTag: View {
             .accessibilityLabel(state == .lastUsed ? style.text : "Status \(style.text)")
     }
 
-    private static let tracking = 11 * 0.04
+    /// .04em of the tag size; Last used tracks wider at .06em.
+    private static let tracking = Theme.Text.tagText.size * 0.04
+    private static let lastUsedTracking = Theme.Text.tagText.size * 0.06
 
     static func style(for state: State) -> Style {
         switch state {
@@ -62,7 +64,7 @@ struct StatusTag: View {
                   border: Theme.Color.hairlineStrong, uppercase: false, tracking: tracking)
         case .lastUsed:
             Style(text: "Last used", foreground: Theme.Color.accent, background: Theme.Color.accentTint,
-                  border: nil, uppercase: true, tracking: 11 * 0.06)
+                  border: nil, uppercase: true, tracking: lastUsedTracking)
         case .custom(let text):
             Style(text: text, foreground: Theme.Color.muted, background: nil,
                   border: Theme.Color.hairlineStrong, uppercase: false, tracking: tracking)

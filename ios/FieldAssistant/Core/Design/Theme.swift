@@ -50,6 +50,7 @@ enum Theme {
 
     /// A type-scale entry: Public Sans font, letter-spacing in points and extra line spacing in points.
     struct TextStyle: Sendable {
+        let size: CGFloat
         let font: Font
         let tracking: CGFloat
         let lineSpacing: CGFloat
@@ -63,6 +64,7 @@ enum Theme {
         /// which tightens the lines (the hero's .98).
         init(_ size: CGFloat, _ weight: Font.Weight, relativeTo textStyle: Font.TextStyle,
              em: CGFloat = 0, lineHeight: CGFloat? = nil, monospacedDigits: Bool = false) {
+            self.size = size
             let font = Font.publicSans(size, weight: weight, relativeTo: textStyle)
             self.font = monospacedDigits ? font.monospacedDigit() : font
             self.tracking = size * em

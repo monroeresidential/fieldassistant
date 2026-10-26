@@ -10,6 +10,10 @@ struct RecordButton: View {
     let halo: CGFloat
     let isEnabled: Bool
     let action: () -> Void
+    /// A parent's `.disabled(true)` changes the look as well as stopping taps.
+    @Environment(\.isEnabled) private var environmentEnabled
+
+    private var enabled: Bool { isEnabled && environmentEnabled }
 
     init(glyph: Glyph, size: CGFloat, halo: CGFloat, isEnabled: Bool, action: @escaping () -> Void) {
         self.glyph = glyph
@@ -23,10 +27,10 @@ struct RecordButton: View {
         Button(action: action) {
             ZStack {
                 Circle()
-                    .fill(isEnabled ? Theme.Color.halo : Color.clear)
+                    .fill(enabled ? Theme.Color.halo : Color.clear)
                     .frame(width: size + 2 * halo, height: size + 2 * halo)
                 Circle()
-                    .fill(isEnabled ? Theme.Color.brand : Theme.Color.surface)
+                    .fill(enabled ? Theme.Color.brand : Theme.Color.surface)
                     .frame(width: size, height: size)
                 glyphView
             }
@@ -39,7 +43,7 @@ struct RecordButton: View {
 
     @ViewBuilder
     private var glyphView: some View {
-        let ink = isEnabled ? Color.white : Theme.Color.tertiary
+        let ink = enabled ? Color.white : Theme.Color.tertiary
         switch glyph {
         case .mic:
             // 46 pt at a 116 pt button.
