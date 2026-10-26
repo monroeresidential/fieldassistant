@@ -29,8 +29,8 @@ final class AttachmentViewerModelTests: XCTestCase {
     }
 
     func testOpenDownloadsToTempFile() async throws {
-        // The contract declares only application/octet-stream; the generated client rejects other types.
-        var response = HTTPResponse(status: .ok, headerFields: [.contentType: "application/octet-stream"])
+        // The backend forwards Procore's real content type.
+        var response = HTTPResponse(status: .ok, headerFields: [.contentType: "image/jpeg"])
         response.headerFields[.contentDisposition] = #"attachment; filename="col.jpg""#
         let transport = StubTransport([(response, HTTPBody([1, 2, 3]))])
         let model = makeModel(transport)

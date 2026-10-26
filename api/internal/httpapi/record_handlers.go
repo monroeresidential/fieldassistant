@@ -179,7 +179,7 @@ func (s *Server) GetRFIAttachment(ctx context.Context, req GetRFIAttachmentReque
 	// The generated visitor omits Content-Length when it is 0, so an
 	// unknown length (-1) is passed as 0.
 	length := max(resp.ContentLength, 0)
-	return nosniffAttachment{GetRFIAttachment200ApplicationoctetStreamResponse{
+	return nosniffAttachment{GetRFIAttachment200AsteriskResponse{
 		Body:          cancelOnClose{ReadCloser: resp.Body, cancel: cancel},
 		ContentLength: length,
 		Headers: GetRFIAttachment200ResponseHeaders{
@@ -205,12 +205,12 @@ func (c cancelOnClose) Close() error {
 // X-Content-Type-Options: nosniff added, so a client never sniffs
 // Procore-supplied bytes into a different type than the one declared.
 type nosniffAttachment struct {
-	GetRFIAttachment200ApplicationoctetStreamResponse
+	GetRFIAttachment200AsteriskResponse
 }
 
 func (r nosniffAttachment) VisitGetRFIAttachmentResponse(w http.ResponseWriter) error {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	return r.GetRFIAttachment200ApplicationoctetStreamResponse.VisitGetRFIAttachmentResponse(w)
+	return r.GetRFIAttachment200AsteriskResponse.VisitGetRFIAttachmentResponse(w)
 }
 
 // findRFIAttachment finds attachment id among the RFI's questions and answers.

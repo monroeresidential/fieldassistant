@@ -32,7 +32,7 @@ func TestMissingRequiredHeaderReturnsJSONBadRequest(t *testing.T) {
 	srv, _ := newTestServer(t)
 	pair := signIn(t, srv, "device-1")
 
-	res, b := call(t, srv, http.MethodGet, "/v1/projects/1/rfis", pair.AccessToken, nil)
+	res, b := call(t, srv, http.MethodGet, "/v1/projects/1/lookups/users", pair.AccessToken, nil)
 	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("content-type %q", ct)
 	}

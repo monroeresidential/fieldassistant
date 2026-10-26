@@ -62,7 +62,7 @@ struct RecordService: Sendable {
         }
         switch output {
         case .ok(let ok):
-            let body = try await APIFailure.mapping { try ok.body.binary }
+            let body = try await APIFailure.mapping { try ok.body.any }
             let data = try await APIFailure.mapping { try await Data(collecting: body, upTo: Self.maxAttachmentBytes) }
             return (
                 data,

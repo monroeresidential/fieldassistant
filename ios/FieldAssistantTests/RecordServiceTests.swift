@@ -134,7 +134,7 @@ final class RecordServiceTests: XCTestCase {
     }
 
     func testAttachmentDataReadsFilename() async throws {
-        var response = HTTPResponse(status: .ok, headerFields: [.contentType: "application/octet-stream"])
+        var response = HTTPResponse(status: .ok, headerFields: [.contentType: "image/jpeg"])
         response.headerFields[.contentDisposition] = #"attachment; filename="col.jpg""#
         let transport = StubTransport([(response, HTTPBody([1, 2, 3]))])
         let service = RecordService(client: makeClient(transport))
@@ -143,6 +143,7 @@ final class RecordServiceTests: XCTestCase {
 
         XCTAssertEqual(result.0, Data([1, 2, 3]))
         XCTAssertEqual(result.filename, "col.jpg")
+        XCTAssertEqual(result.contentType, "image/jpeg")
         XCTAssertEqual(transport.requests.first?.request.path, "/projects/7/records/rfi/501/attachments/3")
     }
 
