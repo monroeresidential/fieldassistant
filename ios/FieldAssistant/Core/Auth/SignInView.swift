@@ -46,6 +46,9 @@ struct SignInView: View {
             Text("Field Assistant".uppercased())
                 .textStyle(Self.brandKicker)
                 .foregroundStyle(Theme.Color.textOnDarkSecondary)
+                // One line beside the mark and the DEV tag: shrink rather than break mid-word.
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
             Spacer(minLength: 8)
             if AppConfig.isDev {
                 Text("DEV")
