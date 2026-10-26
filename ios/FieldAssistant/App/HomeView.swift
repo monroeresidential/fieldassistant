@@ -81,7 +81,7 @@ struct HomeView: View {
                         TimelineView(.periodic(from: .now, by: 30)) { context in
                             Text(Self.syncLine(appState.recordSync?.status, now: context.date))
                                 .font(.footnote)
-                                .foregroundStyle(RecordPalette.muted)
+                                .foregroundStyle(Theme.Color.muted)
                         }
                     }
                     .accessibilityElement(children: .combine)
@@ -90,7 +90,7 @@ struct HomeView: View {
                             Task { await appState.syncRecords(force: true, full: false) }
                         }
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(RecordPalette.accent)
+                        .foregroundStyle(Theme.Color.accent)
                         .buttonStyle(.borderless)
                         .frame(minHeight: 44)
                         .accessibilityLabel("Retry sync")

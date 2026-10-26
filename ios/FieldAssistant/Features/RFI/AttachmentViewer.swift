@@ -97,7 +97,7 @@ struct AttachmentRow: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "paperclip")
-                    .foregroundStyle(RecordPalette.muted)
+                    .foregroundStyle(Theme.Color.muted)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(displayName)
@@ -106,7 +106,7 @@ struct AttachmentRow: View {
                     if let caption {
                         Text(caption)
                             .font(.footnote)
-                            .foregroundStyle(RecordPalette.accent)
+                            .foregroundStyle(Theme.Color.accent)
                     }
                 }
                 Spacer()

@@ -66,7 +66,7 @@ struct RFIRecordDetailView: View {
                         openURL(link)
                     } label: {
                         Label("Open in Procore", systemImage: "arrow.up.right.square")
-                            .foregroundStyle(RecordPalette.accent)
+                            .foregroundStyle(Theme.Color.accent)
                             .frame(minHeight: 44)
                     }
                     .accessibilityLabel("Open in Procore")
@@ -81,7 +81,7 @@ struct RFIRecordDetailView: View {
         Section {
             if !rfi.number.isEmpty { field("Number", "#\(rfi.number)") }
             field("Subject", rfi.subject)
-            ReviewField(label: "Status") { StatusTag(status: rfi.status) }
+            ReviewField(label: "Status") { StatusTag(StatusTag.state(forRFIStatus: rfi.status, draft: rfi.draft)) }
             field("Ball in court", rfi.ball_in_court?.name ?? Self.names(rfi.ball_in_courts))
             field("Due", dueDate.map(RecordFormat.dueDate))
             field("Created", Self.joined(rfi.created_by?.name, rfi.created_at.formatted(date: .abbreviated, time: .shortened)))
@@ -168,7 +168,7 @@ struct RFIRecordDetailView: View {
             if let meta {
                 Text(meta)
                     .font(.footnote)
-                    .foregroundStyle(RecordPalette.muted)
+                    .foregroundStyle(Theme.Color.muted)
             }
         }
         .padding(.vertical, 4)
@@ -208,19 +208,6 @@ struct RFIRecordDetailView: View {
         case let other?: other.replacingOccurrences(of: "_", with: " ").capitalized
         }
         return joined(status, impact.value)
-    }
-}
-
-/// Uppercase section header in the handoff's kicker style.
-private struct Kicker: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11, weight: .bold))
-            .textCase(.uppercase)
-            .foregroundStyle(RecordPalette.accent)
     }
 }
 

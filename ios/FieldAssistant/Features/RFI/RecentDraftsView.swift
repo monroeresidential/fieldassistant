@@ -77,7 +77,7 @@ private struct DraftRow: View {
                 }
             }
             Spacer(minLength: 8)
-            DraftStatusChip(status: draft.status, number: draft.resultNumber)
+            StatusTag(StatusTag.state(for: draft.status, number: draft.resultNumber))
         }
         .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
         .contentShape(Rectangle())
@@ -91,41 +91,6 @@ private struct DraftRow: View {
         case .submitting: "Reviewed. Sends automatically, once."
         case .failed: draft.errorMessage
         case .draft, .submitted: nil
-        }
-    }
-}
-
-/// The status tag on a draft row: label from `LocalDraftStatus`, emphasis by how urgent it is.
-struct DraftStatusChip: View {
-    let status: LocalDraftStatus
-    var number: String?
-
-    var body: some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .foregroundStyle(status == .failed ? Color.white : color)
-            .background {
-                if status == .failed {
-                    Capsule().fill(Color.orange)
-                } else {
-                    Capsule().strokeBorder(color, lineWidth: 1)
-                }
-            }
-            .accessibilityLabel("Status \(text)")
-    }
-
-    private var text: String {
-        if status == .submitted, let number { return "#\(number) \(status.label)" }
-        return status.label
-    }
-
-    private var color: Color {
-        switch status {
-        case .waiting, .submitting: .orange
-        case .draft, .submitted: .secondary
-        case .failed: .orange
         }
     }
 }

@@ -1,14 +1,12 @@
 import SwiftUI
 
-/// Uppercase caption shared by `ReviewRow` and `PairedRow`.
+/// The field label shared by `ReviewRow` and `PairedRow`: the label kicker, accent when flagged.
 struct ReviewLabel: View {
     let text: String
     var flagged = false
 
     var body: some View {
-        Text(text.uppercased())
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(flagged ? Color.orange : Color.secondary)
+        Kicker(text, style: .label, color: flagged ? Theme.Color.accent : nil)
     }
 }
 

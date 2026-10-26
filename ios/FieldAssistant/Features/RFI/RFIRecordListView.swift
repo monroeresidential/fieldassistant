@@ -123,10 +123,10 @@ private struct RFIRecordRow: View {
                 if !record.number.isEmpty {
                     Text("#\(record.number)")
                         .font(.subheadline.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(RecordPalette.muted)
+                        .foregroundStyle(Theme.Color.muted)
                 }
                 Spacer()
-                StatusTag(status: record.status)
+                StatusTag(StatusTag.state(forRFIStatus: record.status, draft: false))
             }
             Text(record.subject)
                 .font(.body.weight(.medium))
@@ -141,7 +141,7 @@ private struct RFIRecordRow: View {
                     }
                 }
                 .font(.footnote)
-                .foregroundStyle(RecordPalette.muted)
+                .foregroundStyle(Theme.Color.muted)
                 .lineLimit(1)
             }
         }
@@ -151,36 +151,9 @@ private struct RFIRecordRow: View {
     }
 }
 
-/// Handoff tokens used by the record screens until the design pass.
-enum RecordPalette {
-    static let accent = Color(red: 0xC2 / 255, green: 0x41 / 255, blue: 0x0C / 255)
-    static let muted = Color(red: 0x5C / 255, green: 0x63 / 255, blue: 0x68 / 255)
-    static let surface = Color(red: 0xF4 / 255, green: 0xF5 / 255, blue: 0xF6 / 255)
-}
-
 enum RecordFormat {
     /// Due dates are calendar days stored as midnight UTC, so they format in UTC.
     static func dueDate(_ date: Date) -> String {
         date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, timeZone: .gmt))
-    }
-}
-
-/// RFI status as a small tag: accent outline for open, neutral surface fill otherwise.
-struct StatusTag: View {
-    let status: String
-
-    var body: some View {
-        let isOpen = status.lowercased() == "open"
-        Text(status.capitalized)
-            .font(.system(size: 11, weight: .bold))
-            .textCase(.uppercase)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .foregroundStyle(isOpen ? RecordPalette.accent : RecordPalette.muted)
-            .background(isOpen ? Color.clear : RecordPalette.surface, in: RoundedRectangle(cornerRadius: 4))
-            .overlay {
-                if isOpen { RoundedRectangle(cornerRadius: 4).strokeBorder(RecordPalette.accent, lineWidth: 1) }
-            }
-            .accessibilityLabel("Status \(status)")
     }
 }
