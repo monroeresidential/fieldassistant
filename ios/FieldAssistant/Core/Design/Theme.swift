@@ -29,6 +29,8 @@ enum Theme {
         static let flaggedBackground = adaptive(light: 0xFEF0E8, dark: 0x3A4044)
         /// The dashed border of an add-photo tile.
         static let dashedBorder = adaptive(light: 0xB6BCC0, dark: 0xFFFFFF, darkAlpha: 0.30)
+        /// The ring of an unselected candidate radio on Review.
+        static let radioBorder = adaptive(light: 0xB6BCC0, dark: 0x8A9196)
 
         private static func fixed(_ hex: UInt32) -> SwiftUI.Color {
             SwiftUI.Color(uiColor: uiColor(hex))
@@ -86,6 +88,8 @@ enum Theme {
         static let resultNumber = TextStyle(84, .bold, relativeTo: .largeTitle, em: -0.04, monospacedDigits: true)
         static let body = TextStyle(15, .regular, relativeTo: .body, lineHeight: 1.55)
         static let rowTitle = TextStyle(15, .medium, relativeTo: .body)
+        /// Review's Subject value.
+        static let fieldTitle = TextStyle(16, .semibold, relativeTo: .body, lineHeight: 1.4)
         static let rowTitleStrong = TextStyle(17, .semibold, relativeTo: .body)
         static let label = TextStyle(11, .bold, relativeTo: .caption2, em: 0.1)
         static let kicker = TextStyle(11, .bold, relativeTo: .caption2, em: 0.14)

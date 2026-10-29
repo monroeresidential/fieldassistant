@@ -42,52 +42,61 @@ struct LookupPickerView: View {
     var body: some View {
         Group {
             if let reason = unavailableReason {
-                ContentUnavailableView(
-                    "Not available on this project",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(reason)
-                )
+                FailureMessage(title: "Not available on this project", message: reason)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 24)
             } else {
                 list
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.Color.ground.ignoresSafeArea())
         .navigationTitle(kind.title)
         .navigationBarTitleDisplayMode(.inline)
     }
 
     private var list: some View {
-        List(LookupFilter.filter(rows, query: query), id: \.id) { row in
-            Button { toggle(row.id) } label: {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.label).font(.body)
-                        if let subtitle = row.subtitle {
-                            Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                        }
+        let shown = LookupFilter.filter(rows, query: query)
+        return VStack(spacing: 0) {
+            SearchField("Search \(kind.title.lowercased())", text: $query)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 10)
+            List {
+                ForEach(shown, id: \.id) { row in
+                    Button { toggle(row.id) } label: {
+                        LookupPickerRow(row: row, selected: isSelected(row.id))
                     }
-                    Spacer(minLength: 0)
-                    if isSelected(row.id) {
-                        Image(systemName: "checkmark")
-                            .foregroundStyle(Color.accentColor)
-                            .accessibilityHidden(true)
-                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel([row.label, row.subtitle].compactMap { $0 }.joined(separator: ", "))
+                    .accessibilityAddTraits(isSelected(row.id) ? .isSelected : [])
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                    .listRowSeparatorTint(Theme.Color.hairline)
+                    .alignmentGuide(.listRowSeparatorTrailing) { $0.width }
+                    .listRowBackground(Theme.Color.ground)
                 }
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(Rectangle())
+                if rows.isEmpty {
+                    emptyMessage(Kicker("No \(kind.title.lowercased()) on this project"))
+                } else if shown.isEmpty {
+                    emptyMessage(FailureMessage(title: "No results for \u{201C}\(query)\u{201D}",
+                                                message: "Check the spelling or try a new search."))
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel([row.label, row.subtitle].compactMap { $0 }.joined(separator: ", "))
-            .accessibilityAddTraits(isSelected(row.id) ? .isSelected : [])
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .scrollDismissesKeyboard(.immediately)
         }
-        .listStyle(.plain)
-        .searchable(text: $query, prompt: "Search \(kind.title.lowercased())")
-        .overlay {
-            if rows.isEmpty {
-                ContentUnavailableView("No \(kind.title.lowercased()) on this project", systemImage: "tray")
-            } else if LookupFilter.filter(rows, query: query).isEmpty {
-                ContentUnavailableView.search(text: query)
-            }
-        }
+    }
+
+    /// An empty-list message placed in the list: centred, no rules.
+    private func emptyMessage(_ content: some View) -> some View {
+        content
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Theme.Color.ground)
     }
 
     private func isSelected(_ id: Int64) -> Bool {
@@ -104,6 +113,37 @@ struct LookupPickerView: View {
         } else {
             selections.wrappedValue.append(id)
         }
+    }
+}
+
+/// One lookup choice: 17/600 name over a 12 pt muted subtitle, min height 60, accent checkmark when chosen.
+private struct LookupPickerRow: View {
+    let row: LookupRow
+    let selected: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.label)
+                    .textStyle(Theme.Text.rowTitleStrong)
+                    .foregroundStyle(Theme.Color.textPrimary)
+                if let subtitle = row.subtitle {
+                    Text(subtitle)
+                        .textStyle(Theme.Text.meta12)
+                        .foregroundStyle(Theme.Color.muted)
+                }
+            }
+            Spacer(minLength: 0)
+            if selected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Theme.Color.accent)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 

@@ -44,4 +44,12 @@ final class HomeViewTests: XCTestCase {
         )
         XCTAssertEqual(HomeView.syncLine(.failed(code: nil, message: "Server error"), now: now), "Sync failed, showing what you have")
     }
+
+    @MainActor
+    func testReviewBackLinkNamesTheScreenUnderIt() {
+        let id = UUID()
+        XCTAssertEqual(HomeView.backTitle(for: .review(id), in: [.review(id)]), "Home")
+        XCTAssertEqual(HomeView.backTitle(for: .review(id), in: [.drafts, .review(id)]), "Drafts")
+        XCTAssertEqual(HomeView.backTitle(for: .review(id), in: []), "Home")
+    }
 }

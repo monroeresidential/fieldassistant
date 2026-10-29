@@ -255,6 +255,7 @@ struct HomeView: View {
         case .review(let id):
             ReviewScreen(
                 draftID: id,
+                backTitle: Self.backTitle(for: route, in: path),
                 onSubmitted: { path = [.result(id)] },
                 onLeave: { path = [] }
             )
@@ -275,6 +276,13 @@ struct HomeView: View {
         case .drafts:
             DraftsListView(projectID: projectID, owner: appState.draftOwnerID ?? -1) { path.append($0) }
         }
+    }
+
+    /// What a pushed screen's back link names: the screen under `route` in `path`. Review sits on
+    /// Home after a build or a Recent row, and on Drafts when opened from the list.
+    static func backTitle(for route: Route, in path: [Route]) -> String {
+        guard let index = path.firstIndex(of: route), index > 0 else { return "Home" }
+        return path[index - 1] == .drafts ? "Drafts" : "Home"
     }
 
     // MARK: - No signal

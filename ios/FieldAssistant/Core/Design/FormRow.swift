@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A labelled field row: 11/700 label over a 15 pt value, 14 pt vertical padding, a top hairline,
+/// A labelled field row: 11/700 tertiary label over a 15 pt value, 14 pt vertical padding, a top hairline,
 /// and an optional chevron (rows with one are at least 60 pt tall).
 struct FormRow<Value: View>: View {
     let label: String
@@ -20,7 +20,7 @@ struct FormRow<Value: View>: View {
             HairlineDivider()
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Kicker(label, style: .label, color: flagged ? Theme.Color.accent : nil)
+                    Kicker(label, style: .label, color: flagged ? Theme.Color.accent : Theme.Color.tertiary)
                     value
                         .textStyle(Theme.Text.body)
                         .foregroundStyle(Theme.Color.textPrimary)
@@ -28,7 +28,7 @@ struct FormRow<Value: View>: View {
                 }
                 if chevron {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(Theme.Color.tertiary)
                         .accessibilityHidden(true)
                 }

@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Two labelled halves side by side, split by a vertical divider, over a hairline.
+/// Two labelled halves of equal width under a top hairline, split by a vertical hairline.
+/// The left cell pads 14 10 14 0 and the right 14 0 14 14, as in the handoff's grid.
 struct PairedRow<L: View, R: View>: View {
     let leftLabel: String
     let rightLabel: String
@@ -9,24 +10,36 @@ struct PairedRow<L: View, R: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
+            HairlineDivider()
+            // Equal columns, padding inside them, like the handoff's 1fr 1fr grid.
+            WeightedRow(spacing: 0, weights: [1, 1]) {
                 half(label: leftLabel, content: left)
-                Divider()
+                    .padding(.vertical, 14)
+                    .padding(.trailing, 10)
+                    .frame(maxHeight: .infinity, alignment: .top)
                 half(label: rightLabel, content: right)
+                    .padding(.vertical, 14)
+                    .padding(.leading, 14)
+                    .frame(maxHeight: .infinity, alignment: .top)
             }
-            .fixedSize(horizontal: false, vertical: true)
-            Divider()
+            // The split sits at the centre, where the left column ends, even if its control runs wide.
+            .overlay {
+                Rectangle()
+                    .fill(Theme.Color.hairline)
+                    .frame(width: 1)
+                    .accessibilityHidden(true)
+            }
         }
     }
 
     private func half<Content: View>(label: String, content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ReviewLabel(text: label)
-            content().font(.body)
+        VStack(alignment: .leading, spacing: 3) {
+            Kicker(label, style: .label, color: Theme.Color.tertiary)
+            content()
+                .textStyle(Theme.Text.body)
+                .foregroundStyle(Theme.Color.textPrimary)
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
 }
@@ -37,4 +50,5 @@ struct PairedRow<L: View, R: View>: View {
     } right: {
         Text("A-201")
     }
+    .padding(.horizontal, 20)
 }
