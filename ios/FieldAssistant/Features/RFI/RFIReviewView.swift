@@ -319,7 +319,7 @@ struct RFIReviewView: View {
             .accessibilityAddTraits(.isHeader)
     }
 
-    /// "1 field needs you": accent on the tint in light mode, white on accent in dark; hidden at zero.
+    /// "1 field needs you": accent on the tint in light mode, white on #C2410C in dark; hidden at zero.
     @ViewBuilder
     private var countTag: some View {
         if model.unresolvedCount > 0 {
@@ -329,7 +329,7 @@ struct RFIReviewView: View {
                 .foregroundStyle(dark ? Color.white : Theme.Color.accent)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
-                .background(dark ? Theme.Color.accent : Theme.Color.accentTint, in: RoundedRectangle(cornerRadius: 4))
+                .background(dark ? Theme.Color.tagFillOnDark : Theme.Color.accentTint, in: RoundedRectangle(cornerRadius: 4))
                 .padding(.bottom, 6)
                 .accessibilityLabel(Self.needsYou(model.unresolvedCount))
         }

@@ -14,6 +14,10 @@ private struct InteractivePopEnabler: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> Controller { Controller() }
     func updateUIViewController(_ controller: Controller, context: Context) {}
 
+    static func dismantleUIViewController(_ controller: Controller, coordinator: ()) {
+        controller.restore()
+    }
+
     final class Controller: UIViewController, UIGestureRecognizerDelegate {
         private weak var originalDelegate: (any UIGestureRecognizerDelegate)?
         private weak var gesture: UIGestureRecognizer?
@@ -28,6 +32,18 @@ private struct InteractivePopEnabler: UIViewControllerRepresentable {
 
         override func viewWillDisappear(_ animated: Bool) {
             super.viewWillDisappear(animated)
+            restore()
+        }
+
+        /// Also on the way out when `viewWillDisappear` was skipped (the controller torn down
+        /// with its hosting view), so the stack never keeps a swipe on a one-screen stack.
+        override func viewDidDisappear(_ animated: Bool) {
+            super.viewDidDisappear(animated)
+            restore()
+        }
+
+        /// Hands the gesture back to its original delegate; safe to call more than once.
+        func restore() {
             if let gesture, gesture.delegate === self { gesture.delegate = originalDelegate }
             gesture = nil
         }

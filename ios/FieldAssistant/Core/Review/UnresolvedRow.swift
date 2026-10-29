@@ -1,5 +1,9 @@
 import SwiftUI
 
+/// The flagged card's reason on the right of the label: 12/600. File scope because `FlaggedCard`
+/// is generic and cannot hold a stored static.
+private let flaggedReasonStyle = Theme.TextStyle(12, .semibold, relativeTo: .caption)
+
 /// The flagged card around a field that needs the user: a 4 pt orange bar on the left, the flagged
 /// background, radius 0 8 8 0, padding 14, the label and the reason in accent on one line.
 /// An advisory flag keeps the card's shape without the fill, in quieter colours, labelled "Optional:".
@@ -9,8 +13,6 @@ struct FlaggedCard<Content: View>: View {
     let blocking: Bool
     @ViewBuilder var content: () -> Content
 
-    /// The reason on the right of the label: 12/600.
-    private static var reasonStyle: Theme.TextStyle { Theme.TextStyle(12, .semibold, relativeTo: .caption) }
 
     private var title: String { blocking ? label : "Optional: \(label)" }
     private var tint: Color { blocking ? Theme.Color.accent : Theme.Color.muted }
@@ -48,7 +50,7 @@ struct FlaggedCard<Content: View>: View {
 
     private var reasonText: some View {
         Text(reason)
-            .textStyle(Self.reasonStyle)
+            .textStyle(flaggedReasonStyle)
             .foregroundStyle(tint)
     }
 }

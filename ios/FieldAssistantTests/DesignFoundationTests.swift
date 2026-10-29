@@ -23,6 +23,10 @@ final class DesignFoundationTests: XCTestCase {
         assertColor(Theme.Color.accent, in: light, equals: 0xC2410C)
         assertColor(Theme.Color.muted, in: light, equals: 0x5C6368)
         assertColor(Theme.Color.accentTint, in: light, equals: 0xFEF0E8)
+        // Review's count tag keeps the deep accent on charcoal (handoff 1m).
+        assertColor(Theme.Color.tagFillOnDark, in: dark, equals: 0xC2410C)
+        assertColor(Theme.Color.radioBorder, in: dark, equals: 0x8A9196)
+        assertColor(Theme.Color.radioBorder, in: light, equals: 0xB6BCC0)
     }
 
     func testTypeStylesScaleWithDynamicType() throws {

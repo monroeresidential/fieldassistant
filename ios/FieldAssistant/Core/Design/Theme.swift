@@ -14,6 +14,8 @@ enum Theme {
         static let textOnDarkSecondary = fixed(0xB6BCC0)
         static let tagline = fixed(0xD5D9DC)
         static let groundDark = fixed(0x2F3437)
+        /// Review's count tag fill in dark mode: the light accent, kept deep on charcoal (handoff 1m).
+        static let tagFillOnDark = fixed(0xC2410C)
 
         // Adaptive: light / dark
         static let accent = adaptive(light: 0xC2410C, dark: 0xF26122)
