@@ -81,6 +81,8 @@ enum Theme {
     /// The handoff's type scale. Uppercase kickers and labels upper-case their text at the call site.
     enum Text {
         static let screenTitle = TextStyle(32, .bold, relativeTo: .largeTitle, em: -0.02)
+        /// The RFI detail's "#12": the screen title with tabular digits.
+        static let recordNumber = TextStyle(32, .bold, relativeTo: .largeTitle, em: -0.02, monospacedDigits: true)
         /// Home's project name.
         static let projectTitle = TextStyle(28, .bold, relativeTo: .title, em: -0.02)
         /// Home's "Record an RFI" label.
@@ -88,7 +90,7 @@ enum Theme {
         static let hero = TextStyle(56, .bold, relativeTo: .largeTitle, em: -0.03, lineHeight: 0.98)
         static let heroKicker = TextStyle(13, .bold, relativeTo: .footnote, em: 0.16)
         static let resultNumber = TextStyle(84, .bold, relativeTo: .largeTitle, em: -0.04, monospacedDigits: true)
-        /// The created RFI's subject on Result.
+        /// The RFI's subject on Result and on the RFI detail.
         static let resultSubject = TextStyle(20, .semibold, relativeTo: .title3, lineHeight: 1.3)
         /// Result's definition list: terms and values.
         static let definition = TextStyle(14, .regular, relativeTo: .subheadline)
@@ -96,6 +98,10 @@ enum Theme {
         static let definitionTabular = TextStyle(14, .regular, relativeTo: .subheadline, monospacedDigits: true)
         static let body = TextStyle(15, .regular, relativeTo: .body, lineHeight: 1.55)
         static let rowTitle = TextStyle(15, .medium, relativeTo: .body)
+        /// An RFI list row's "#12".
+        static let rowNumber = TextStyle(13, .bold, relativeTo: .footnote, monospacedDigits: true)
+        /// The RFI list's filter tags: 1d's segmented pill text.
+        static let filterTag = TextStyle(14, .semibold, relativeTo: .subheadline)
         /// Review's Subject value.
         static let fieldTitle = TextStyle(16, .semibold, relativeTo: .body, lineHeight: 1.4)
         static let rowTitleStrong = TextStyle(17, .semibold, relativeTo: .body)

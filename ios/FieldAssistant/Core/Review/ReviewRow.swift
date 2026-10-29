@@ -1,15 +1,5 @@
 import SwiftUI
 
-/// A field label outside a `FormRow` (the RFI detail's answers and fields): the label kicker, accent when flagged.
-struct ReviewLabel: View {
-    let text: String
-    var flagged = false
-
-    var body: some View {
-        Kicker(text, style: .label, color: flagged ? Theme.Color.accent : nil)
-    }
-}
-
 /// A Review field as a `FormRow`: tertiary label over the value, top hairline, optional chevron.
 /// With an `action` the whole row is one button; rows with a chevron are at least 60 pt tall.
 struct ReviewRow<Content: View>: View {

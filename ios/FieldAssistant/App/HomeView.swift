@@ -273,7 +273,7 @@ struct HomeView: View {
                 }
             )
         case .rfis:
-            RFIRecordListView(projectID: projectID)
+            RFIRecordListView(projectID: projectID) { path.append($0) }
         case .rfi(let procoreID):
             RFIRecordDetailView(projectID: projectID, procoreID: procoreID)
         case .drafts:

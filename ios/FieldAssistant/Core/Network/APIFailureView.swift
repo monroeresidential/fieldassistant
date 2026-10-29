@@ -62,14 +62,14 @@ struct APIFailureView: View {
     }
 }
 
-/// A centred kicker title, body message and an optional action; also used for empty lists.
+/// A centred kicker title, an optional body message and an optional action; also used for empty lists.
 struct FailureMessage<Action: View>: View {
     let title: String
-    let message: String
+    let message: String?
     var error: String?
     @ViewBuilder var action: Action
 
-    init(title: String, message: String, error: String? = nil, @ViewBuilder action: () -> Action) {
+    init(title: String, message: String?, error: String? = nil, @ViewBuilder action: () -> Action) {
         self.title = title
         self.message = message
         self.error = error
@@ -81,10 +81,12 @@ struct FailureMessage<Action: View>: View {
             Kicker(title)
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
-            Text(message)
-                .textStyle(Theme.Text.body)
-                .foregroundStyle(Theme.Color.textSecondary)
-                .multilineTextAlignment(.center)
+            if let message {
+                Text(message)
+                    .textStyle(Theme.Text.body)
+                    .foregroundStyle(Theme.Color.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
             if let error {
                 Text(error)
                     .textStyle(Theme.Text.body)
@@ -102,7 +104,7 @@ struct FailureMessage<Action: View>: View {
 
 extension FailureMessage where Action == EmptyView {
     /// A message with no action, such as an empty list.
-    init(title: String, message: String) {
+    init(title: String, message: String?) {
         self.init(title: title, message: message) { EmptyView() }
     }
 }
