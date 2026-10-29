@@ -88,6 +88,12 @@ enum Theme {
         static let hero = TextStyle(56, .bold, relativeTo: .largeTitle, em: -0.03, lineHeight: 0.98)
         static let heroKicker = TextStyle(13, .bold, relativeTo: .footnote, em: 0.16)
         static let resultNumber = TextStyle(84, .bold, relativeTo: .largeTitle, em: -0.04, monospacedDigits: true)
+        /// The created RFI's subject on Result.
+        static let resultSubject = TextStyle(20, .semibold, relativeTo: .title3, lineHeight: 1.3)
+        /// Result's definition list: terms and values.
+        static let definition = TextStyle(14, .regular, relativeTo: .subheadline)
+        /// Result's dates and times.
+        static let definitionTabular = TextStyle(14, .regular, relativeTo: .subheadline, monospacedDigits: true)
         static let body = TextStyle(15, .regular, relativeTo: .body, lineHeight: 1.55)
         static let rowTitle = TextStyle(15, .medium, relativeTo: .body)
         /// Review's Subject value.
@@ -98,6 +104,10 @@ enum Theme {
         static let cardKicker = TextStyle(10, .bold, relativeTo: .caption2, em: 0.12)
         static let cardTitle = TextStyle(20, .bold, relativeTo: .title3)
         static let meta12 = TextStyle(12, .regular, relativeTo: .caption)
+        /// A Settings row's line under its title.
+        static let rowSubtitle = TextStyle(12, .regular, relativeTo: .caption, lineHeight: 1.4)
+        /// Settings' build line: version, environment and host.
+        static let buildLine = TextStyle(11, .regular, relativeTo: .caption2, monospacedDigits: true)
         static let meta13 = TextStyle(13, .regular, relativeTo: .footnote)
         static let meta13Medium = TextStyle(13, .medium, relativeTo: .footnote)
         static let transcript = TextStyle(24, .medium, relativeTo: .title2, em: -0.01, lineHeight: 1.35)

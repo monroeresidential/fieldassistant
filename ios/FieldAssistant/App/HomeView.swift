@@ -44,7 +44,9 @@ struct HomeView: View {
             .navigationTitle("Home")
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: Route.self, destination: destination)
-            .navigationDestination(isPresented: $showsSettings) { SettingsView() }
+            .navigationDestination(isPresented: $showsSettings) {
+                SettingsView(projectName: project.map(Self.title), companyName: companyName)
+            }
         }
         .task(id: TitleKey(projectID: projectID, sessionGeneration: appState.sessionGeneration)) { await loadTitles() }
     }
@@ -262,6 +264,7 @@ struct HomeView: View {
         case .result(let id):
             ResultScreen(
                 draftID: id,
+                projectName: project.map(Self.title),
                 onNewRFI: { path = [.capture(UUID())] },
                 onDone: {
                     path = []
