@@ -27,6 +27,8 @@ enum Theme {
         static let ground = adaptive(light: 0xFFFFFF, dark: 0x2F3437)
         static let halo = adaptive(light: 0xFEF0E8, dark: 0xF26122, darkAlpha: 0.18)
         static let flaggedBackground = adaptive(light: 0xFEF0E8, dark: 0x3A4044)
+        /// The dashed border of an add-photo tile.
+        static let dashedBorder = adaptive(light: 0xB6BCC0, dark: 0xFFFFFF, darkAlpha: 0.30)
 
         private static func fixed(_ hex: UInt32) -> SwiftUI.Color {
             SwiftUI.Color(uiColor: uiColor(hex))
