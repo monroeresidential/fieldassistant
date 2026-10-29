@@ -44,7 +44,7 @@ struct ProjectPickerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Theme.Color.ground.ignoresSafeArea())
-            .navigationBarTitleDisplayMode(.inline)
+            .designNavigationTitle(screenTitle, .hidden)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Sign out") { Task { await appState.signOut() } }
@@ -71,6 +71,14 @@ struct ProjectPickerView: View {
         if let step { return step }
         if let id = appState.selectedCompanyID { return .projects(companyID: id, companyName: nil) }
         return .companies
+    }
+
+    /// The step's title for VoiceOver; the bar stays blank under the in-content title.
+    private var screenTitle: String {
+        switch currentStep {
+        case .companies: "Choose a company"
+        case .projects(_, let companyName): companyName ?? "Choose a project"
+        }
     }
 
     private var scope: ScopeService { ScopeService(client: appState.client) }
@@ -170,6 +178,7 @@ struct ProjectPickerView: View {
                     if scrollsHeader { footer.pickerChromeRow() }
                 }
                 .pickerList()
+                .scrollDismissesKeyboard(.interactively)
                 .refreshable { await loadProjects(companyID: companyID) }
             }
         }

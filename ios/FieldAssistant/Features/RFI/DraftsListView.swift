@@ -67,7 +67,7 @@ struct DraftsListView: View {
             // Pinned to the bottom, except at accessibility sizes where it scrolls after the rows.
             if !scrollsFooter { footer }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        .designNavigationTitle("Drafts", .hidden)
     }
 
     /// Why a retried submit is safe: 12 lh 1.5, tertiary, centred.

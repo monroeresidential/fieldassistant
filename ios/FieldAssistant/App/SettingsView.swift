@@ -27,7 +27,7 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Theme.Color.ground.ignoresSafeArea())
-        .navigationBarTitleDisplayMode(.inline)
+        .designNavigationTitle("Settings", .hidden)
     }
 
     // MARK: - Sections
@@ -131,7 +131,9 @@ struct SettingsView: View {
     }
 
     /// "Monroe Residential · lookups refreshed 9 min ago"; either part is left out when unknown.
-    static func projectLine(companyName: String?, lookupsRefreshedAt: Date?, now: Date) -> String? {
+    /// `locale` and `calendar` are for tests; the screen uses the phone's.
+    static func projectLine(companyName: String?, lookupsRefreshedAt: Date?, now: Date,
+                            locale: Locale = .current, calendar: Calendar = .current) -> String? {
         var parts: [String] = []
         if let companyName, !companyName.isEmpty { parts.append(companyName) }
         if let date = lookupsRefreshedAt {
@@ -139,6 +141,8 @@ struct SettingsView: View {
                 parts.append("lookups refreshed just now")
             } else {
                 let formatter = RelativeDateTimeFormatter()
+                formatter.locale = locale
+                formatter.calendar = calendar
                 formatter.unitsStyle = .short
                 parts.append("lookups refreshed \(formatter.localizedString(for: date, relativeTo: now))")
             }

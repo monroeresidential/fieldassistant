@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import XCTest
 @testable import FieldAssistant
 
@@ -11,8 +12,11 @@ final class DesignComponentsTests: XCTestCase {
         ]
         for state in states {
             let style = StatusTag.style(for: state)
-            XCTAssertNotEqual(style.foreground, Color.accentColor, "\(state) falls back to the default accent")
             XCTAssertFalse(style.text.isEmpty, "\(state) has no text")
+            // The text colour resolves to its token's hex (light, dark), never a system default.
+            let (light, dark) = Self.foregroundHex(for: state)
+            XCTAssertEqual(Self.hex(style.foreground, .light), light, "\(state) foreground in light")
+            XCTAssertEqual(Self.hex(style.foreground, .dark), dark, "\(state) foreground in dark")
         }
         XCTAssertEqual(StatusTag.style(for: .submitted(number: "214")).text, "#214 Submitted")
         XCTAssertEqual(StatusTag.style(for: .submitted(number: nil)).text, "Submitted")
@@ -61,5 +65,25 @@ final class DesignComponentsTests: XCTestCase {
         XCTAssertEqual(Kicker.Style.section.color, Theme.Color.accent)
         XCTAssertEqual(Kicker.Style.label.color, Theme.Color.muted)
         XCTAssertEqual(Kicker.Style.tertiary.color, Theme.Color.tertiary)
+    }
+
+    /// The handoff's tag text colours: primary on the filled tags, accent on the outlined ones,
+    /// muted on Draft and unknown statuses, white on the accent Fix tag.
+    private static func foregroundHex(for state: StatusTag.State) -> (light: UInt32, dark: UInt32) {
+        switch state {
+        case .submitted, .closed: (0x2F3437, 0xFFFFFF)
+        case .queued, .waiting, .open, .lastUsed: (0xC2410C, 0xF26122)
+        case .draft, .custom: (0x5C6368, 0xB6BCC0)
+        case .fix: (0xFFFFFF, 0xFFFFFF)
+        }
+    }
+
+    /// A colour as 0xRRGGBB in the given appearance.
+    private static func hex(_ color: Color, _ style: UIUserInterfaceStyle) -> UInt32 {
+        let resolved = UIColor(color).resolvedColor(with: UITraitCollection(userInterfaceStyle: style))
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard resolved.getRed(&r, green: &g, blue: &b, alpha: &a) else { return 0xDEAD_BEEF }
+        func byte(_ v: CGFloat) -> UInt32 { UInt32((min(max(v, 0), 1) * 255).rounded()) }
+        return byte(r) << 16 | byte(g) << 8 | byte(b)
     }
 }

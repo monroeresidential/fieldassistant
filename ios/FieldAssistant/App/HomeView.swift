@@ -30,6 +30,8 @@ struct HomeView: View {
     @State private var path: [Route] = []
     @State private var showsSettings = false
     @State private var isRetrying = false
+    /// The project-name chevron, scaling with the title it follows.
+    @ScaledMetric(relativeTo: .title) private var chevronSize: CGFloat = 20
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -83,7 +85,7 @@ struct HomeView: View {
         } label: {
             // One Text so the chevron follows the last word when the name wraps.
             let chevron = Text(Image(systemName: "chevron.down"))
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: chevronSize, weight: .semibold))
                 .foregroundStyle(Theme.Color.brand)
             Text("\(Text(projectTitle).foregroundStyle(Theme.Color.textPrimary))\u{2009}\(chevron)")
                 .textStyle(Theme.Text.projectTitle)

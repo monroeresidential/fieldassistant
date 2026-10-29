@@ -29,7 +29,7 @@ struct RFIRecordDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Theme.Color.ground.ignoresSafeArea())
-        .navigationBarTitleDisplayMode(.inline)
+        .designNavigationTitle(rfi.map { $0.number.isEmpty ? "Draft RFI" : "RFI \($0.number)" } ?? "RFI", .hidden)
         // Re-read after each sync so the screen follows changes made in Procore.
         .task(id: appState.recordSync?.status) { reload() }
     }

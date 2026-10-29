@@ -29,18 +29,22 @@ final class DesignFoundationTests: XCTestCase {
         assertColor(Theme.Color.radioBorder, in: light, equals: 0xB6BCC0)
     }
 
-    func testTypeStylesScaleWithDynamicType() throws {
-        // Theme.Text.body is Public Sans Regular 15 relative to .body. SwiftUI does not expose the
-        // UIFont behind a Font, so apply the same UIFontMetrics scaling that relativeTo: uses.
-        _ = Theme.Text.body
-        let base = try XCTUnwrap(UIFont(name: Font.publicSansName(for: .regular), size: 15))
-        let metrics = UIFontMetrics(forTextStyle: .body)
+    @MainActor
+    func testTypeStylesScaleWithDynamicType() {
+        // Theme.Text.body is Public Sans Regular 15 relative to .body: lay a line out in its font at
+        // two text sizes and compare the heights.
+        func height(at size: DynamicTypeSize) -> CGFloat {
+            let line = Text("Ag").font(Theme.Text.body.font).fixedSize().environment(\.dynamicTypeSize, size)
+            return UIHostingController(rootView: line)
+                .sizeThatFits(in: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude))
+                .height
+        }
+        let large = height(at: .large)
+        let huge = height(at: .accessibility3)
 
-        let large = metrics.scaledFont(for: base, compatibleWith: UITraitCollection(preferredContentSizeCategory: .large))
-        let huge = metrics.scaledFont(for: base, compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraLarge))
-
-        XCTAssertEqual(large.pointSize, 15, accuracy: 0.01)
-        XCTAssertGreaterThan(huge.pointSize, 15)
+        // At the default size the line is Public Sans's natural height for 15 pt.
+        XCTAssertEqual(large, 15 * Theme.TextStyle.naturalLineHeight, accuracy: 1.5)
+        XCTAssertGreaterThan(huge, large * 1.5)
     }
 
     func testKickerTrackingIsFourteenPercent() {

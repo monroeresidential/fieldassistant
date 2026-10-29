@@ -52,7 +52,7 @@ struct RFIRecordListView: View {
             .refreshable { await sync() }
         }
         .background(Theme.Color.ground.ignoresSafeArea())
-        .navigationBarTitleDisplayMode(.inline)
+        .designNavigationTitle("RFIs", .hidden)
         // Refetch when the search, the filter or the sync status changes.
         .task(id: FetchKey(projectID: projectID, query: query, choice: choice, status: appState.recordSync?.status)) {
             reload()
