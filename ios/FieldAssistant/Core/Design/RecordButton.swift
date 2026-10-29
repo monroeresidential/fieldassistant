@@ -48,7 +48,7 @@ struct RecordButton: View {
         case .mic:
             // 46 pt at a 116 pt button.
             Image(systemName: "mic")
-                .font(.system(size: size * 46 / 116, weight: .regular))
+                .font(.system(size: size * 46 / 116, weight: .medium))
                 .foregroundStyle(ink)
         case .stop:
             // A 26 pt rounded square at a 76 pt button.

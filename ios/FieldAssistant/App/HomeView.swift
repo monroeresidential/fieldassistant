@@ -97,7 +97,7 @@ struct HomeView: View {
             showsSettings = true
         } label: {
             Image(systemName: "gearshape")
-                .font(.system(size: 20, weight: .regular))
+                .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(Theme.Color.textPrimary)
                 .frame(width: 44, height: 44)
                 .background(Theme.Color.ground, in: Circle())
@@ -133,7 +133,7 @@ struct HomeView: View {
             Task { await appState.syncRecords(force: true, full: false) }
         } label: {
             if isSyncing {
-                ProgressView().frame(minWidth: 44)
+                ProgressView().tint(Theme.Color.tertiary).frame(minWidth: 44)
             } else {
                 Text("Sync").frame(minWidth: 44)
             }
@@ -307,7 +307,7 @@ struct HomeView: View {
             Button {
                 Task { await retry() }
             } label: {
-                if isRetrying { ProgressView().frame(minWidth: 44) } else { Text("Retry") }
+                if isRetrying { ProgressView().tint(Theme.Color.tertiary).frame(minWidth: 44) } else { Text("Retry") }
             }
             .buttonStyle(TextLinkButtonStyle(size: 13))
             .disabled(isRetrying)

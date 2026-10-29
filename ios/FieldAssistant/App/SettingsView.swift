@@ -45,7 +45,7 @@ struct SettingsView: View {
                 }
                 .tint(Theme.Color.brand)
                 .accessibilityLabel("Submit as Procore draft")
-                .accessibilityHint("When on, RFIs arrive in Procore as drafts for a last check there")
+                .accessibilityHint("RFIs land as drafts until you open them in Procore.")
             }
         }
     }
@@ -76,7 +76,7 @@ struct SettingsView: View {
             SettingsRow {
                 RowText(title: "Refresh people and locations", subtitle: "Pull the latest from Procore now")
                 if isPrefetching {
-                    ProgressView()
+                    ProgressView().tint(Theme.Color.tertiary)
                 } else {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 18, weight: .medium))
@@ -89,6 +89,7 @@ struct SettingsView: View {
         .buttonStyle(.plain)
         .disabled(isPrefetching || appState.selectedProjectID == nil)
         .accessibilityLabel(isPrefetching ? "Refreshing people and locations" : "Refresh people and locations")
+        .accessibilityHint("Pull the latest from Procore now")
     }
 
     private var accountSection: some View {

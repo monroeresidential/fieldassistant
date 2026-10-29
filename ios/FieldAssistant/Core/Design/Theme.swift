@@ -120,6 +120,10 @@ enum Theme {
         static let sectionTitle = TextStyle(24, .bold, relativeTo: .title2, em: -0.02)
         static let buttonLarge = TextStyle(17, .bold, relativeTo: .headline, em: 0.01)
         static let buttonMedium = TextStyle(15, .bold, relativeTo: .subheadline)
+        /// Text buttons in a system navigation bar, such as "Sign out" and "Done".
+        static let toolbarButton = TextStyle(15, .semibold, relativeTo: .subheadline)
+        /// An inline navigation bar title (`designNavigationTitle`).
+        static let navigationTitle = TextStyle(17, .semibold, relativeTo: .headline)
         static let tagText = TextStyle(11, .bold, relativeTo: .caption2)
     }
 }

@@ -279,7 +279,7 @@ struct ProjectPickerView: View {
         return nil
     }
 
-    private static let toolbarFont = Font.publicSans(15, weight: .semibold, relativeTo: .subheadline)
+    private static let toolbarFont = Theme.Text.toolbarButton.font
 
     private static func message(for failure: APIFailure) -> String {
         switch failure {

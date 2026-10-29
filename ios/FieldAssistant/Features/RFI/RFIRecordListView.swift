@@ -240,26 +240,25 @@ private struct RFIRecordRow: View {
     }
 }
 
-private extension View {
-    /// A list row on the page ground with hairline separators running to the trailing edge.
-    func chromeRow() -> some View {
-        listRowBackground(Theme.Color.ground)
-            .listRowSeparatorTint(Theme.Color.hairline)
-            .alignmentGuide(.listRowSeparatorTrailing) { $0.width }
-    }
-}
-
 enum RecordFormat {
-    /// Due dates are calendar days stored as midnight UTC, so they format in UTC.
-    static func dueDate(_ date: Date) -> String {
-        date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, timeZone: .gmt))
+    /// "Oct 30" when the due day falls in the current year, "Oct 30, 2027" otherwise. Due dates are
+    /// calendar days stored as midnight UTC, so the day formats in UTC; "now" takes its year from
+    /// `calendar`, the phone's own.
+    static func dueDate(_ date: Date, now: Date = .now, calendar: Calendar = .autoupdatingCurrent,
+                        locale: Locale = .autoupdatingCurrent) -> String {
+        var dayCalendar = calendar
+        dayCalendar.timeZone = .gmt
+        let style = Date.FormatStyle(locale: locale, calendar: dayCalendar, timeZone: .gmt).month(.abbreviated).day()
+        let sameYear = dayCalendar.component(.year, from: date) == calendar.component(.year, from: now)
+        return date.formatted(sameYear ? style : style.year())
     }
 
-    /// A list row's third line, "Ben West · Due Oct 30, 2026", from whichever parts are present.
-    static func listMeta(ballInCourt: String, dueDate: Date?) -> String? {
+    /// A list row's third line, "Ben West · Due Oct 30", from whichever parts are present.
+    static func listMeta(ballInCourt: String, dueDate: Date?, now: Date = .now,
+                         calendar: Calendar = .autoupdatingCurrent, locale: Locale = .autoupdatingCurrent) -> String? {
         var parts: [String] = []
         if !ballInCourt.isEmpty { parts.append(ballInCourt) }
-        if let dueDate { parts.append("Due \(Self.dueDate(dueDate))") }
+        if let dueDate { parts.append("Due \(Self.dueDate(dueDate, now: now, calendar: calendar, locale: locale))") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }

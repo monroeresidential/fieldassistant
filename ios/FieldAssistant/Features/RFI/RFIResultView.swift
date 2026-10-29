@@ -16,7 +16,9 @@ struct ResultScreen: View {
             RFIResultView(draft: draft, projectName: projectName, assigneeName: assigneeName(draft),
                           onNewRFI: onNewRFI, onDone: onDone)
         } else {
-            ContentUnavailableView("Draft not found", systemImage: "doc.questionmark", description: Text("This draft is no longer on the phone."))
+            FailureMessage(title: "Draft not found", message: "This draft is no longer on the phone.")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.Color.ground.ignoresSafeArea())
         }
     }
 

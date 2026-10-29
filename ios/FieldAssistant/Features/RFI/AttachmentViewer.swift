@@ -130,11 +130,11 @@ struct AttachmentRow: View {
             NavigationStack {
                 QuickLookPreview(url: item.url)
                     .ignoresSafeArea(edges: .bottom)
-                    .navigationTitle(displayName)
-                    .navigationBarTitleDisplayMode(.inline)
+                    .designNavigationTitle(displayName)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { preview = nil }
+                                .font(Theme.Text.toolbarButton.font)
                                 .accessibilityLabel("Close attachment")
                         }
                     }

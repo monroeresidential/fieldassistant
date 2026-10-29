@@ -116,7 +116,7 @@ struct RFIRecordDetailView: View {
     private func overview(_ rfi: RFIRecord) -> some View {
         DetailSection("Overview") {
             field("Ball in court", rfi.ball_in_court?.name ?? Self.names(rfi.ball_in_courts))
-            field("Due", dueDate.map(RecordFormat.dueDate))
+            field("Due", dueDate.map { RecordFormat.dueDate($0) })
             field("Created", Self.joined(rfi.created_by?.name, rfi.created_at.formatted(date: .abbreviated, time: .shortened)))
             field("RFI manager", rfi.rfi_manager?.name)
             field("Assignees", Self.names(rfi.assignees) ?? rfi.assignee?.name)

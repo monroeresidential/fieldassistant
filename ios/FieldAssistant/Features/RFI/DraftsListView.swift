@@ -88,15 +88,6 @@ struct DraftsListView: View {
     }
 }
 
-private extension View {
-    /// A list row on the page ground with hairline separators running to the trailing edge.
-    func chromeRow() -> some View {
-        listRowBackground(Theme.Color.ground)
-            .listRowSeparatorTint(Theme.Color.hairline)
-            .alignmentGuide(.listRowSeparatorTrailing) { $0.width }
-    }
-}
-
 #Preview {
     let container = try! AppContainer.makeModelContainer(inMemory: true)
     let waiting = LocalDraft(companyID: 1, projectID: 7, ownerProcoreUserID: 42, transcript: "Spalling", capturedAt: .now.addingTimeInterval(-300))

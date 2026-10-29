@@ -447,7 +447,7 @@ struct CaptureView: View {
             .frame(width: 76, height: 76)
             .overlay {
                 Image(systemName: systemImage)
-                    .font(.system(size: 26, weight: .regular))
+                    .font(.system(size: 26, weight: .medium))
                     .foregroundStyle(Theme.Color.muted)
             }
             .contentShape(Rectangle())
@@ -491,13 +491,14 @@ struct CaptureView: View {
 
                 VStack(spacing: 6) {
                     buildButton
-                    if showsStopCaption {
-                        Text("Stop recording to build. Works without signal.")
-                            .textStyle(Self.captionStyle)
-                            .foregroundStyle(Theme.Color.tertiary)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity)
-                    }
+                    // Always laid out, so the Build button does not move when the caption hides.
+                    Text("Stop recording to build. Works without signal.")
+                        .textStyle(Self.captionStyle)
+                        .foregroundStyle(Theme.Color.tertiary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .opacity(showsStopCaption ? 1 : 0)
+                        .accessibilityHidden(!showsStopCaption)
                 }
             }
             .padding(.top, 14 - Self.stopHalo)
@@ -592,13 +593,16 @@ struct CaptureView: View {
     private var typingSheet: some View {
         NavigationStack {
             TextEditor(text: $typedText)
-                .font(.title3)
+                .textStyle(Theme.Text.transcript)
+                .foregroundStyle(Theme.Color.textPrimary)
+                .scrollContentBackground(.hidden)
                 .padding()
-                .navigationTitle("Type instead")
-                .navigationBarTitleDisplayMode(.inline)
+                .background(Theme.Color.ground.ignoresSafeArea())
+                .designNavigationTitle("Type instead")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { showsTyping = false }
+                            .font(Theme.Text.toolbarButton.font)
                             .frame(minWidth: 44, minHeight: 44)
                     }
                     ToolbarItem(placement: .confirmationAction) {
@@ -606,6 +610,7 @@ struct CaptureView: View {
                             model.setTypedTranscript(typedText)
                             showsTyping = false
                         }
+                        .font(Theme.Text.toolbarButton.font)
                         .frame(minWidth: 44, minHeight: 44)
                         .disabled(typedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityLabel("Use this transcript")

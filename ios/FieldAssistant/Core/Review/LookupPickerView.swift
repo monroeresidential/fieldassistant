@@ -51,8 +51,7 @@ struct LookupPickerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.Color.ground.ignoresSafeArea())
-        .navigationTitle(kind.title)
-        .navigationBarTitleDisplayMode(.inline)
+        .designNavigationTitle(kind.title)
     }
 
     private var list: some View {

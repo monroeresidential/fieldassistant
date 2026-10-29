@@ -56,8 +56,7 @@ struct ReviewScreen: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.Color.ground.ignoresSafeArea())
-        .navigationTitle("Review RFI")
-        .navigationBarTitleDisplayMode(.inline)
+        .designNavigationTitle("Review RFI")
         .task { await start() }
     }
 
