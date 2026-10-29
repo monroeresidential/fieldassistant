@@ -97,17 +97,34 @@ struct CaptureView: View {
 
     private var isBuilding: Bool { buildPhase != .idle }
 
+    private var controls: ControlState { ControlState(for: model.state, isBuilding: isBuilding) }
+
+    /// The handoff's 13/600 status line beside the blinking dot.
+    private static let statusStyle = Theme.TextStyle(13, .semibold, relativeTo: .footnote, monospacedDigits: true)
+    /// The "RFI" kicker on the right of the top bar: 11/700 .12em.
+    private static let modeStyle = Theme.TextStyle(11, .bold, relativeTo: .caption2, em: 0.12)
+    /// The location line and the footer caption: 11/400 tabular.
+    private static let captionStyle = Theme.TextStyle(11, .regular, relativeTo: .caption2, monospacedDigits: true)
+    private static let buildStyle = Theme.TextStyle(16, .bold, relativeTo: .headline)
+
+    /// The caret's 24 pt height at the default text size; it grows with the transcript.
+    @ScaledMetric(relativeTo: .title2) private var caretHeight: CGFloat = 24
+
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 16) {
+            topBar
             transcriptArea
-            Divider()
             photoStrip
-            Divider()
-            bottomRow
+            footer
         }
+        .padding(.horizontal, 20)
+        // The handoff's 62 top and 48 bottom include the status bar and home indicator: the top
+        // equals the safe area of its 402 x 874 frame, and 14 is what remains below the indicator.
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Theme.Color.ground.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbar }
         .task(id: ObjectIdentifier(model)) { await model.start() }
         // Leaving by any route (sign-out swaps the root, a path change) must not leave the mic on.
         // Stop, not discard: a successful Build also leaves this screen and owns the files now.
@@ -141,41 +158,41 @@ struct CaptureView: View {
 
     // MARK: - Top bar
 
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Button("Cancel") {
-                if hasContent {
-                    confirmsDiscard = true
-                } else {
-                    discardAndLeave()
-                }
-            }
-            .frame(minWidth: 44, minHeight: 44)
-            .disabled(isBuilding)
-            .accessibilityLabel("Cancel recording")
-            .accessibilityHint("Discards this recording and its photos")
-            .confirmationDialog("Discard this recording?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
-                Button("Discard", role: .destructive) { discardAndLeave() }
-                Button("Keep recording", role: .cancel) {}
-            } message: {
-                Text("The transcript and photos are deleted from this phone.")
-            }
-        }
-        ToolbarItem(placement: .principal) {
+    /// Cancel, the recording status and the "RFI" kicker, spaced like the handoff's space-between.
+    private var topBar: some View {
+        HStack(spacing: 8) {
+            cancelButton
+            Spacer(minLength: 0)
             statusLabel
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Spacer(minLength: 0)
+            Text("RFI")
+                .textStyle(Self.modeStyle)
+                .foregroundStyle(Theme.Color.tertiary)
         }
-        #if DEBUG
-        ToolbarItem(placement: .topBarTrailing) {
-            Button("Type instead") {
-                typedText = model.transcript
-                showsTyping = true
+        .frame(minHeight: 44)
+    }
+
+    private var cancelButton: some View {
+        Button("Cancel") {
+            if hasContent {
+                confirmsDiscard = true
+            } else {
+                discardAndLeave()
             }
-            .frame(minWidth: 44, minHeight: 44)
-            .disabled(isBuilding)
-            .accessibilityLabel("Type instead")
         }
-        #endif
+        .buttonStyle(TextLinkButtonStyle(size: 15))
+        .frame(minWidth: 44, minHeight: 44)
+        .disabled(isBuilding)
+        .accessibilityLabel("Cancel recording")
+        .accessibilityHint("Discards this recording and its photos")
+        .confirmationDialog("Discard this recording?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { discardAndLeave() }
+            Button("Keep recording", role: .cancel) {}
+        } message: {
+            Text("The transcript and photos are deleted from this phone.")
+        }
     }
 
     /// Whether Cancel would throw away something the user made.
@@ -188,28 +205,31 @@ struct CaptureView: View {
         onLeave()
     }
 
-    @ViewBuilder
     private var statusLabel: some View {
-        switch model.state {
-        case .idle, .requestingPermission:
-            Text("Starting…").font(.headline)
-        case .recording:
-            HStack(spacing: 6) {
-                Image(systemName: "circle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(Color.accentColor)
-                    .symbolEffect(.pulse)
+        Group {
+            switch model.state {
+            case .idle, .requestingPermission:
+                Text("Starting…")
+            case .recording:
+                HStack(spacing: 8) {
+                    Blinking {
+                        Circle()
+                            .fill(Theme.Color.brand)
+                            .frame(width: 10, height: 10)
+                    }
                     .accessibilityHidden(true)
-                Text("Recording \(Self.clock(model.elapsed))")
-                    .font(.headline.monospacedDigit())
+                    Text("Recording \(Self.clock(model.elapsed))")
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Recording, \(Self.spokenDuration(model.elapsed))")
+            case .stopped:
+                Text(buildPhase == .idle ? "Stopped" : "Building…")
+            case .denied, .failed:
+                Text("Not recording")
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Recording, \(Self.spokenDuration(model.elapsed))")
-        case .stopped:
-            Text(buildPhase == .idle ? "Stopped" : "Building…").font(.headline)
-        case .denied, .failed:
-            Text("Not recording").font(.headline)
         }
+        .textStyle(Self.statusStyle)
+        .foregroundStyle(Theme.Color.textPrimary)
     }
 
     // MARK: - Transcript
@@ -217,53 +237,130 @@ struct CaptureView: View {
     private var transcriptArea: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 10) {
                     switch model.state {
                     case .denied(let reason):
+                        transcriptHeader(showsLabel: false)
                         deniedMessage(reason)
                     case .failed(let message):
+                        transcriptHeader(showsLabel: false)
                         failedMessage(message)
                     default:
+                        transcriptHeader(showsLabel: true)
                         if let notice = model.notice, model.state == .stopped {
                             Label(notice, systemImage: "exclamationmark.triangle")
-                                .font(.subheadline)
-                                .foregroundStyle(.orange)
+                                .textStyle(Theme.Text.meta13Medium)
+                                .foregroundStyle(Theme.Color.accent)
                                 .accessibilityLabel(notice)
                         }
                         if model.transcript.isEmpty {
                             Text("Start talking. Say what you need answered, where it is, and who should answer it.")
-                                .font(.title3)
-                                .foregroundStyle(.secondary)
+                                .textStyle(Theme.Text.transcript)
+                                .foregroundStyle(Theme.Color.tertiary)
                         } else {
-                            Text(model.transcript)
-                                .font(.title3.weight(.medium))
-                                .textSelection(.enabled)
+                            transcriptText
                         }
                     }
                     Color.clear.frame(height: 1).id("end")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
             }
+            .frame(maxHeight: .infinity)
             .onChange(of: model.transcript) {
                 proxy.scrollTo("end", anchor: .bottom)
             }
         }
     }
 
+    /// "Live transcript · on device", and in debug builds the Type instead link.
+    @ViewBuilder
+    private func transcriptHeader(showsLabel: Bool) -> some View {
+        #if DEBUG
+        // Side by side when both fit on one line; stacked at large text sizes.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if showsLabel { transcriptLabel }
+                Spacer(minLength: 0)
+                typeInsteadButton
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                if showsLabel { transcriptLabel }
+                typeInsteadButton
+            }
+        }
+        #else
+        if showsLabel { transcriptLabel }
+        #endif
+    }
+
+    #if DEBUG
+    private var typeInsteadButton: some View {
+        Button("Type instead") {
+            typedText = model.transcript
+            showsTyping = true
+        }
+        .buttonStyle(TextLinkButtonStyle(size: 13))
+        .frame(minWidth: 44, minHeight: 44)
+        .disabled(isBuilding)
+        .accessibilityLabel("Type instead")
+    }
+    #endif
+
+    private var transcriptLabel: some View {
+        Kicker("Live transcript · on device", color: Theme.Color.muted)
+    }
+
+    /// The transcript, with the orange caret blinking after the last word while recording.
+    /// The caret is drawn by an identical copy of the text laid over it with the words clear, so
+    /// only that copy's opacity changes on each frame; both copies reserve the caret's width.
+    @ViewBuilder
+    private var transcriptText: some View {
+        let words = Text(model.transcript)
+        if model.state == .recording {
+            let scale = caretHeight / 24
+            let caret = Text(Image(uiImage: Self.caretImage(height: caretHeight)).renderingMode(.template))
+                .baselineOffset(-4 * scale)
+            Text("\(words.foregroundStyle(Theme.Color.textPrimary))\(caret.foregroundStyle(Color.clear))")
+                .textStyle(Theme.Text.transcript)
+                .textSelection(.enabled)
+                .accessibilityLabel(model.transcript)
+                .overlay(alignment: .topLeading) {
+                    Blinking(delay: 0.3) {
+                        Text("\(words.foregroundStyle(Color.clear))\(caret.foregroundStyle(Theme.Color.brand))")
+                            .textStyle(Theme.Text.transcript)
+                    }
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
+                }
+        } else {
+            words
+                .textStyle(Theme.Text.transcript)
+                .foregroundStyle(Theme.Color.textPrimary)
+                .textSelection(.enabled)
+        }
+    }
+
+    /// A 3 pt bar with 3 pt of space before it, as a template image to sit inline in the text.
+    private static func caretImage(height: CGFloat) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: 6, height: height)).image { context in
+            context.fill(CGRect(x: 3, y: 0, width: 3, height: height))
+        }
+        .withRenderingMode(.alwaysTemplate)
+    }
+
     private func deniedMessage(_ reason: TranscriberAuthorization) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(Self.deniedTitle(reason), systemImage: "mic.slash")
-                .font(.title3.weight(.semibold))
+                .textStyle(Theme.Text.cardTitle)
+                .foregroundStyle(Theme.Color.textPrimary)
             Text(Self.deniedExplanation(reason))
-                .foregroundStyle(.secondary)
+                .textStyle(Theme.Text.body)
+                .foregroundStyle(Theme.Color.muted)
             if reason != .unsupported, let url = URL(string: UIApplication.openSettingsURLString) {
                 Link(destination: url) {
                     Text("Open Settings")
-                        .font(.headline)
-                        .frame(minWidth: 160, minHeight: 44)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PrimaryButtonStyle(height: 52))
                 .accessibilityLabel("Open Settings")
             }
             retryButton
@@ -273,10 +370,15 @@ struct CaptureView: View {
     private func failedMessage(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Recording stopped", systemImage: "exclamationmark.triangle")
-                .font(.title3.weight(.semibold))
-            Text(message).foregroundStyle(.secondary)
+                .textStyle(Theme.Text.cardTitle)
+                .foregroundStyle(Theme.Color.textPrimary)
+            Text(message)
+                .textStyle(Theme.Text.body)
+                .foregroundStyle(Theme.Color.muted)
             if !model.transcript.isEmpty {
-                Text(model.transcript).font(.title3.weight(.medium))
+                Text(model.transcript)
+                    .textStyle(Theme.Text.transcript)
+                    .foregroundStyle(Theme.Color.textPrimary)
             }
             retryButton
         }
@@ -287,30 +389,26 @@ struct CaptureView: View {
             onRetry()
         } label: {
             Text("Try again")
-                .font(.headline)
-                .frame(minWidth: 160, minHeight: 44)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(SecondaryButtonStyle(height: 52))
         .accessibilityLabel("Try recording again")
     }
 
     // MARK: - Photos
 
     private var photoStrip: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(model.photos.isEmpty ? "Photos" : "Photos · \(model.photos.count)")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Kicker(model.photos.isEmpty ? "Photos" : "Photos · \(model.photos.count)", color: Theme.Color.muted)
+                Spacer(minLength: 0)
                 if model.coordinate != nil {
-                    Label("Location tagged", systemImage: "location.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("Location tagged")
+                        .textStyle(Self.captionStyle)
+                        .foregroundStyle(Theme.Color.tertiary)
                 }
             }
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     ForEach(model.photos) { photo in
                         PhotoThumbnail(url: DraftFiles.photoURL(draftID: model.draftID, fileName: photo.fileName), side: 76)
                             .contextMenu {
@@ -341,19 +439,16 @@ struct CaptureView: View {
                 }
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
     }
 
     private nonisolated static func addTile(systemImage: String) -> some View {
         RoundedRectangle(cornerRadius: 6)
-            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4]))
-            .foregroundStyle(.secondary)
+            .strokeBorder(Theme.Color.dashedBorder, style: StrokeStyle(lineWidth: 1.5, dash: [4]))
             .frame(width: 76, height: 76)
             .overlay {
                 Image(systemName: systemImage)
-                    .font(.title2)
-                    .foregroundStyle(Color.accentColor)
+                    .font(.system(size: 26, weight: .medium))
+                    .foregroundStyle(Theme.Color.muted)
             }
             .contentShape(Rectangle())
     }
@@ -378,46 +473,60 @@ struct CaptureView: View {
         }
     }
 
-    // MARK: - Bottom row
+    // MARK: - Footer
 
-    private var bottomRow: some View {
-        HStack(spacing: 16) {
-            Button {
-                model.stop()
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color.accentColor.opacity(model.state == .recording ? 0.15 : 0))
-                        .frame(width: 92, height: 92)
-                    Circle()
-                        .fill(model.state == .recording ? Color.accentColor : Color(.systemGray4))
-                        .frame(width: 76, height: 76)
-                    Image(systemName: "stop.fill")
-                        .font(.title)
-                        .foregroundStyle(.white)
+    /// The stop button's halo ring, which the handoff draws as a shadow outside the 76 pt circle.
+    private static let stopHalo: CGFloat = 8
+
+    /// Stop and Build RFI over a hairline. The halo takes layout space here, so the gaps next to it
+    /// are the handoff's 14 less the halo, keeping 14 pt between the circle and its neighbours.
+    private var footer: some View {
+        VStack(spacing: 0) {
+            HairlineDivider()
+            HStack(spacing: 14 - Self.stopHalo) {
+                RecordButton(glyph: .stop, size: 76, halo: Self.stopHalo, isEnabled: controls.stopEnabled) {
+                    model.stop()
+                }
+                .accessibilityLabel("Stop recording")
+
+                VStack(spacing: 6) {
+                    buildButton
+                    // Always laid out, so the Build button does not move when the caption hides.
+                    Text("Stop recording to build. Works without signal.")
+                        .textStyle(Self.captionStyle)
+                        .foregroundStyle(Theme.Color.tertiary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .opacity(showsStopCaption ? 1 : 0)
+                        .accessibilityHidden(!showsStopCaption)
                 }
             }
-            .buttonStyle(.plain)
-            .disabled(model.state != .recording)
-            .accessibilityLabel("Stop recording")
-
-            Button {
-                Task { await build() }
-            } label: {
-                HStack(spacing: 8) {
-                    if buildPhase == .sending || showsFinishing { ProgressView().tint(.white) }
-                    Text(buildTitle)
-                        .font(.headline)
-                }
-                .frame(maxWidth: .infinity, minHeight: 52)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.canBuild || isBuilding)
-            .accessibilityLabel(buildTitle)
-            .accessibilityHint(model.canBuild ? "Sends the transcript to build the RFI draft" : "Stop recording first")
+            .padding(.top, 14 - Self.stopHalo)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 12)
+    }
+
+    private var buildButton: some View {
+        Button {
+            Task { await build() }
+        } label: {
+            HStack(spacing: 8) {
+                if buildPhase == .sending || showsFinishing { ProgressView().tint(Theme.Color.tertiary) }
+                Text(buildTitle)
+                    .textStyle(Self.buildStyle)
+            }
+        }
+        .buttonStyle(PrimaryButtonStyle(height: 52))
+        .disabled(!controls.buildEnabled || !model.canBuild)
+        .accessibilityLabel(buildTitle)
+        .accessibilityHint(model.canBuild ? "Sends the transcript to build the RFI draft" : "Stop recording first")
+    }
+
+    /// The caption explains the disabled Build button while a recording is starting or running.
+    private var showsStopCaption: Bool {
+        switch model.state {
+        case .idle, .requestingPermission, .recording: true
+        case .stopped, .denied, .failed: false
+        }
     }
 
     private var buildTitle: String {
@@ -484,13 +593,16 @@ struct CaptureView: View {
     private var typingSheet: some View {
         NavigationStack {
             TextEditor(text: $typedText)
-                .font(.title3)
+                .textStyle(Theme.Text.transcript)
+                .foregroundStyle(Theme.Color.textPrimary)
+                .scrollContentBackground(.hidden)
                 .padding()
-                .navigationTitle("Type instead")
-                .navigationBarTitleDisplayMode(.inline)
+                .background(Theme.Color.ground.ignoresSafeArea())
+                .designNavigationTitle("Type instead")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel") { showsTyping = false }
+                            .font(Theme.Text.toolbarButton.font)
                             .frame(minWidth: 44, minHeight: 44)
                     }
                     ToolbarItem(placement: .confirmationAction) {
@@ -498,6 +610,7 @@ struct CaptureView: View {
                             model.setTypedTranscript(typedText)
                             showsTyping = false
                         }
+                        .font(Theme.Text.toolbarButton.font)
                         .frame(minWidth: 44, minHeight: 44)
                         .disabled(typedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         .accessibilityLabel("Use this transcript")
@@ -539,6 +652,47 @@ struct CaptureView: View {
     }
 }
 
+extension CaptureView {
+    /// Which footer control is live. A control that is not live draws disabled, with the
+    /// surface and tertiary tokens rather than a dimmed orange.
+    struct ControlState: Equatable {
+        let stopEnabled: Bool
+        let buildEnabled: Bool
+    }
+}
+
+extension CaptureView.ControlState {
+    /// Stop is live only while recording and Build only once recording has stopped; neither while
+    /// a build is under way (`isBuilding`: waiting for the final transcript or for the server).
+    /// Build also needs a transcript, which the view checks with `CaptureModel.canBuild`.
+    init(for state: CaptureModel.State, isBuilding: Bool) {
+        stopEnabled = state == .recording && !isBuilding
+        buildEnabled = state == .stopped && !isBuilding
+    }
+}
+
+/// Fades its content out and back every 1.1 s (the handoff's blink), `delay` seconds behind a
+/// blink with no delay. One clock drives every blink, so the dot and the caret stay in step.
+/// Holds still with Reduce Motion on.
+private struct Blinking<Content: View>: View {
+    var delay: TimeInterval = 0
+    @ViewBuilder let content: Content
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+            content.opacity(reduceMotion ? 1 : Self.opacity(at: context.date.timeIntervalSinceReferenceDate, delay: delay))
+        }
+    }
+
+    /// 1 at the start of each 1.1 s period, 0 halfway, 1 again at the end.
+    private static func opacity(at time: TimeInterval, delay: TimeInterval) -> Double {
+        let phase = ((time - delay) / 1.1).truncatingRemainder(dividingBy: 1)
+        return 0.5 + 0.5 * cos(2 * .pi * phase)
+    }
+}
+
 /// A square photo from a draft's folder, decoded off the main thread at thumbnail size.
 struct PhotoThumbnail: View {
     let url: URL
@@ -548,7 +702,7 @@ struct PhotoThumbnail: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 6)
-            .fill(Color(.secondarySystemBackground))
+            .fill(Theme.Color.surface)
             .frame(width: side, height: side)
             .overlay {
                 if let image {

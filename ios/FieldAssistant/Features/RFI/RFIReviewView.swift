@@ -5,6 +5,8 @@ import SwiftUI
 /// waiting, and builds the review model from the stored server response.
 struct ReviewScreen: View {
     let draftID: UUID
+    /// The screen under this one, named by the back link.
+    let backTitle: String
     let onSubmitted: () -> Void
     let onLeave: () -> Void
 
@@ -25,35 +27,36 @@ struct ReviewScreen: View {
             switch load {
             case .loading:
                 ProgressView()
+                    .tint(Theme.Color.tertiary)
             case .sending:
-                ProgressView("Building the RFI…")
+                ProgressView {
+                    Text("Building the RFI…")
+                        .textStyle(Theme.Text.meta13)
+                        .foregroundStyle(Theme.Color.muted)
+                }
+                .tint(Theme.Color.tertiary)
             case .ready(let draft, let model):
-                RFIReviewView(model: model, draft: draft, onSubmitted: onSubmitted, onRecheck: { await recheck(draft) })
+                RFIReviewView(model: model, draft: draft, backTitle: backTitle, onSubmitted: onSubmitted,
+                              onRecheck: { await recheck(draft) })
                     .id(ObjectIdentifier(model))
             case .waiting(let draft):
-                ContentUnavailableView {
-                    Label("No signal", systemImage: "wifi.slash")
-                } description: {
-                    Text("Recording works; sending waits. This draft is saved on the phone and builds once you have a connection.")
-                } actions: {
-                    actionButton("Try again") { Task { await send(draft) } }
-                    Button("Back to Home", action: onLeave).frame(minHeight: 44)
+                FailureMessage(
+                    title: "No signal",
+                    message: "Recording works; sending waits. This draft is saved on the phone and builds once you have a connection."
+                ) {
+                    retryActions(draft)
                 }
             case .failed(let draft, let message):
-                ContentUnavailableView {
-                    Label("Couldn't build the RFI", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(message)
-                } actions: {
-                    actionButton("Try again") { Task { await send(draft) } }
-                    Button("Back to Home", action: onLeave).frame(minHeight: 44)
+                FailureMessage(title: "Couldn't build the RFI", message: message) {
+                    retryActions(draft)
                 }
             case .missing:
-                ContentUnavailableView("Draft not found", systemImage: "doc.questionmark", description: Text("This draft is no longer on the phone."))
+                FailureMessage(title: "Draft not found", message: "This draft is no longer on the phone.")
             }
         }
-        .navigationTitle("Review RFI")
-        .navigationBarTitleDisplayMode(.inline)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.Color.ground.ignoresSafeArea())
+        .designNavigationTitle("Review RFI")
         .task { await start() }
     }
 
@@ -120,12 +123,15 @@ struct ReviewScreen: View {
         return nil
     }
 
-    private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.headline).frame(minWidth: 160, minHeight: 44)
+    /// "Try again" sends the draft again; "Back to Home" leaves it on the phone.
+    private func retryActions(_ draft: LocalDraft) -> some View {
+        VStack(spacing: 4) {
+            Button("Try again") { Task { await send(draft) } }
+                .buttonStyle(PrimaryButtonStyle(height: 52))
+                .accessibilityLabel("Try again")
+            Button("Back to Home", action: onLeave)
+                .buttonStyle(TextLinkButtonStyle())
         }
-        .buttonStyle(.borderedProminent)
-        .accessibilityLabel(title)
     }
 }
 
@@ -134,6 +140,8 @@ struct ReviewScreen: View {
 struct RFIReviewView: View {
     let model: RFIReviewModel
     let draft: LocalDraft
+    /// The screen the back link returns to.
+    let backTitle: String
     let onSubmitted: () -> Void
     /// Asks the server about a draft that is being sent; returns a message to show, if any.
     let onRecheck: () async -> String?
@@ -145,6 +153,8 @@ struct RFIReviewView: View {
     }
 
     @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var picker: PickerTarget?
     /// Set while Procore has not confirmed a submit; the screen stays read-only until it does.
     @State private var pendingMessage: String?
@@ -161,11 +171,13 @@ struct RFIReviewView: View {
     init(
         model: RFIReviewModel,
         draft: LocalDraft,
+        backTitle: String = "Home",
         onSubmitted: @escaping () -> Void = {},
         onRecheck: @escaping () async -> String? = { nil }
     ) {
         self.model = model
         self.draft = draft
+        self.backTitle = backTitle
         self.onSubmitted = onSubmitted
         self.onRecheck = onRecheck
         _pendingMessage = State(initialValue: draft.status == .submitting ? Self.sendingMessage : nil)
@@ -188,6 +200,8 @@ struct RFIReviewView: View {
                     .disabled(isLocked)
                     TranscriptDisclosure(transcript: draft.transcript)
                 }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: scrollTarget) { _, target in
@@ -199,37 +213,21 @@ struct RFIReviewView: View {
                 withAnimation { proxy.scrollTo(Self.topID, anchor: .top) }
             }
         }
+        .background(Theme.Color.ground.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                if let formMessage = model.formMessage {
-                    // Repeated by the footer so it stays in view while the rows scroll.
-                    Label(formMessage, systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(.bar)
-                        .accessibilityLabel("Procore says: \(formMessage)")
-                }
-                if let saveNote {
-                    Text(saveNote)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .background(.bar)
-                }
-                ReviewFooter(
-                    blockingCount: model.unresolvedCount,
-                    isSubmitting: model.isSubmitting,
-                    onSave: { Task { await save() } },
-                    onSubmit: { Task { await submit() } }
-                )
-                .disabled(model.isSaving || pendingMessage != nil)
+            ReviewFooter(
+                blockingCount: model.unresolvedCount,
+                isSubmitting: model.isSubmitting,
+                onSave: { Task { await save() } },
+                onSubmit: { Task { await submit() } }
+            ) {
+                footerNotes
             }
+            .disabled(model.isSaving || pendingMessage != nil)
         }
+        // The back link replaces the system bar; the edge swipe still pops.
+        .toolbar(.hidden, for: .navigationBar)
+        .keepsInteractivePop()
         .navigationDestination(item: $picker) { target in
             pickerView(for: target.field)
         }
@@ -246,50 +244,114 @@ struct RFIReviewView: View {
 
     // MARK: - Header
 
-    @ViewBuilder
+    /// The count tag: 11/700 .06em uppercase.
+    private static let countTagStyle = Theme.TextStyle(11, .bold, relativeTo: .caption2, em: 0.06)
+
+    /// Back link, title with the count tag, then any message from Procore or a submit in flight.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if model.unresolvedCount > 0 {
-                Text(Self.needsYou(model.unresolvedCount))
-                    .font(.caption.weight(.bold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(Color.orange))
-                    .accessibilityLabel(Self.needsYou(model.unresolvedCount))
+        VStack(alignment: .leading, spacing: 6) {
+            backLink
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    title
+                    Spacer(minLength: 0)
+                    countTag
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    title
+                    countTag
+                }
             }
             if let formMessage = model.formMessage {
                 Label(formMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.subheadline)
-                    .foregroundStyle(.orange)
+                    .textStyle(Theme.Text.meta13Medium)
+                    .foregroundStyle(Theme.Color.accent)
+                    .padding(.top, 8)
                     .accessibilityLabel("Procore says: \(formMessage)")
             }
             if let pendingMessage {
                 HStack(spacing: 12) {
                     ProgressView()
-                    Text(pendingMessage).font(.subheadline)
+                        .tint(Theme.Color.tertiary)
+                    Text(pendingMessage)
+                        .textStyle(Theme.Text.meta13)
+                        .foregroundStyle(Theme.Color.textPrimary)
                     Spacer(minLength: 0)
                     Button {
                         Task { await recheck() }
                     } label: {
-                        if isRechecking { ProgressView() } else { Text("Check").font(.subheadline.weight(.semibold)) }
+                        if isRechecking { ProgressView().tint(Theme.Color.tertiary) } else { Text("Check") }
                     }
-                    .frame(minWidth: 44, minHeight: 44)
+                    .buttonStyle(TextLinkButtonStyle(size: 13))
+                    .frame(minWidth: 44)
                     .disabled(isRechecking)
                     .accessibilityLabel("Check whether Procore has the RFI")
                 }
                 .padding(12)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color(.secondarySystemBackground)))
+                .background(Theme.Color.surface, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.top, 8)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, hasHeader ? 12 : 0)
+        .padding(.bottom, 14)
     }
 
-    private var hasHeader: Bool {
-        model.unresolvedCount > 0 || model.formMessage != nil || pendingMessage != nil
+    /// "‹ Home" or "‹ Drafts": 14/600 accent with a 16 pt semibold chevron; pops this screen.
+    private var backLink: some View {
+        Button {
+            dismiss()
+        } label: {
+            HStack(spacing: 2) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                Text(backTitle)
+            }
+        }
+        .buttonStyle(TextLinkButtonStyle(size: 14))
+        .accessibilityLabel("Back to \(backTitle)")
+    }
+
+    private var title: some View {
+        Text("Review RFI")
+            .textStyle(Theme.Text.screenTitle)
+            .foregroundStyle(Theme.Color.textPrimary)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    /// "1 field needs you": accent on the tint in light mode, white on #C2410C in dark; hidden at zero.
+    @ViewBuilder
+    private var countTag: some View {
+        if model.unresolvedCount > 0 {
+            let dark = colorScheme == .dark
+            Text(Self.needsYou(model.unresolvedCount).uppercased())
+                .textStyle(Self.countTagStyle)
+                .foregroundStyle(dark ? Color.white : Theme.Color.accent)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(dark ? Theme.Color.tagFillOnDark : Theme.Color.accentTint, in: RoundedRectangle(cornerRadius: 4))
+                .padding(.bottom, 6)
+                .accessibilityLabel(Self.needsYou(model.unresolvedCount))
+        }
+    }
+
+    /// The Procore message (repeated here so it stays in view while the rows scroll) and the save note.
+    @ViewBuilder
+    private var footerNotes: some View {
+        if let formMessage = model.formMessage {
+            Label(formMessage, systemImage: "exclamationmark.triangle.fill")
+                .textStyle(Theme.Text.meta13)
+                .foregroundStyle(Theme.Color.accent)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel("Procore says: \(formMessage)")
+        }
+        if let saveNote {
+            Text(saveNote)
+                .textStyle(Theme.Text.meta13)
+                .foregroundStyle(Theme.Color.muted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+        }
     }
 
     static func needsYou(_ count: Int) -> String {
@@ -326,24 +388,22 @@ struct RFIReviewView: View {
         }
     }
 
+    /// The fields people rarely set, behind a collapsed "More" row.
     private var moreGroup: some View {
         VStack(spacing: 0) {
-            DisclosureGroup(isExpanded: Binding(get: { model.moreExpanded }, set: { model.moreExpanded = $0 })) {
-                VStack(spacing: 0) {
-                    fieldRow(.distributionIds)
-                    fieldRow(.responsibleContractorId)
-                    fieldRow(.costCodeId)
-                    toggleRow(.private)
-                    toggleRow(.draft)
-                }
-            } label: {
-                Text("More")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .accessibilityLabel("More fields")
+            HairlineDivider()
+            DisclosureRow(
+                title: "More",
+                accessibilityTitle: "More fields",
+                expanded: Binding(get: { model.moreExpanded }, set: { model.moreExpanded = $0 })
+            )
+            if model.moreExpanded {
+                fieldRow(.distributionIds)
+                fieldRow(.responsibleContractorId)
+                fieldRow(.costCodeId)
+                toggleRow(.private)
+                toggleRow(.draft)
             }
-            .padding(.horizontal, 16)
-            Divider()
         }
     }
 
@@ -351,21 +411,22 @@ struct RFIReviewView: View {
     private var photosRow: some View {
         let photos = draft.photos.sorted { $0.createdAt < $1.createdAt }
         if !photos.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                ReviewLabel(text: "Photos · \(photos.count)")
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(photos) { photo in
-                            PhotoThumbnail(url: DraftFiles.photoURL(draftID: draft.id, fileName: photo.fileName), side: 64)
-                                .accessibilityLabel("Photo")
+            VStack(alignment: .leading, spacing: 0) {
+                HairlineDivider()
+                VStack(alignment: .leading, spacing: 10) {
+                    Kicker("Photos · \(photos.count)", style: .label, color: Theme.Color.tertiary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(photos) { photo in
+                                PhotoThumbnail(url: DraftFiles.photoURL(draftID: draft.id, fileName: photo.fileName), side: 64)
+                                    .accessibilityLabel("Photo")
+                            }
                         }
                     }
                 }
+                .padding(.vertical, 14)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 8)
-            .padding(.horizontal, 16)
-            Divider()
         }
     }
 
@@ -378,6 +439,7 @@ struct RFIReviewView: View {
                     label: field.label,
                     field: flag,
                     kind: kind,
+                    selectedIDs: Set(ids(field)),
                     onChoose: { model.choose($0, for: field) },
                     onSomeoneElse: { picker = PickerTarget(field: field) }
                 )
@@ -395,9 +457,9 @@ struct RFIReviewView: View {
     private func lookupRow(_ field: RFIField) -> some View {
         ReviewRow(label: field.label, chevron: true, action: { picker = PickerTarget(field: field) }) {
             if let value = displayValue(field) {
-                Text(value).foregroundStyle(.primary)
+                Text(value).foregroundStyle(Theme.Color.textPrimary)
             } else {
-                Text(Self.placeholder(field)).foregroundStyle(.secondary)
+                Text(Self.placeholder(field)).foregroundStyle(Theme.Color.tertiary)
             }
         }
         .accessibilityHint("Opens the \(field.lookupKind?.title.lowercased() ?? "list") to choose from")
@@ -406,22 +468,26 @@ struct RFIReviewView: View {
     private func toggleRow(_ field: RFIField) -> some View {
         let override = field == .draft ? appState.settings.submitAsDraft : nil
         return VStack(spacing: 0) {
+            HairlineDivider()
             Toggle(isOn: Binding(
                 get: { override ?? (field == .draft ? model.payload.draft : model.payload._private) },
                 set: { model.setBool($0, for: field) }
             )) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(field.label)
+                        .textStyle(Theme.Text.rowTitle)
+                        .foregroundStyle(Theme.Color.textPrimary)
                     if override != nil {
-                        Text("Set in Settings").font(.caption).foregroundStyle(.secondary)
+                        Text("Set in Settings")
+                            .textStyle(Theme.Text.meta12)
+                            .foregroundStyle(Theme.Color.muted)
                     }
                 }
             }
+            .tint(Theme.Color.brand)
             .disabled(override != nil)
             .frame(minHeight: 44)
-            .padding(.vertical, 4)
-            .padding(.horizontal, 16)
-            Divider()
+            .padding(.vertical, 14)
         }
         .id(field)
     }
@@ -432,6 +498,7 @@ struct RFIReviewView: View {
         switch field {
         case .subject:
             TextField("Subject", text: textBinding(field), axis: .vertical)
+                .textStyle(Theme.Text.fieldTitle)
                 .accessibilityLabel("Subject")
         case .questionBody:
             TextEditor(text: textBinding(field))
@@ -458,7 +525,7 @@ struct RFIReviewView: View {
                 picker = PickerTarget(field: field)
             } label: {
                 Text(displayValue(field) ?? Self.placeholder(field))
-                    .foregroundStyle(displayValue(field) == nil ? Color.secondary : Color.primary)
+                    .foregroundStyle(displayValue(field) == nil ? Theme.Color.tertiary : Theme.Color.textPrimary)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .contentShape(Rectangle())
             }
@@ -619,40 +686,24 @@ struct RFIReviewView: View {
 }
 
 /// A full-width row whose content is an editor. Unlike `ReviewRow` it keeps the editor its own
-/// accessibility element, and shows a flag's reason under the label.
+/// accessibility element; a flagged field sits in the flagged card with its reason beside the label.
 private struct EditableRow<Content: View>: View {
     let label: String
     let flag: UnresolvedField?
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                if flag?.blocking == true {
-                    Rectangle().fill(Color.orange).frame(width: 4)
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline) {
-                        ReviewLabel(text: flag?.blocking == false ? "Optional: \(label)" : label, flagged: flag?.blocking == true)
-                        if let flag {
-                            Spacer(minLength: 8)
-                            Text(UnresolvedRow.reasonText(for: flag))
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.trailing)
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                    content()
-                        .font(.body)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.vertical, 8)
-                .padding(.horizontal, flag?.blocking == true ? 12 : 16)
-                .frame(minHeight: 44)
+        if let flag {
+            FlaggedCard(label: label, reason: UnresolvedRow.reasonText(for: flag), blocking: flag.blocking) {
+                content()
+                    .textStyle(Theme.Text.body)
+                    .foregroundStyle(Theme.Color.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(flag?.blocking == true ? Color.orange.opacity(0.12) : Color.clear)
-            Divider()
+        } else {
+            FormRow(label: label) {
+                content()
+            }
         }
     }
 }
@@ -667,12 +718,13 @@ private struct DueDateControl: View {
             HStack(spacing: 4) {
                 DatePicker("Due", selection: Binding(get: { date }, set: { onChange($0) }), displayedComponents: .date)
                     .labelsHidden()
+                    .tint(Theme.Color.accent)
                     .accessibilityLabel("Due date")
                 Button {
                     onChange(nil)
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.Color.tertiary)
                         .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
@@ -687,7 +739,7 @@ private struct DueDateControl: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(Theme.Color.accent)
             .accessibilityLabel("Add a due date")
         }
     }
@@ -729,20 +781,33 @@ private struct ImpactControl: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Picker(label, selection: Binding(get: { Choice(impact?.status) }, set: { choose($0) })) {
-                ForEach(Choice.allCases, id: \.self) { Text($0.title).tag($0) }
+            Menu {
+                Picker(label, selection: Binding(get: { Choice(impact?.status) }, set: { choose($0) })) {
+                    ForEach(Choice.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(Choice(impact?.status).title)
+                        .foregroundStyle(impact == nil ? Theme.Color.tertiary : Theme.Color.textPrimary)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.Color.tertiary)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(minHeight: 44)
             .accessibilityLabel(label)
+            .accessibilityValue(Choice(impact?.status).title)
             if impact?.status == .yes_known {
                 TextField("Value", text: Binding(
                     get: { impact?.value ?? "" },
                     set: { onChange(.init(status: .yes_known, value: $0.isEmpty ? nil : $0)) }
                 ))
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 10)
                 .frame(minHeight: 44)
+                .background(Theme.Color.surface, in: RoundedRectangle(cornerRadius: 6))
                 .accessibilityLabel("\(label) value")
             }
         }
@@ -781,7 +846,7 @@ private struct ImpactControl: View {
         submitAsDraftOverride: nil
     )
     return NavigationStack {
-        RFIReviewView(model: model, draft: draft)
+        RFIReviewView(model: model, draft: draft, backTitle: "Home")
             .navigationTitle("Review RFI")
             .navigationBarTitleDisplayMode(.inline)
     }

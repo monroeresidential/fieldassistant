@@ -80,8 +80,8 @@ final class AttachmentViewerModel {
     }
 }
 
-/// One attachment row on the RFI detail. Tapping it downloads and previews the file; without
-/// signal, or on failure, it says so under the name.
+/// One attachment row on the RFI detail, at least 52 pt under a hairline. Tapping it downloads and
+/// previews the file; without signal (tertiary) or on failure (accent), it says so under the name.
 struct AttachmentRow: View {
     let attachment: RFIAttachment
     let projectID: Int64
@@ -95,40 +95,46 @@ struct AttachmentRow: View {
         Button {
             Task { await open() }
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "paperclip")
-                    .foregroundStyle(RecordPalette.muted)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(displayName)
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                    if let caption {
-                        Text(caption)
-                            .font(.footnote)
-                            .foregroundStyle(RecordPalette.accent)
+            VStack(spacing: 0) {
+                HairlineDivider()
+                HStack(spacing: 12) {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Theme.Color.muted)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(displayName)
+                            .textStyle(Theme.Text.rowTitle)
+                            .foregroundStyle(Theme.Color.textPrimary)
+                            .lineLimit(2)
+                        if let caption {
+                            Text(caption.text)
+                                .textStyle(Theme.Text.meta12)
+                                .foregroundStyle(caption.isFailure ? Theme.Color.accent : Theme.Color.tertiary)
+                        }
                     }
+                    Spacer(minLength: 0)
+                    if model?.state == .loading { ProgressView().tint(Theme.Color.tertiary) }
                 }
-                Spacer()
-                if model?.state == .loading { ProgressView() }
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(model?.state == .loading)
         .accessibilityLabel("Attachment \(displayName)")
-        .accessibilityValue(caption ?? "")
+        .accessibilityValue(caption?.text ?? "")
         .accessibilityHint("Opens the attachment")
         .sheet(item: $preview) { item in
             NavigationStack {
                 QuickLookPreview(url: item.url)
                     .ignoresSafeArea(edges: .bottom)
-                    .navigationTitle(displayName)
-                    .navigationBarTitleDisplayMode(.inline)
+                    .designNavigationTitle(displayName)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { preview = nil }
+                                .font(Theme.Text.toolbarButton.font)
                                 .accessibilityLabel("Close attachment")
                         }
                     }
@@ -140,10 +146,11 @@ struct AttachmentRow: View {
         attachment.filename.flatMap { $0.isEmpty ? nil : $0 } ?? (attachment.name.isEmpty ? "Attachment" : attachment.name)
     }
 
-    private var caption: String? {
+    /// "Needs signal" in tertiary, or the failure message in accent.
+    private var caption: (text: String, isFailure: Bool)? {
         switch model?.state {
-        case .needsSignal: "Needs signal"
-        case .failed(let message): message
+        case .needsSignal: ("Needs signal", false)
+        case .failed(let message): (message, true)
         default: nil
         }
     }

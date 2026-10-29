@@ -1,16 +1,16 @@
 import SwiftData
 import SwiftUI
 
-/// The project's drafts on this phone, newest first, as rows of a `List` section. Tapping a row
-/// opens the screen its status calls for. A SwiftData query keeps the rows live while sync and
-/// review change statuses.
+/// The project's latest drafts on this phone, newest first, as hairline-ruled rows on Home.
+/// Tapping a row opens the screen its status calls for. A SwiftData query keeps the rows live
+/// while sync and review change statuses.
 struct RecentDraftsView: View {
     let onOpen: (Route) -> Void
     @Environment(AppState.self) private var appState
     @Query private var drafts: [LocalDraft]
 
     /// `owner` is the signed-in Procore user; other users' drafts on the phone never show.
-    init(projectID: Int64, owner: Int64, limit: Int = 20, onOpen: @escaping (Route) -> Void) {
+    init(projectID: Int64, owner: Int64, limit: Int = 3, onOpen: @escaping (Route) -> Void) {
         self.onOpen = onOpen
         var descriptor = FetchDescriptor<LocalDraft>(
             predicate: #Predicate { $0.projectID == projectID && $0.ownerProcoreUserID == owner },
@@ -23,18 +23,22 @@ struct RecentDraftsView: View {
     var body: some View {
         if drafts.isEmpty {
             Text("Drafts you record show up here.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .frame(minHeight: 44)
+                .textStyle(Theme.Text.meta13)
+                .foregroundStyle(Theme.Color.muted)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         } else {
-            ForEach(drafts) { draft in
-                Button {
-                    onOpen(Self.route(for: draft, isSynced: isSynced))
-                } label: {
-                    DraftRow(draft: draft)
+            VStack(spacing: 0) {
+                ForEach(drafts) { draft in
+                    HairlineDivider()
+                    Button {
+                        onOpen(Self.route(for: draft, isSynced: isSynced))
+                    } label: {
+                        DraftRow(draft: draft)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(Self.hint(for: draft.status))
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint(Self.hint(for: draft.status))
+                HairlineDivider()
             }
         }
     }
@@ -59,7 +63,7 @@ struct RecentDraftsView: View {
         }
     }
 
-    private static func hint(for status: LocalDraftStatus) -> String {
+    static func hint(for status: LocalDraftStatus) -> String {
         switch status {
         case .waiting: "Sends the draft, then opens it for review"
         case .draft, .failed: "Opens the draft for review"
@@ -69,76 +73,85 @@ struct RecentDraftsView: View {
     }
 }
 
-private struct DraftRow: View {
+/// The meta line under a draft's title: "RFI · 2:14 PM · 3 photos".
+enum DraftRowMeta {
+    /// The feature upper-cased; the capture time today, "Yesterday" the day before, otherwise the
+    /// weekday; the photo count only when there are photos. Formats with the calendar's locale
+    /// and time zone.
+    static func line(feature: String, capturedAt: Date, photos: Int, now: Date, calendar: Calendar = .current) -> String {
+        var segments = [feature.uppercased(), when(capturedAt, now: now, calendar: calendar)]
+        if photos > 0 { segments.append(photos == 1 ? "1 photo" : "\(photos) photos") }
+        return segments.joined(separator: " · ")
+    }
+
+    private static func when(_ date: Date, now: Date, calendar: Calendar) -> String {
+        if calendar.isDate(date, inSameDayAs: now) { return format(date, template: "jmm", calendar: calendar) }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
+            return "Yesterday"
+        }
+        return format(date, template: "EEE", calendar: calendar)
+    }
+
+    private static func format(_ date: Date, template: String, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = calendar.locale ?? .current
+        formatter.timeZone = calendar.timeZone
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        return formatter.string(from: date)
+    }
+}
+
+/// One draft: title 15/500, the meta line 12 tertiary, and its status tag. The Drafts screen
+/// adds a third line for waiting, queued and failed drafts and gives the row more room.
+struct DraftRow: View {
     let draft: LocalDraft
+    var showsDetail = false
+
+    private static let metaStyle = Theme.TextStyle(12, .regular, relativeTo: .caption, monospacedDigits: true)
+    private static let emphasisStyle = Theme.TextStyle(12, .medium, relativeTo: .caption)
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        // At accessibility sizes the tag goes under the text so the title keeps the width.
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        layout {
+            VStack(alignment: .leading, spacing: showsDetail ? 3 : 2) {
                 Text(draft.subject ?? "RFI draft")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Text(draft.capturedAt, format: .relative(presentation: .named))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                if let detail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .textStyle(Theme.Text.rowTitle)
+                    .foregroundStyle(Theme.Color.textPrimary)
+                    .lineLimit(showsDetail ? 2 : 1)
+                Text(DraftRowMeta.line(feature: draft.feature, capturedAt: draft.capturedAt,
+                                       photos: draft.photos.count, now: .now))
+                    .textStyle(Self.metaStyle)
+                    .foregroundStyle(Theme.Color.tertiary)
+                if showsDetail, let detail {
+                    Text(detail.text)
+                        .textStyle(detail.isAlert ? Self.emphasisStyle : Theme.Text.meta12)
+                        .foregroundStyle(detail.isAlert ? Theme.Color.accent : Theme.Color.muted)
                         .lineLimit(2)
                 }
             }
-            Spacer(minLength: 8)
-            DraftStatusChip(status: draft.status, number: draft.resultNumber)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            StatusTag(StatusTag.state(for: draft.status, number: draft.resultNumber))
         }
-        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .padding(.vertical, showsDetail ? 14 : 10)
+        .frame(maxWidth: .infinity, minHeight: showsDetail ? 72 : 60, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 
-    /// The third line the handoff gives waiting and queued drafts, or the last error.
-    private var detail: String? {
+    /// The third line the handoff gives waiting and queued drafts, or the last error. Alerts
+    /// (waiting, failed) are accent 12/500; the queued note is muted.
+    private var detail: (text: String, isAlert: Bool)? {
         switch draft.status {
-        case .waiting: draft.errorMessage ?? "Needs connection to build the draft"
-        case .submitting: "Reviewed. Sends automatically, once."
-        case .failed: draft.errorMessage
+        case .waiting: (draft.errorMessage ?? "Needs connection to build the draft", true)
+        case .submitting: ("Reviewed. Sends automatically, once.", false)
+        case .failed: draft.errorMessage.map { ($0, true) }
         case .draft, .submitted: nil
-        }
-    }
-}
-
-/// The status tag on a draft row: label from `LocalDraftStatus`, emphasis by how urgent it is.
-struct DraftStatusChip: View {
-    let status: LocalDraftStatus
-    var number: String?
-
-    var body: some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .foregroundStyle(status == .failed ? Color.white : color)
-            .background {
-                if status == .failed {
-                    Capsule().fill(Color.orange)
-                } else {
-                    Capsule().strokeBorder(color, lineWidth: 1)
-                }
-            }
-            .accessibilityLabel("Status \(text)")
-    }
-
-    private var text: String {
-        if status == .submitted, let number { return "#\(number) \(status.label)" }
-        return status.label
-    }
-
-    private var color: Color {
-        switch status {
-        case .waiting, .submitting: .orange
-        case .draft, .submitted: .secondary
-        case .failed: .orange
         }
     }
 }
@@ -151,9 +164,8 @@ struct DraftStatusChip: View {
     submitted.resultNumber = "214"
     container.mainContext.insert(waiting)
     container.mainContext.insert(submitted)
-    return List {
-        Section("Recent") { RecentDraftsView(projectID: 7, owner: 42) { _ in } }
-    }
-    .modelContainer(container)
-    .environment(AppState.preview(container: container))
+    return RecentDraftsView(projectID: 7, owner: 42) { _ in }
+        .padding(20)
+        .modelContainer(container)
+        .environment(AppState.preview(container: container))
 }

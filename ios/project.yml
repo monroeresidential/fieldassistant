@@ -31,6 +31,8 @@ targets:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         DEVELOPMENT_TEAM: PR6KG6PZJN # Field Assistant Apple team
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     info:
       path: FieldAssistant/Resources/Info.plist
       properties:
@@ -45,6 +47,11 @@ targets:
         NSPhotoLibraryUsageDescription: Field Assistant accesses your photo library to attach photos.
         NSLocationWhenInUseUsageDescription: Field Assistant uses your location to tag site observations.
         UILaunchScreen: {}
+        UIAppFonts:
+          - PublicSans-Regular.ttf
+          - PublicSans-Medium.ttf
+          - PublicSans-SemiBold.ttf
+          - PublicSans-Bold.ttf
         API_BASE_URL: $(API_BASE_URL)
         API_ENV: $(API_ENV)
     dependencies:

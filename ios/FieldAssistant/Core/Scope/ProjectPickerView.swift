@@ -27,6 +27,10 @@ struct ProjectPickerView: View {
     @State private var search = ""
     @State private var savingProjectID: Int64?
     @State private var saveError: APIFailure?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// At accessibility text sizes the header and footer scroll with the rows, so the list keeps room.
+    private var scrollsHeader: Bool { dynamicTypeSize.isAccessibilitySize }
 
     var body: some View {
         NavigationStack {
@@ -38,13 +42,18 @@ struct ProjectPickerView: View {
                     projectsStep(companyID: companyID, companyName: companyName)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Theme.Color.ground.ignoresSafeArea())
+            .designNavigationTitle(screenTitle, .hidden)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Sign out") { Task { await appState.signOut() } }
-                        .frame(minHeight: 44)
+                        .font(Self.toolbarFont)
                         .accessibilityLabel("Sign out")
                 }
             }
+            // System toolbar buttons (iOS 26 sizes them), in accent ink.
+            .tint(Theme.Color.accent)
         }
         .alert(
             "Couldn't save your project",
@@ -64,36 +73,51 @@ struct ProjectPickerView: View {
         return .companies
     }
 
+    /// The step's title for VoiceOver; the bar stays blank under the in-content title.
+    private var screenTitle: String {
+        switch currentStep {
+        case .companies: "Choose a company"
+        case .projects(_, let companyName): companyName ?? "Choose a project"
+        }
+    }
+
     private var scope: ScopeService { ScopeService(client: appState.client) }
 
     // MARK: - Companies
 
     private var companiesStep: some View {
-        Group {
+        let header = PickerHeader(title: "Choose a company")
+        return VStack(spacing: 0) {
             switch companies {
             case .loading:
-                ProgressView("Loading companies").frame(maxWidth: .infinity, maxHeight: .infinity)
+                header
+                PickerLoading(title: "Loading companies")
             case .failed(let failure):
+                header
                 APIFailureView(failure: failure, subject: "companies") { Task { await loadCompanies() } }
             case .loaded(let list):
-                List(list, id: \.id) { company in
-                    Button {
-                        search = ""
-                        step = .projects(companyID: company.id, companyName: company.name)
-                    } label: {
-                        row(company.name)
+                if !scrollsHeader { header }
+                List {
+                    if scrollsHeader { header.pickerChromeRow() }
+                    ForEach(list, id: \.id) { company in
+                        Button {
+                            search = ""
+                            step = .projects(companyID: company.id, companyName: company.name)
+                        } label: {
+                            PickerRow(title: company.name)
+                        }
+                        .accessibilityLabel("Company \(company.name)")
+                        .pickerRow()
                     }
-                    .accessibilityLabel("Company \(company.name)")
-                }
-                .overlay {
                     if list.isEmpty {
-                        ContentUnavailableView("No companies", systemImage: "building.2", description: Text("Your Procore account has no companies."))
+                        FailureMessage(title: "No companies", message: "Your Procore account has no companies.")
+                            .pickerChromeRow()
                     }
                 }
+                .pickerList()
                 .refreshable { await loadCompanies() }
             }
         }
-        .navigationTitle("Choose a company")
         .task(id: appState.sessionGeneration) { await loadCompanies() }
     }
 
@@ -109,54 +133,115 @@ struct ProjectPickerView: View {
     // MARK: - Projects
 
     private func projectsStep(companyID: Int64, companyName: String?) -> some View {
-        Group {
+        let header = PickerHeader(title: "Choose a project") {
+            companyKicker(companyID: companyID, companyName: companyName)
+        } field: {
+            SearchField("Search projects", text: $search)
+        }
+        let footer = PickerFooter()
+        return VStack(spacing: 0) {
             switch projects {
             case .loading:
-                ProgressView("Loading projects").frame(maxWidth: .infinity, maxHeight: .infinity)
+                header
+                PickerLoading(title: "Loading projects")
             case .failed(let failure):
+                header
                 APIFailureView(failure: failure, subject: "this company's projects") {
                     Task { await loadProjects(companyID: companyID) }
                 }
             case .loaded(let list):
                 let shown = filtered(list)
-                List(shown, id: \.id) { project in
-                    Button {
-                        Task { await choose(project, companyID: companyID) }
-                    } label: {
-                        HStack {
-                            row(HomeView.title(project))
-                            if savingProjectID == project.id { ProgressView() }
+                if !scrollsHeader { header }
+                List {
+                    if scrollsHeader { header.pickerChromeRow() }
+                    ForEach(shown, id: \.id) { project in
+                        let isLastUsed = project.id == lastUsedProjectID
+                        Button {
+                            Task { await choose(project, companyID: companyID) }
+                        } label: {
+                            PickerRow(title: HomeView.title(project), isLastUsed: isLastUsed,
+                                      isSaving: savingProjectID == project.id)
                         }
+                        .disabled(savingProjectID != nil)
+                        .accessibilityLabel("Project \(HomeView.title(project))")
+                        .accessibilityValue(isLastUsed ? "Last used" : "")
+                        .pickerRow()
                     }
-                    .disabled(savingProjectID != nil)
-                    .accessibilityLabel("Project \(HomeView.title(project))")
-                }
-                .overlay {
                     if list.isEmpty {
-                        ContentUnavailableView("No projects", systemImage: "folder", description: Text("You have no projects in this company."))
+                        FailureMessage(title: "No projects", message: "You have no projects in this company.")
+                            .pickerChromeRow()
                     } else if shown.isEmpty {
-                        ContentUnavailableView.search(text: search)
+                        FailureMessage(title: "No results for \u{201C}\(search)\u{201D}",
+                                       message: "Check the spelling or try a new search.")
+                            .pickerChromeRow()
                     }
+                    if scrollsHeader { footer.pickerChromeRow() }
                 }
+                .pickerList()
+                .scrollDismissesKeyboard(.interactively)
                 .refreshable { await loadProjects(companyID: companyID) }
             }
         }
-        .searchable(text: $search, prompt: "Search projects")
-        .navigationTitle(companyName ?? "Choose a project")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // Pinned to the bottom, except at accessibility sizes where it scrolls after the rows.
+            if !scrollsHeader { footer }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button("Companies", systemImage: "chevron.left") {
+                Button {
                     search = ""
                     step = .companies
+                } label: {
+                    Label("Companies", systemImage: "chevron.left")
+                        .labelStyle(.titleAndIcon)
                 }
-                .labelStyle(.titleAndIcon)
-                .frame(minHeight: 44)
+                .font(Self.toolbarFont)
                 .accessibilityLabel("Back to companies")
             }
         }
         .task(id: ProjectsKey(companyID: companyID, sessionGeneration: appState.sessionGeneration)) {
             await loadProjects(companyID: companyID)
         }
+        .task(id: appState.sessionGeneration) {
+            // The kicker names the company, and offers the switch only when there is more than one.
+            if case .loaded = companies { return }
+            await loadCompanies()
+        }
+    }
+
+    /// The company as an accent kicker: a button with `chevron.down` back to the companies when
+    /// there is more than one, a static label otherwise (v1 has one company).
+    @ViewBuilder
+    private func companyKicker(companyID: Int64, companyName: String?) -> some View {
+        let list = loadedCompanies
+        if let name = companyName ?? list?.first(where: { $0.id == companyID })?.name {
+            if let list, list.count > 1 {
+                Button {
+                    search = ""
+                    step = .companies
+                } label: {
+                    HStack(spacing: 4) {
+                        CompanyKicker(name: name)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.Color.accent)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Company \(name)")
+                .accessibilityHint("Choose another company")
+            } else {
+                CompanyKicker(name: name)
+            }
+        }
+    }
+
+    private var loadedCompanies: [Company]? {
+        if case .loaded(let list) = companies { return list }
+        return nil
     }
 
     private func filtered(_ list: [Project]) -> [Project] {
@@ -197,12 +282,13 @@ struct ProjectPickerView: View {
 
     // MARK: - Helpers
 
-    private func row(_ title: String) -> some View {
-        Text(title)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            .contentShape(Rectangle())
+    /// The project the signed-in user last chose, from `/me`; tagged "Last used".
+    private var lastUsedProjectID: Int64? {
+        if case .signedIn(let user) = appState.phase { return user.last_project_id }
+        return nil
     }
+
+    private static let toolbarFont = Theme.Text.toolbarButton.font
 
     private static func message(for failure: APIFailure) -> String {
         switch failure {
@@ -210,5 +296,148 @@ struct ProjectPickerView: View {
         case .reauthRequired: "Your session expired. Sign in again."
         case .offline: "You're offline."
         }
+    }
+}
+
+/// Kicker, screen title and an optional field, on the 20 pt screen padding.
+private struct PickerHeader<Kick: View, Field: View>: View {
+    let title: String
+    @ViewBuilder var kicker: Kick
+    @ViewBuilder var field: Field
+
+    init(title: String, @ViewBuilder kicker: () -> Kick, @ViewBuilder field: () -> Field) {
+        self.title = title
+        self.kicker = kicker()
+        self.field = field()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                kicker
+                Text(title)
+                    .textStyle(Theme.Text.screenTitle)
+                    .foregroundStyle(Theme.Color.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            field
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 20)
+    }
+}
+
+extension PickerHeader where Kick == EmptyView, Field == EmptyView {
+    init(title: String) {
+        self.init(title: title, kicker: { EmptyView() }, field: { EmptyView() })
+    }
+}
+
+/// The company name as a 12/600 .12em accent kicker.
+private struct CompanyKicker: View {
+    let name: String
+
+    private static let style = Theme.TextStyle(12, .semibold, relativeTo: .caption, em: 0.12)
+
+    var body: some View {
+        Text(name.uppercased())
+            .textStyle(Self.style)
+            .foregroundStyle(Theme.Color.accent)
+    }
+}
+
+/// The note about lookups prefetching: 12 lh 1.5, tertiary, centred.
+private struct PickerFooter: View {
+    private static let style = Theme.TextStyle(12, .regular, relativeTo: .caption, lineHeight: 1.5)
+
+    var body: some View {
+        Text("People, locations and spec sections download when you choose a project, so pickers work without signal.")
+            .textStyle(Self.style)
+            .foregroundStyle(Theme.Color.tertiary)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .background(Theme.Color.ground)
+    }
+}
+
+private struct PickerLoading: View {
+    let title: String
+
+    var body: some View {
+        ProgressView {
+            Text(title)
+                .textStyle(Theme.Text.meta13)
+                .foregroundStyle(Theme.Color.muted)
+        }
+        .tint(Theme.Color.tertiary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A 72 pt picker row: 17/600 title, an optional "Last used" tag and a tertiary chevron.
+private struct PickerRow: View {
+    let title: String
+    var isLastUsed = false
+    var isSaving = false
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // At accessibility sizes the tag goes under the title so neither truncates.
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    titleText
+                    if isLastUsed { StatusTag(.lastUsed) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                titleText
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if isLastUsed { StatusTag(.lastUsed) }
+            }
+            if isSaving { ProgressView().tint(Theme.Color.tertiary) }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(Theme.Color.tertiary)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, 16)
+        .frame(minHeight: 72)
+        .contentShape(Rectangle())
+    }
+
+    private var titleText: some View {
+        Text(title)
+            .textStyle(Theme.Text.rowTitleStrong)
+            .foregroundStyle(Theme.Color.textPrimary)
+    }
+}
+
+private extension View {
+    /// Row insets 20 on the sides and hairline rules between rows.
+    func pickerRow() -> some View {
+        listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+            .listRowSeparator(.visible)
+            .listRowSeparatorTint(Theme.Color.hairline)
+            .listRowBackground(Theme.Color.ground)
+    }
+
+    /// A header, footer or message placed in the list: its own padding, no rules.
+    func pickerChromeRow() -> some View {
+        listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(Theme.Color.ground)
+    }
+
+    func pickerList() -> some View {
+        listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Theme.Color.ground)
     }
 }

@@ -22,7 +22,7 @@ enum LocalDraftStatus: String, Codable, Sendable {
         switch self {
         case .waiting: "Waiting"
         case .draft: "Draft"
-        case .submitting: "Sending"
+        case .submitting: "Queued"
         case .submitted: "Submitted"
         case .failed: "Fix"
         }

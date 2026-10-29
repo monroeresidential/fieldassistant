@@ -7,6 +7,9 @@ struct RootView: View {
         switch appState.phase {
         case .loading:
             ProgressView()
+                .tint(Theme.Color.tertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.Color.ground.ignoresSafeArea())
         case .signedOut:
             SignInView(isSigningIn: appState.isSigningIn, error: appState.signInError) {
                 Task { await appState.signIn() }
