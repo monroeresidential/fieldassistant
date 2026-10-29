@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side (`docs/superpowers/plans/2026-10-25-project-sync-ios.md`, contract 1.5.1) is implemented on branch `project-sync-ios` as of 2026-10-26, with the device check pending. Next after that: the design pass (roadmap 2b) before milestone 3.
+Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side (`docs/superpowers/plans/2026-10-25-project-sync-ios.md`, contract 1.5.1) is merged to `develop` (PR #12) and passed the device check on Drew's iPhone on 2026-10-26. Next after that: the design pass (roadmap 2b) before milestone 3.
 
 Governing documents:
 
