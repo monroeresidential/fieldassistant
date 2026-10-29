@@ -45,11 +45,28 @@ final class HomeViewTests: XCTestCase {
         XCTAssertEqual(HomeView.syncLine(.failed(code: nil, message: "Server error"), now: now), "Sync failed, showing what you have")
     }
 
+    /// The title comes from the route alone, so it is right on the first push from Drafts, when
+    /// the destination is built before HomeView's path holds the new route.
     @MainActor
-    func testReviewBackLinkNamesTheScreenUnderIt() {
+    func testReviewBackLinkNamesTheScreenItPopsTo() {
         let id = UUID()
-        XCTAssertEqual(HomeView.backTitle(for: .review(id), in: [.review(id)]), "Home")
-        XCTAssertEqual(HomeView.backTitle(for: .review(id), in: [.drafts, .review(id)]), "Drafts")
-        XCTAssertEqual(HomeView.backTitle(for: .review(id), in: []), "Home")
+        // Home: after a build (`onBuilt` sets `[.review(id)]`) and from a Recent row.
+        XCTAssertEqual(HomeView.backTitle(for: .review(id)), "Home")
+        XCTAssertEqual(HomeView.backTitle(for: RecentDraftsView.route(for: draftWaitingReview(id)) { _, _ in false }), "Home")
+        // Drafts: the list's route goes through `openedFromDrafts`, first push and later ones alike.
+        let fromDrafts = HomeView.openedFromDrafts(.review(id))
+        XCTAssertEqual(fromDrafts, .review(id, from: .drafts))
+        XCTAssertEqual(HomeView.backTitle(for: fromDrafts), "Drafts")
+    }
+
+    @MainActor
+    func testOpenedFromDraftsLeavesOtherRoutesAlone() {
+        let id = UUID()
+        XCTAssertEqual(HomeView.openedFromDrafts(.result(id)), .result(id))
+        XCTAssertEqual(HomeView.openedFromDrafts(.rfi(7)), .rfi(7))
+    }
+
+    private func draftWaitingReview(_ id: UUID) -> LocalDraft {
+        LocalDraft(id: id, companyID: 1, projectID: 7, status: .draft, transcript: "Beam at C-4")
     }
 }

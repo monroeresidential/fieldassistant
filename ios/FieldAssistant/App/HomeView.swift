@@ -3,9 +3,13 @@ import SwiftData
 import SwiftUI
 
 /// The screens pushed from Home. Draft screens carry the draft id; `rfi` carries the Procore RFI id.
+/// `review` also carries the screen it was opened from, which its back link names.
 enum Route: Hashable {
+    /// The screen under Review: Home after a build or a Recent row, Drafts from the list.
+    enum Origin: Hashable { case home, drafts }
+
     case capture(UUID)
-    case review(UUID)
+    case review(UUID, from: Origin = .home)
     case result(UUID)
     case rfis
     case rfi(Int64)
@@ -254,10 +258,10 @@ struct HomeView: View {
                 onBuilt: { path = [.review(id)] },
                 onLeave: { path = [] }
             )
-        case .review(let id):
+        case .review(let id, _):
             ReviewScreen(
                 draftID: id,
-                backTitle: Self.backTitle(for: route, in: path),
+                backTitle: Self.backTitle(for: route),
                 onSubmitted: { path = [.result(id)] },
                 onLeave: { path = [] }
             )
@@ -277,15 +281,24 @@ struct HomeView: View {
         case .rfi(let procoreID):
             RFIRecordDetailView(projectID: projectID, procoreID: procoreID)
         case .drafts:
-            DraftsListView(projectID: projectID, owner: appState.draftOwnerID ?? -1) { path.append($0) }
+            DraftsListView(projectID: projectID, owner: appState.draftOwnerID ?? -1) {
+                path.append(Self.openedFromDrafts($0))
+            }
         }
     }
 
-    /// What a pushed screen's back link names: the screen under `route` in `path`. Review sits on
-    /// Home after a build or a Recent row, and on Drafts when opened from the list.
-    static func backTitle(for route: Route, in path: [Route]) -> String {
-        guard let index = path.firstIndex(of: route), index > 0 else { return "Home" }
-        return path[index - 1] == .drafts ? "Drafts" : "Home"
+    /// What Review's back link names: the screen it pops to, carried by the route itself. Reading
+    /// `path` here is not safe: the destination is built from the path of HomeView's last body
+    /// pass, which does not hold the route being pushed yet.
+    static func backTitle(for route: Route) -> String {
+        guard case .review(_, from: .drafts) = route else { return "Home" }
+        return "Drafts"
+    }
+
+    /// A route the Drafts list opens: a review remembers it came from Drafts.
+    static func openedFromDrafts(_ route: Route) -> Route {
+        guard case .review(let id, _) = route else { return route }
+        return .review(id, from: .drafts)
     }
 
     // MARK: - No signal
