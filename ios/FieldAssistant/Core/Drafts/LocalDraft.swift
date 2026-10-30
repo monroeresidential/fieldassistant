@@ -97,7 +97,8 @@ final class LocalDraft {
         set { serverData = newValue.flatMap { try? Self.encoder.encode($0) } }
     }
 
-    /// Records a server response: status, subject, Procore result, any error, and the response itself.
+    /// Records a server response: status, subject, Procore result, any error, each photo's upload
+    /// state, and the response itself.
     func apply(_ response: DraftResponse) {
         status = LocalDraftStatus(server: response.status)
         subject = response.payload.subject
@@ -105,8 +106,28 @@ final class LocalDraft {
         resultURL = response.result?.url
         resultProcoreID = response.result?.procore_id
         errorMessage = response.error?.message
+        applyAttachmentStates(response.attachments)
         server = response
         updatedAt = response.updated_at
+    }
+
+    /// Sets each photo's upload state from the server's attachment list, matched by id. A photo the
+    /// server still has as `pending` keeps its local state; ids the phone does not have are ignored.
+    private func applyAttachmentStates(_ attachments: [Components.Schemas.Attachment]) {
+        let byID = Dictionary(attachments.map { ($0.id.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
+        for photo in photos {
+            guard let attachment = byID[photo.id.uuidString.lowercased()] else { continue }
+            switch attachment.state {
+            case .stored, .uploaded:
+                photo.uploadState = .stored
+                photo.failureMessage = nil
+            case .failed:
+                photo.uploadState = .failed
+                photo.failureMessage = attachment.error?.message
+            case .pending:
+                break
+            }
+        }
     }
 
     /// Codes `DraftResponse` the way the API sends it: ISO 8601 dates, with or without fractional seconds.

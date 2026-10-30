@@ -1,12 +1,14 @@
 import FieldAssistantAPI
 import Foundation
+import OpenAPIRuntime
 
 typealias RFIDraftPayload = Components.Schemas.RFIDraftPayload
 typealias UnresolvedField = Components.Schemas.UnresolvedField
 typealias JobStatus = Components.Schemas.JobStatus
 
-/// The phone's client for the draft endpoints: create, fetch, save, submit and job polling.
-/// Every method throws `APIFailure`; a 400 on a draft route becomes `.validation` with the server's message.
+/// The phone's client for the draft endpoints: create, fetch, save, submit, job polling and photo uploads.
+/// Every method throws `APIFailure` (except a photo file `uploadAttachment` cannot read); a 400 on a
+/// draft route becomes `.validation` with the server's message.
 struct DraftService: Sendable {
     enum SubmitStart: Sendable {
         /// Procore already has the record; carries the refetched draft.
@@ -25,13 +27,23 @@ struct DraftService: Sendable {
         if let lat = draft.latitude, let lng = draft.longitude {
             location = .init(lat: lat, lng: lng)
         }
+        // The photos the phone will upload, in capture order; a draft without photos sends none.
+        let manifest = draft.photos.sorted { $0.createdAt < $1.createdAt }.map {
+            Components.Schemas.AttachmentManifestItem(
+                id: Self.apiID($0.id),
+                filename: $0.fileName,
+                content_type: .image_sol_jpeg,
+                bytes: $0.bytes
+            )
+        }
         let request = Components.Schemas.CreateDraftRequest(
             id: Self.apiID(draft.id),
             feature: .rfi,
             project_id: draft.projectID,
             transcript: draft.transcript,
             captured_at: draft.capturedAt,
-            location: location
+            location: location,
+            attachments: manifest.isEmpty ? nil : manifest
         )
         let companyID = draft.companyID
         let output = try await APIFailure.mapping {
@@ -143,6 +155,49 @@ struct DraftService: Sendable {
             waited += poll
         }
         return try await get(id: draftID, companyID: companyID)
+    }
+
+    /// PUTs a photo's JPEG bytes to the draft. The attachment id makes the call idempotent: repeating
+    /// it for a stored photo is a normal 200. A 400 throws `.validation`, a 404 `.notFound`. A file
+    /// that cannot be read throws its own error before any request is made.
+    func uploadAttachment(draftID: UUID, attachmentID: UUID, companyID: Int64, fileURL: URL) async throws -> Components.Schemas.Attachment {
+        // A `Data`-backed body can be replayed, so `AuthMiddleware`'s one retry resends the bytes.
+        let body = HTTPBody(try Data(contentsOf: fileURL))
+        let output = try await APIFailure.mapping {
+            try await client.putDraftAttachment(
+                path: .init(draftId: Self.apiID(draftID), attachmentId: Self.apiID(attachmentID)),
+                headers: .init(X_hyphen_Company_hyphen_Id: companyID),
+                body: .jpeg(body)
+            )
+        }
+        switch output {
+        case .ok(let ok): return try await APIFailure.mapping { try ok.body.json }
+        case .badRequest(let response): throw APIFailure(badRequest: response)
+        case .unauthorized(let response): throw APIFailure(statusCode: 401, response: response)
+        case .forbidden(let response): throw APIFailure(statusCode: 403, response: response)
+        case .notFound(let response): throw APIFailure(notFound: response)
+        case .badGateway(let response): throw APIFailure(statusCode: 502, response: response)
+        case .default(let status, let response): throw APIFailure(statusCode: status, response: response)
+        }
+    }
+
+    /// Removes a photo from the draft. A 400 (the draft is locked) throws `.validation`, a 404 `.notFound`.
+    func deleteAttachment(draftID: UUID, attachmentID: UUID, companyID: Int64) async throws {
+        let output = try await APIFailure.mapping {
+            try await client.deleteDraftAttachment(
+                path: .init(draftId: Self.apiID(draftID), attachmentId: Self.apiID(attachmentID)),
+                headers: .init(X_hyphen_Company_hyphen_Id: companyID)
+            )
+        }
+        switch output {
+        case .noContent: return
+        case .badRequest(let response): throw APIFailure(badRequest: response)
+        case .unauthorized(let response): throw APIFailure(statusCode: 401, response: response)
+        case .forbidden(let response): throw APIFailure(statusCode: 403, response: response)
+        case .notFound(let response): throw APIFailure(notFound: response)
+        case .badGateway(let response): throw APIFailure(statusCode: 502, response: response)
+        case .default(let status, let response): throw APIFailure(statusCode: status, response: response)
+        }
     }
 
     /// The backend's lowercase UUID form, used for path ids and the idempotency key.

@@ -12,6 +12,8 @@ enum APIFailure: Error, Equatable {
     case offline
     /// The server refused the request as it stands (a 400 on a draft route), with its message to show.
     case validation(String)
+    /// The draft or attachment is not on the server (a 404 on an attachment route), with its message.
+    case notFound(String)
     /// Anything else, with a message to show.
     case server(String)
 
@@ -61,6 +63,12 @@ enum APIFailure: Error, Equatable {
         }
     }
 
+    /// Maps a 404 from an attachment route: the draft or the photo is not on the server.
+    init(notFound response: Components.Responses._Error) {
+        let message = (try? response.body.json)?.message ?? HTTPURLResponse.localizedString(forStatusCode: 404)
+        self = .notFound(message)
+    }
+
     /// Runs a generated-client call or body read, rethrowing any error as `APIFailure`.
     /// Runs on the caller's actor, so main-actor callers can pass closures that touch their state.
     static func mapping<T>(
@@ -77,7 +85,8 @@ enum APIFailure: Error, Equatable {
     /// A sentence to show a field user.
     var userMessage: String {
         switch self {
-        case .permissionDenied(let message), .validation(let message), .server(let message): message
+        case .permissionDenied(let message), .validation(let message), .notFound(let message), .server(let message):
+            message
         case .reauthRequired: "Your session expired. Sign in again."
         case .offline: "No signal. Try again when you have a connection."
         }

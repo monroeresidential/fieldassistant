@@ -211,9 +211,10 @@ final class RFIReviewModel {
                 try? store.save()
                 if case .validation(let message) = failure, flagFields(from: message) { return .needsFixes }
                 return .failed(failure)
-            case .offline, .server:
+            case .offline, .server, .notFound:
                 // No definitive answer: the POST may have reached the server and queued the submit.
                 // The draft stays `submitting`; Check or the sync settles it from the server.
+                // (`submit` maps its 404 to `.server`, so `.notFound` only sits here to keep it with `.server`.)
                 return .pending(message: Self.connectionLostMessage)
             }
         }

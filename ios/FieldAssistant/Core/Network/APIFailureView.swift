@@ -48,7 +48,7 @@ struct APIFailureView: View {
                            message: "\(message)\n\nAn admin must grant you access to \(subject) in Procore.") {
                 actionButton("Retry", action: retry)
             }
-        case .validation(let message), .server(let message):
+        case .validation(let message), .notFound(let message), .server(let message):
             FailureMessage(title: "Couldn't load \(subject)", message: message) {
                 actionButton("Retry", action: retry)
             }
