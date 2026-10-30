@@ -255,7 +255,107 @@ final class DraftSyncTests: XCTestCase {
         XCTAssertNil(state.draftSync, "sync stops when the session ends")
     }
 
+    @MainActor
+    func testQueuedDraftRunsWhenReachable() async throws {
+        let draft = queuedDraft(transcript: "queued", minutesAgo: 5)
+        let transport = ScriptedTransport([
+            .response(APIStub.submit(.ok, draftID: draft.id)),
+            .response(APIStub.draft(id: draft.id, status: "submitted")),
+        ])
+        let reachability = FakeReachability(isReachable: false)
+        let (_, sync) = makeSync(transport: transport, reachability: reachability, drafts: [draft])
+
+        sync.start()
+        await settle()
+        XCTAssertTrue(transport.requests.isEmpty, "a queued draft waits for a network path")
+        XCTAssertTrue(draft.submitPending)
+
+        reachability.set(true)
+        try await waitUntil { draft.status == .submitted }
+
+        let path = "/drafts/\(draft.id.uuidString.lowercased())"
+        XCTAssertEqual(transport.requests.map(\.method), [.post, .get])
+        XCTAssertEqual(transport.requests.map(\.path), [path + "/submit", path])
+        XCTAssertFalse(draft.submitPending)
+        sync.stop()
+    }
+
+    @MainActor
+    func testReconcileSkipsPendingDraft() async throws {
+        // A queued draft whose run is in flight (Review started it): the server still says
+        // `reviewed` until the POST lands, so reconcile must not fold it back to `draft`.
+        let draft = queuedDraft(transcript: "queued", minutesAgo: 10)
+        let transport = ScriptedTransport([.hang, .response(APIStub.draft(id: draft.id, status: "reviewed"))])
+        let (state, sync) = makeSync(transport: transport, drafts: [draft])
+        let run = Task { _ = await state.submitRunner.run(draft) }
+        try await waitUntil { transport.requests.count == 1 }
+        XCTAssertTrue(sync.isRunning(draftID: draft.id))
+
+        await sync.runOnce()
+
+        XCTAssertEqual(transport.requests.count, 1, "the running draft is neither run again nor fetched")
+        XCTAssertEqual(draft.status, .submitting)
+        XCTAssertTrue(draft.submitPending)
+        run.cancel()
+        await run.value
+    }
+
+    @MainActor
+    func testQueuedDraftOnlyRunsForItsOwner() async throws {
+        let mine = queuedDraft(transcript: "mine", minutesAgo: 5)
+        let theirs = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 43, status: .submitting, transcript: "theirs",
+                                capturedAt: .now.addingTimeInterval(-600))
+        theirs.submitPending = true
+        let transport = ScriptedTransport([
+            .response(APIStub.submit(.ok, draftID: mine.id)),
+            .response(APIStub.draft(id: mine.id, status: "submitted")),
+        ])
+        let (_, sync) = makeSync(transport: transport, drafts: [mine, theirs])
+
+        await sync.runOnce()
+
+        XCTAssertEqual(mine.status, .submitted)
+        XCTAssertFalse(mine.submitPending)
+        XCTAssertEqual(theirs.status, .submitting)
+        XCTAssertTrue(theirs.submitPending)
+        XCTAssertEqual(transport.requests.count, 2)
+    }
+
+    @MainActor
+    func testQueuedRunStopsPassWhenOffline() async throws {
+        let first = queuedDraft(transcript: "first", minutesAgo: 10)
+        let second = queuedDraft(transcript: "second", minutesAgo: 5)
+        // Not queued: a submit the server owns, which reconcile would otherwise fetch.
+        let owned = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "owned",
+                               capturedAt: .now.addingTimeInterval(-900))
+        let transport = ScriptedTransport([.failure(URLError(.notConnectedToInternet))])
+        let (_, sync) = makeSync(transport: transport, drafts: [first, second, owned])
+
+        await sync.runOnce()
+
+        XCTAssertEqual(transport.requests.count, 1, "the pass ends at the first offline failure")
+        XCTAssertEqual(transport.requests.first?.path, "/drafts/\(first.id.uuidString.lowercased())/submit")
+        XCTAssertTrue(first.submitPending)
+        XCTAssertTrue(second.submitPending)
+        XCTAssertEqual(first.status, .submitting)
+        XCTAssertEqual(owned.status, .submitting)
+    }
+
     // MARK: - Helpers
+
+    /// A draft Submit has queued: `submitting` with the flag set, last touched `minutesAgo`.
+    private func queuedDraft(transcript: String, minutesAgo: Double) -> LocalDraft {
+        let draft = LocalDraft(
+            companyID: 7,
+            projectID: 99,
+            ownerProcoreUserID: 42,
+            status: .submitting,
+            transcript: transcript,
+            capturedAt: Date.now.addingTimeInterval(-minutesAgo * 60)
+        )
+        draft.submitPending = true
+        return draft
+    }
 
     private func waitingDraft(transcript: String, minutesAgo: Double) -> LocalDraft {
         LocalDraft(
@@ -283,6 +383,7 @@ final class DraftSyncTests: XCTestCase {
         let sync = DraftSync(
             store: state.drafts,
             service: { DraftService(client: client) },
+            runner: state.submitRunner,
             reachability: reachability,
             owner: { owner },
             send: { [weak state] draft in await state?.send(draft) ?? .waiting }

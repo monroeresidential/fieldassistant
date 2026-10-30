@@ -1,12 +1,15 @@
 import Foundation
 
 /// Keeps the signed-in user's drafts moving without a screen open: sends `waiting` drafts for
-/// extraction once there is a connection, and reconciles `submitting` drafts (left by a killed app
-/// or a submit that outlived its screen) from the server. Other statuses are never touched here.
+/// extraction once there is a connection, runs the queued submits (`submitPending`) through the
+/// `SubmitRunner`, and reconciles `submitting` drafts the server owns (left by a killed app or a
+/// submit that outlived its screen) from the server. Other statuses are never touched here.
 @MainActor
 final class DraftSync {
     private let store: DraftStore
     private let service: @MainActor () -> DraftService
+    /// Runs queued submits; shared with Review, so a draft is never run twice at once.
+    private let runner: SubmitRunner
     private let reachability: ReachabilityProviding
     /// The Procore user whose drafts sync; `nil` means nobody is signed in and a pass does nothing.
     private let owner: @MainActor () -> Int64?
@@ -28,12 +31,14 @@ final class DraftSync {
     init(
         store: DraftStore,
         service: @escaping @MainActor () -> DraftService,
+        runner: SubmitRunner,
         reachability: ReachabilityProviding,
         owner: @escaping @MainActor () -> Int64?,
         send: @escaping @MainActor (LocalDraft) async -> AppState.SendOutcome
     ) {
         self.store = store
         self.service = service
+        self.runner = runner
         self.reachability = reachability
         self.owner = owner
         self.send = send
@@ -82,11 +87,17 @@ final class DraftSync {
         await task.value
     }
 
+    /// Whether a submit run is in progress for the draft, from a pass or from Review.
+    func isRunning(draftID: UUID) -> Bool {
+        runner.isRunning(draftID)
+    }
+
     // MARK: - Private
 
     private func performPass() async {
         guard reachability.isReachable, let owner = owner() else { return }
         guard await resendWaiting(owner: owner) else { return }
+        guard await runQueued(owner: owner) else { return }
         await reconcileSubmitting(owner: owner)
     }
 
@@ -102,12 +113,25 @@ final class DraftSync {
         return true
     }
 
-    /// Fetches each submitting draft and records where the server has it. A draft still
-    /// `submitting` there is left as it is; `submitted` also deletes its files.
+    /// Runs each queued submit, oldest first. Returns `false` when the pass should end: no
+    /// connection, or cancelled. A refused draft records its refusal and the pass goes on.
+    private func runQueued(owner: Int64) async -> Bool {
+        for draft in store.draftsPendingSubmit(owner: owner) {
+            // Review or Stop may have settled it, or Review may be running it, while this pass waited.
+            guard draft.submitPending, !runner.isRunning(draft.id) else { continue }
+            let outcome = await runner.run(draft)
+            if Task.isCancelled || outcome == .stillPending { return false }
+        }
+        return true
+    }
+
+    /// Fetches each submitting draft the server owns and records where the server has it. A queued
+    /// draft (`submitPending`) is the runner's and is skipped. A draft still `submitting` there is
+    /// left as it is; `submitted` also deletes its files.
     private func reconcileSubmitting(owner: Int64) async {
         let inFlightSince = Date.now.addingTimeInterval(-Self.inFlightWindow)
         for draft in store.drafts(withStatus: .submitting, owner: owner) {
-            guard draft.status == .submitting, draft.updatedAt < inFlightSince else { continue }
+            guard draft.status == .submitting, !draft.submitPending, draft.updatedAt < inFlightSince else { continue }
             let response: DraftResponse
             do {
                 response = try await service().get(id: draft.id, companyID: draft.companyID)

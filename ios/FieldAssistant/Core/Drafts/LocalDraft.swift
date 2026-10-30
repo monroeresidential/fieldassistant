@@ -58,6 +58,12 @@ final class LocalDraft {
     var resultProcoreID: Int64?
     var errorMessage: String?
     var updatedAt: Date
+    /// Submit was tapped and the server has not answered 200 or 202 yet: `SubmitRunner` still owes
+    /// the save, the photo uploads and the POST. Set with `submitting`, which then reads "Queued";
+    /// reconcile leaves a flagged draft alone. The default lets older stores migrate.
+    var submitPending: Bool = false
+    /// The reviewed payload still to PATCH (JSON `RFIDraftPayload` via `LocalDraft.encoder`); nil once saved.
+    var pendingPayloadData: Data?
 
     init(
         id: UUID = UUID(),

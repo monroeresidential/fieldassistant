@@ -50,6 +50,15 @@ final class DraftStore {
         return (try? context.fetch(descriptor)) ?? []
     }
 
+    /// One owner's queued drafts (`submitPending`), across projects, the oldest `updatedAt` first.
+    func draftsPendingSubmit(owner: Int64) -> [LocalDraft] {
+        let descriptor = FetchDescriptor<LocalDraft>(
+            predicate: #Predicate { $0.submitPending == true && $0.ownerProcoreUserID == owner },
+            sortBy: [SortDescriptor(\.updatedAt)]
+        )
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
     /// A draft by id, only if `owner` captured it.
     func draft(id: UUID, owner: Int64) -> LocalDraft? {
         draft(id: id).flatMap { $0.ownerProcoreUserID == owner ? $0 : nil }

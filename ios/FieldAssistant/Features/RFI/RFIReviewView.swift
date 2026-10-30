@@ -97,6 +97,7 @@ struct ReviewScreen: View {
             lookups: appState.lookups,
             service: appState.draftService,
             store: appState.drafts,
+            runner: appState.submitRunner,
             submitAsDraftOverride: appState.settings.submitAsDraft
         )
         load = .ready(draft, model)
@@ -843,6 +844,7 @@ private struct ImpactControl: View {
         lookups: appState.lookups,
         service: appState.draftService,
         store: appState.drafts,
+        runner: appState.submitRunner,
         submitAsDraftOverride: nil
     )
     return NavigationStack {

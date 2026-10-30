@@ -93,7 +93,11 @@ final class AppState {
     @ObservationIgnored let settings: Settings
     /// Whether the phone has a network path. Home observes it for the "No signal" banner.
     @ObservationIgnored let reachability: ReachabilityProviding
-    /// Resends waiting drafts and reconciles submitting ones while a user is signed in; `nil` otherwise.
+    /// Runs queued submits for Review and for `draftSync`. One for the app's lifetime, so both see
+    /// the same running drafts, and built in `init` so Review can queue a submit while offline.
+    @ObservationIgnored private(set) var submitRunner: SubmitRunner!
+    /// Resends waiting drafts, runs queued submits and reconciles submitting ones while a user is
+    /// signed in; `nil` otherwise.
     @ObservationIgnored private(set) var draftSync: DraftSync?
     /// Keeps the selected project's records current while a user is signed in, and reports the last
     /// sync (not running until asked) while the session is offline; `nil` otherwise.
@@ -144,6 +148,7 @@ final class AppState {
         )
         self.client = client
         lookups = LookupStore(context: modelContext, service: LookupService(client: client))
+        submitRunner = SubmitRunner(store: drafts, service: { DraftService(client: client) })
         authService = AuthService(
             client: client,
             store: store,
@@ -381,6 +386,7 @@ final class AppState {
         let sync = DraftSync(
             store: drafts,
             service: { DraftService(client: client) },
+            runner: submitRunner,
             reachability: reachability,
             owner: { [weak self] in self?.draftOwnerID },
             send: { [weak self] draft in await self?.send(draft) ?? .waiting }
