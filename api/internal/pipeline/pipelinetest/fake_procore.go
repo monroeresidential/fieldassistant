@@ -23,6 +23,8 @@ type Call struct {
 	RFI *procore.RFICreate
 	// Kind is the lookup kind of a ProbeKind call.
 	Kind string
+	// Upload is the body of a CreateUpload call.
+	Upload *procore.UploadCreate
 }
 
 // FakeProcore answers the Procore reads and RFI writes the pipeline uses from
@@ -61,6 +63,10 @@ type FakeProcore struct {
 	PostErr error
 	// Posted records each PostUpload call in order.
 	Posted []PostedUpload
+	// OnPostUpload, when set, runs at the end of each PostUpload call that
+	// returns nil, outside the lock, so a test can act right after a storage
+	// POST succeeded.
+	OnPostUpload func()
 
 	mu         sync.Mutex
 	calls      []Call
@@ -71,7 +77,8 @@ type FakeProcore struct {
 type PostedUpload struct {
 	URL    string
 	Fields map[string]string
-	// FieldOrder is the order the real client sends the fields in: by key.
+	// FieldOrder is the order the real client sends the form's parts in:
+	// the fields by key, then "file".
 	FieldOrder []string
 	Filename   string
 	// Bytes is how many bytes the fake read from the body.
@@ -213,10 +220,11 @@ func (f *FakeProcore) CreateRFI(_ context.Context, token string, companyID, proj
 	return f.Created, nil
 }
 
-// CreateUpload records a "CreateUpload" call and hands out the next of
-// Uploads. Its error is the one scripted in Err/ErrForToken, else UploadErr.
-func (f *FakeProcore) CreateUpload(_ context.Context, token string, companyID, projectID int64, _ procore.UploadCreate) (procore.Upload, error) {
-	if err := f.record(Call{Method: "CreateUpload", AccessToken: token, CompanyID: companyID, ProjectID: projectID}); err != nil {
+// CreateUpload records a "CreateUpload" call with its body and hands out the
+// next of Uploads. Its error is the one scripted in Err/ErrForToken, else
+// UploadErr.
+func (f *FakeProcore) CreateUpload(_ context.Context, token string, companyID, projectID int64, in procore.UploadCreate) (procore.Upload, error) {
+	if err := f.record(Call{Method: "CreateUpload", AccessToken: token, CompanyID: companyID, ProjectID: projectID, Upload: &in}); err != nil {
 		return procore.Upload{}, err
 	}
 	f.mu.Lock()
@@ -233,28 +241,35 @@ func (f *FakeProcore) CreateUpload(_ context.Context, token string, companyID, p
 }
 
 // PostUpload records a "PostUpload" call, reads r fully and appends what
-// would have been sent to Posted. It makes no HTTP request. Its error is the
-// one scripted in Err/ErrForToken, else PostErr, else the error reading r.
+// would have been sent to Posted. It makes no HTTP request and checks
+// nothing. Its error is the one scripted in Err/ErrForToken, else PostErr,
+// else the error reading r. OnPostUpload runs when that is nil.
 func (f *FakeProcore) PostUpload(_ context.Context, up procore.Upload, filename string, _ int64, r io.Reader) error {
 	n, readErr := io.Copy(io.Discard, r)
-	order := make([]string, 0, len(up.Fields))
+	order := make([]string, 0, len(up.Fields)+1)
 	for k := range up.Fields {
 		order = append(order, k)
 	}
 	sort.Strings(order)
+	order = append(order, "file")
 	fields := make(map[string]string, len(up.Fields))
 	for k, v := range up.Fields {
 		fields[k] = v
 	}
 	err := f.record(Call{Method: "PostUpload"})
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.Posted = append(f.Posted, PostedUpload{URL: up.URL, Fields: fields, FieldOrder: order, Filename: filename, Bytes: int(n)})
 	switch {
 	case err != nil:
-		return err
 	case f.PostErr != nil:
-		return f.PostErr
+		err = f.PostErr
+	default:
+		err = readErr
 	}
-	return readErr
+	hook := f.OnPostUpload
+	f.mu.Unlock()
+	if err == nil && hook != nil {
+		hook()
+	}
+	return err
 }

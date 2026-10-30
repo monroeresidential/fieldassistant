@@ -201,6 +201,42 @@ func TestPostUpload_HTTPRedirect_Refused(t *testing.T) {
 	}
 }
 
+// A filename cannot break out of the file part's Content-Disposition header.
+func TestPostUpload_FilenameControlCharsStripped(t *testing.T) {
+	var gotFilename, gotDisposition string
+	var gotInjected bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			t.Errorf("content type: %v", err)
+		}
+		mr := multipart.NewReader(r.Body, params["boundary"])
+		for {
+			p, err := mr.NextPart()
+			if err != nil {
+				break
+			}
+			if p.FormName() == "file" {
+				gotFilename, gotDisposition = p.FileName(), p.Header.Get("Content-Disposition")
+				gotInjected = p.Header.Get("X-Injected") != ""
+			}
+			_, _ = io.Copy(io.Discard, p)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	c := NewClient("http://unused.invalid", srv.Client(), nil, nil)
+
+	up := Upload{UUID: "u", URL: srv.URL + "/bucket", Fields: map[string]string{"key": "k"}}
+	name := "IMG\r\nX-Injected: 1\x00\t\x7f_0001.jpg"
+	if err := c.PostUpload(context.Background(), up, name, 3, strings.NewReader("abc")); err != nil {
+		t.Fatalf("PostUpload: %v", err)
+	}
+	if gotFilename != "IMGX-Injected: 1_0001.jpg" || gotInjected {
+		t.Errorf("filename = %q (disposition %q), injected header %v", gotFilename, gotDisposition, gotInjected)
+	}
+}
+
 type countingReader struct {
 	r io.Reader
 	n int64

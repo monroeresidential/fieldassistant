@@ -23,13 +23,15 @@ import (
 const MaxAttempts = 4
 
 const (
-	// JobTimeout bounds one run of a job. A submit makes a few Procore
-	// calls of at most 30 s each.
-	JobTimeout = 2 * time.Minute
+	// JobTimeout bounds one run of a job. A submit pushes up to ten photos
+	// at up to 90 s each (creating the upload, then a storage POST of at
+	// most 60 s) before a few Procore calls of at most 30 s each.
+	JobTimeout = 15 * time.Minute
 	// RescueStuckJobsAfter is how long a job may stay running before River
 	// assumes its process died (a deploy killed it mid-run) and retries it.
-	// It must exceed JobTimeout so a live job is never rescued.
-	RescueStuckJobsAfter = 5 * time.Minute
+	// It must exceed JobTimeout so a live job is never rescued: a submit
+	// rescued mid-push would push its photos twice at once.
+	RescueStuckJobsAfter = 20 * time.Minute
 	// JobRetention is how long River keeps completed and discarded jobs, so
 	// a client polling a job after a long background stretch still finds it.
 	// GetJob answers from the draft once the row is gone.

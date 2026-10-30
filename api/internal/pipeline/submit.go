@@ -309,6 +309,12 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 // the outcome is unknown and a retry may succeed; River retries the job then.
 //
 //   - A submitted draft is left alone, so a retried job never posts twice.
+//   - Before the attempt, the draft's photos are pushed to Procore (see
+//     pushAttachments) and the RFI is posted with their upload ids. A photo
+//     Procore refuses or whose bytes are gone fails the draft with
+//     procore_validation on the attachments field; a push that may succeed
+//     later returns its error before any attempt is marked. An RFI adopted
+//     before posting skips the push.
 //   - Before posting, an attempt audit event is written; if that write fails
 //     the attempt stops without posting. A crash or a lost write after the
 //     POST therefore always leaves evidence for the next attempt.
@@ -320,8 +326,8 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 //     cannot be read stops the attempt without posting; several matches
 //     fail the draft definitively (failAmbiguous).
 //   - On success the draft becomes submitted with Procore's id, number and
-//     link. Writes after the POST outlive the job's context, so a deadline
-//     cannot lose a created RFI.
+//     link, and its photos' objects are deleted best effort. Writes after the
+//     POST outlive the job's context, so a deadline cannot lose a created RFI.
 //   - A 422 maps Procore's field errors onto unresolved entries and fails the
 //     draft with procore_validation; any other 4xx except 408 and 429 does
 //     the same with Procore's message on _form. A lost token, a 401 or a 403
@@ -363,10 +369,6 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 	if len(invalid) > 0 {
 		return d.failSubmit(ctx, cur, submitFailure{code: CodeProcoreValidation, message: "Fix the flagged fields and submit again.", invalid: invalid})
 	}
-	request, err := json.Marshal(map[string]procore.RFICreate{"rfi": body})
-	if err != nil {
-		return fmt.Errorf("pipeline: encode rfi: %w", err)
-	}
 	user, err := d.st.Q.GetUser(ctx, pgtype.UUID{Bytes: cur.UserID, Valid: true})
 	if err != nil {
 		return fmt.Errorf("pipeline: load draft user: %w", err)
@@ -396,6 +398,9 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 			d.log.Info("found rfi from an earlier attempt before posting", "draft_id", cur.ID, "procore_id", rfi.ID)
 			resp := map[string]any{"recovered": true, "before_post": true, "rfi": rfi}
 			err := d.markSubmitted(ctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number, URL: rfi.Link}, nil, resp, 0)
+			if err == nil {
+				d.deleteAttachmentObjects(ctx, cur)
+			}
 			if !errors.Is(err, errRecordOwned) {
 				return err
 			}
@@ -406,8 +411,24 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 		}
 	}
 
+	// Photos go up before the attempt marker: a push that fails leaves no
+	// attempt whose RFI the next run must look for.
+	uploadIDs, fail, err := d.pushAttachments(ctx, token, cur)
+	if err != nil {
+		d.auditAttemptFailed(ctx, cur, nil, err, 0, false)
+		return err
+	}
+	if fail != nil {
+		return d.failSubmit(ctx, cur, *fail)
+	}
+	body.Question.UploadIDs = uploadIDs
+	request, err := json.Marshal(map[string]procore.RFICreate{"rfi": body})
+	if err != nil {
+		return fmt.Errorf("pipeline: encode rfi: %w", err)
+	}
+
 	attemptStart := d.now()
-	if err := d.writeAttempt(ctx, cur, prior.attempts+1, body.Subject, attemptStart); err != nil {
+	if err := d.writeAttempt(ctx, cur, prior.attempts+1, body.Subject, attemptStart, uploadIDs...); err != nil {
 		return err
 	}
 	start := time.Now()
@@ -419,6 +440,9 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 	defer cancel()
 	if err == nil {
 		err := d.markSubmitted(wctx, cur, Result{ProcoreID: created.ID, Number: created.Number, URL: created.Link}, request, created, ms)
+		if err == nil {
+			d.deleteAttachmentObjects(wctx, cur)
+		}
 		if errors.Is(err, errRecordOwned) {
 			// Another draft's recovery adopted this POST's RFI before it
 			// was stored. Retrying would post again, so tell the user to
@@ -466,6 +490,9 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 		d.log.Info("recovered submitted rfi after lost response", "draft_id", cur.ID, "procore_id", rfi.ID, "error", err)
 		resp := map[string]any{"recovered": true, "error": err.Error(), "rfi": rfi}
 		merr := d.markSubmitted(wctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number, URL: rfi.Link}, request, resp, ms)
+		if merr == nil {
+			d.deleteAttachmentObjects(wctx, cur)
+		}
 		if !errors.Is(merr, errRecordOwned) {
 			return merr
 		}
@@ -697,12 +724,15 @@ type attemptAudit struct {
 	Attempt int       `json:"attempt"`
 	At      time.Time `json:"at"`
 	Subject string    `json:"subject,omitempty"`
+	// UploadIDs are the photos' Procore upload ids the RFI is posted with.
+	UploadIDs []string `json:"upload_ids,omitempty"`
 }
 
-// writeAttempt records that attempt n is about to post subject. An error
-// stops the attempt before the POST.
-func (d *Drafts) writeAttempt(ctx context.Context, cur Draft, n int, subject string, at time.Time) error {
-	if err := insertAudit(ctx, d.st.Q, cur.CompanyID, cur.ID, AuditAttempt, attemptAudit{Attempt: n, At: at, Subject: subject}, 0); err != nil {
+// writeAttempt records that attempt n is about to post subject with the
+// photos' uploadIDs. An error stops the attempt before the POST.
+func (d *Drafts) writeAttempt(ctx context.Context, cur Draft, n int, subject string, at time.Time, uploadIDs ...string) error {
+	a := attemptAudit{Attempt: n, At: at, Subject: subject, UploadIDs: uploadIDs}
+	if err := insertAudit(ctx, d.st.Q, cur.CompanyID, cur.ID, AuditAttempt, a, 0); err != nil {
 		return fmt.Errorf("pipeline: write submit attempt marker: %w", err)
 	}
 	return nil

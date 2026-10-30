@@ -58,6 +58,9 @@ func (c *Client) CreateUpload(ctx context.Context, accessToken string, companyID
 // is sent, redirects are followed only to https, and the request is bounded
 // by a 60 s timeout as well as ctx.
 //
+// ASCII control characters (CR and LF among them) are dropped from
+// filename, so it cannot break out of the file part's header.
+//
 // A non-2xx answer is *APIError with the body truncated as Procore errors
 // are; a refused redirect and a transport failure are ErrUnavailable. A
 // failure reading r is returned as is. PostUpload has finished with r when it
@@ -66,6 +69,7 @@ func (c *Client) PostUpload(ctx context.Context, up Upload, filename string, siz
 	if size < 0 {
 		return fmt.Errorf("procore: upload size %d is negative", size)
 	}
+	filename = stripControl(filename)
 	keys := make([]string, 0, len(up.Fields))
 	for k := range up.Fields {
 		keys = append(keys, k)
@@ -115,6 +119,17 @@ func (c *Client) PostUpload(ctx context.Context, up Upload, filename string, siz
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrBody))
 	return nil
+}
+
+// stripControl drops ASCII control characters (U+0000 to U+001F and U+007F)
+// from s.
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // quoteEscaper escapes a multipart Content-Disposition parameter value the

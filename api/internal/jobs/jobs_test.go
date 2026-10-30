@@ -114,6 +114,18 @@ func TestRiverConfig_RetainsFinishedJobsForAWeek(t *testing.T) {
 	}
 }
 
+// A submit pushes up to ten photos before posting, so a run gets fifteen
+// minutes, and River never rescues a job that is still within it.
+func TestRiverConfig_RescueExceedsJobTimeout(t *testing.T) {
+	cfg := riverConfig(river.NewWorkers(), newFakeSubmitter(), quiet)
+	if cfg.JobTimeout != 15*time.Minute || JobTimeout != 15*time.Minute {
+		t.Errorf("job timeout %s (const %s), want 15m", cfg.JobTimeout, JobTimeout)
+	}
+	if cfg.RescueStuckJobsAfter <= cfg.JobTimeout || RescueStuckJobsAfter <= JobTimeout {
+		t.Errorf("rescue after %s, want more than job timeout %s", cfg.RescueStuckJobsAfter, cfg.JobTimeout)
+	}
+}
+
 // A job inserted in a transaction that rolls back does not exist.
 func TestQueue_EnqueueTx_RolledBack_NoJob(t *testing.T) {
 	st := storetest.New(t)

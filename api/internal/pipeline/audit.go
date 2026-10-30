@@ -20,6 +20,8 @@ const (
 	AuditFailed    = "failed"
 	// AuditAttempt is written just before each submit POST.
 	AuditAttempt = "attempt"
+	// AuditUploaded records one photo pushed to Procore.
+	AuditUploaded = "uploaded"
 )
 
 // auditTurn is one conversation message in the extracted audit payload.
