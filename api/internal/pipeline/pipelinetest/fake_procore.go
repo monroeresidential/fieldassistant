@@ -5,6 +5,9 @@ package pipelinetest
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"sort"
 	"sync"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
@@ -48,9 +51,34 @@ type FakeProcore struct {
 	// OnListRFIs, when set, runs at the start of each ListRFIs call, outside
 	// the lock.
 	OnListRFIs func()
+	// Uploads are handed out in order by CreateUpload, one per call; a call
+	// past the end returns an error.
+	Uploads []procore.Upload
+	// UploadErr, when set, is returned by every CreateUpload call.
+	UploadErr error
+	// PostErr, when set, is returned by every PostUpload call, after the
+	// body has been read and recorded in Posted.
+	PostErr error
+	// Posted records each PostUpload call in order.
+	Posted []PostedUpload
 
-	mu    sync.Mutex
-	calls []Call
+	mu         sync.Mutex
+	calls      []Call
+	nextUpload int
+}
+
+// PostedUpload is what one PostUpload call sent to the storage service.
+type PostedUpload struct {
+	URL    string
+	Fields map[string]string
+	// FieldOrder is the order the real client sends the fields in: by key.
+	FieldOrder []string
+	Filename   string
+	// Bytes is how many bytes the fake read from the body.
+	Bytes int
+	// HasAuthHeader is always false: the fake sends nothing, and the real
+	// client never sends Procore credentials to storage.
+	HasAuthHeader bool
 }
 
 // NewFakeProcore returns an empty fake with a non-nil Err map.
@@ -183,4 +211,50 @@ func (f *FakeProcore) CreateRFI(_ context.Context, token string, companyID, proj
 		return procore.RFICreated{}, err
 	}
 	return f.Created, nil
+}
+
+// CreateUpload records a "CreateUpload" call and hands out the next of
+// Uploads. Its error is the one scripted in Err/ErrForToken, else UploadErr.
+func (f *FakeProcore) CreateUpload(_ context.Context, token string, companyID, projectID int64, _ procore.UploadCreate) (procore.Upload, error) {
+	if err := f.record(Call{Method: "CreateUpload", AccessToken: token, CompanyID: companyID, ProjectID: projectID}); err != nil {
+		return procore.Upload{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.UploadErr != nil {
+		return procore.Upload{}, f.UploadErr
+	}
+	if f.nextUpload >= len(f.Uploads) {
+		return procore.Upload{}, fmt.Errorf("pipelinetest: no scripted upload left (%d handed out)", f.nextUpload)
+	}
+	up := f.Uploads[f.nextUpload]
+	f.nextUpload++
+	return up, nil
+}
+
+// PostUpload records a "PostUpload" call, reads r fully and appends what
+// would have been sent to Posted. It makes no HTTP request. Its error is the
+// one scripted in Err/ErrForToken, else PostErr, else the error reading r.
+func (f *FakeProcore) PostUpload(_ context.Context, up procore.Upload, filename string, _ int64, r io.Reader) error {
+	n, readErr := io.Copy(io.Discard, r)
+	order := make([]string, 0, len(up.Fields))
+	for k := range up.Fields {
+		order = append(order, k)
+	}
+	sort.Strings(order)
+	fields := make(map[string]string, len(up.Fields))
+	for k, v := range up.Fields {
+		fields[k] = v
+	}
+	err := f.record(Call{Method: "PostUpload"})
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Posted = append(f.Posted, PostedUpload{URL: up.URL, Fields: fields, FieldOrder: order, Filename: filename, Bytes: int(n)})
+	switch {
+	case err != nil:
+		return err
+	case f.PostErr != nil:
+		return f.PostErr
+	}
+	return readErr
 }

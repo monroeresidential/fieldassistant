@@ -149,8 +149,9 @@ type Drawing struct {
 
 // RFIQuestion is the question part of a new RFI.
 type RFIQuestion struct {
-	Body      string  `json:"body"`
-	UploadIDs []int64 `json:"upload_ids,omitempty"`
+	Body string `json:"body"`
+	// UploadIDs are the uuids of Direct File Uploads to attach.
+	UploadIDs []string `json:"upload_ids,omitempty"`
 }
 
 // RFIImpact is a schedule or cost impact on a new RFI.

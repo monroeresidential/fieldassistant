@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"sort"
@@ -26,6 +27,8 @@ import (
 type ProcoreRFIs interface {
 	CreateRFI(ctx context.Context, accessToken string, companyID, projectID int64, body procore.RFICreate) (procore.RFICreated, error)
 	ListRFIs(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.RFI, error)
+	CreateUpload(ctx context.Context, accessToken string, companyID, projectID int64, in procore.UploadCreate) (procore.Upload, error)
+	PostUpload(ctx context.Context, up procore.Upload, filename string, size int64, r io.Reader) error
 }
 
 var _ ProcoreRFIs = (*procore.Client)(nil)
