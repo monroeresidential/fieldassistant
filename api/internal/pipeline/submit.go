@@ -322,7 +322,9 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 //     created an RFI (see priorAttempts: a retry, a resubmit after the
 //     retries ran out, with or without edits in between, or a crash
 //     mid-POST), Procore's RFI list is read before posting and a matching
-//     RFI (see findCreated) is adopted instead of posting. A list that
+//     RFI (see findCreated) is adopted instead of posting, unless a photo
+//     of the draft was not posted by that run (see uncoveredPhotoFailure),
+//     which fails the draft and keeps the run unknown. A list that
 //     cannot be read stops the attempt without posting; several matches
 //     fail the draft definitively (failAmbiguous).
 //   - On success the draft becomes submitted with Procore's id, number and
@@ -395,11 +397,19 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 			d.auditAttemptFailed(ctx, cur, nil, err, 0, false)
 			return fmt.Errorf("pipeline: look for an earlier attempt's rfi: %w", err)
 		case n == 1:
+			if fail := uncoveredPhotoFailure(cur, prior.uploadIDs); fail != nil {
+				// Adopting would drop the photo and posting would make a
+				// second RFI: refuse, keep the run unknown.
+				d.log.Warn("earlier attempt's rfi lacks a photo; not adopting", "draft_id", cur.ID, "procore_id", rfi.ID)
+				return d.failSubmit(ctx, cur, *fail)
+			}
 			d.log.Info("found rfi from an earlier attempt before posting", "draft_id", cur.ID, "procore_id", rfi.ID)
 			resp := map[string]any{"recovered": true, "before_post": true, "rfi": rfi}
 			err := d.markSubmitted(ctx, cur, Result{ProcoreID: rfi.ID, Number: rfi.Number, URL: rfi.Link}, nil, resp, 0)
 			if err == nil {
-				d.deleteAttachmentObjects(ctx, cur)
+				dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postWriteTimeout)
+				d.deleteAttachmentObjects(dctx, cur)
+				cancel()
 			}
 			if !errors.Is(err, errRecordOwned) {
 				return err
@@ -743,11 +753,13 @@ type attemptHistory struct {
 	// attempts counts every attempt marker the draft has.
 	attempts int
 	// unknown is true when the current run holds an attempt whose POST may
-	// have created an RFI; since is when the earliest such attempt began
-	// and subjects are the subjects those attempts posted.
-	unknown  bool
-	since    time.Time
-	subjects []string
+	// have created an RFI; since is when the earliest such attempt began,
+	// subjects are the subjects those attempts posted and uploadIDs the
+	// photo upload ids they posted with.
+	unknown   bool
+	since     time.Time
+	subjects  []string
+	uploadIDs []string
 }
 
 // priorAttempts reads the draft's audit trail, newest first. The current
@@ -799,6 +811,11 @@ func (d *Drafts) priorAttempts(ctx context.Context, draftID uuid.UUID) (attemptH
 			h.unknown = true
 			if a.Subject != "" && !slices.Contains(h.subjects, a.Subject) {
 				h.subjects = append(h.subjects, a.Subject)
+			}
+			for _, id := range a.UploadIDs {
+				if !slices.Contains(h.uploadIDs, id) {
+					h.uploadIDs = append(h.uploadIDs, id)
+				}
 			}
 		}
 	}

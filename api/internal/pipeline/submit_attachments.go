@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,9 +33,26 @@ const UploadReuseWindow = 5 * 24 * time.Hour
 
 // Messages of a definitive photo failure; %s is the photo's filename.
 const (
-	attachmentRefusedMessage = "Photo %s could not be sent to Procore. Remove it and submit again."
-	attachmentExpiredMessage = "Photo %s expired on the server. Remove it and submit again."
+	attachmentRefusedMessage   = "Photo %s could not be sent to Procore. Remove it and submit again."
+	attachmentExpiredMessage   = "Photo %s expired on the server. Remove it and submit again."
+	attachmentUncoveredMessage = "An earlier attempt created this RFI without photo %s. Remove the photo and submit again, or add it in Procore."
 )
+
+// transientStorageCodes are S3 error codes the storage service answers with
+// a 4xx that a later attempt may get past: a slow or clock-skewed request,
+// expired credentials, or throttling.
+var transientStorageCodes = []string{"RequestTimeout", "RequestTimeTooSkewed", "ExpiredToken", "SlowDown"}
+
+// transientStorageError reports whether an error body from the storage
+// service carries one of transientStorageCodes.
+func transientStorageError(api *procore.APIError) bool {
+	for _, code := range transientStorageCodes {
+		if strings.Contains(api.Body, "<Code>"+code+"</Code>") {
+			return true
+		}
+	}
+	return false
+}
 
 // uploadedAudit is the payload of an uploaded audit event.
 type uploadedAudit struct {
@@ -110,7 +129,8 @@ func (d *Drafts) pushAttachment(ctx context.Context, token string, cur Draft, at
 }
 
 // attachmentFailure classifies a failed push of att. A refusal (a 4xx other
-// than 408 and 429 from creating the upload or from storage) or an object
+// than 408 and 429 from creating the upload or from storage, unless storage
+// names one of transientStorageCodes) or an object
 // gone from the store marks att failed and returns the draft's
 // procore_validation failure on AttachmentsField. A lost token, a 401 or a
 // 403 from Procore returns the draft failure RunSubmit uses for them. Any
@@ -126,7 +146,7 @@ func (d *Drafts) attachmentFailure(ctx context.Context, cur Draft, att Attachmen
 		return &submitFailure{code: CodePermissionDenied, message: "Your Procore account cannot create RFIs in this project.", cause: err}, nil
 	case errors.Is(err, blob.ErrNotFound):
 		code, format = AttachmentErrExpired, attachmentExpiredMessage
-	case errors.As(err, &ve), errors.As(err, &api) && definitiveStatus(api.Status):
+	case errors.As(err, &ve), errors.As(err, &api) && definitiveStatus(api.Status) && !transientStorageError(api):
 		code, format = AttachmentErrProcoreRefused, attachmentRefusedMessage
 	default:
 		return nil, err
@@ -145,6 +165,32 @@ func (d *Drafts) attachmentFailure(ctx context.Context, cur Draft, att Attachmen
 		cause:   err,
 		invalid: []Unresolved{{Field: AttachmentsField, Reason: ReasonProcoreValidation, Message: msg, Candidates: []LookupRow{}}},
 	}, nil
+}
+
+// uncoveredPhotoFailure checks, before adopting an earlier attempt's RFI,
+// that the attempts of that run posted every photo cur holds: each stored or
+// uploaded attachment needs an upload id among uploadIDs. For the first one
+// that has none, it returns the draft's failure, which keeps the objects and
+// does not close the unknown run, so a submit after the photo is removed
+// adopts the RFI and none ever posts a second one. It returns nil when every
+// photo is covered.
+func uncoveredPhotoFailure(cur Draft, uploadIDs []string) *submitFailure {
+	for _, a := range cur.Attachments {
+		if a.State != AttachmentStored && a.State != AttachmentUploaded {
+			continue
+		}
+		if a.ProcoreUploadID != "" && slices.Contains(uploadIDs, a.ProcoreUploadID) {
+			continue
+		}
+		msg := fmt.Sprintf(attachmentUncoveredMessage, a.Filename)
+		return &submitFailure{
+			code:    CodeProcoreValidation,
+			message: msg,
+			cause:   fmt.Errorf("pipeline: attachment %s is not on the earlier attempt's rfi", a.ID),
+			invalid: []Unresolved{{Field: AttachmentsField, Reason: ReasonProcoreValidation, Message: msg, Candidates: []LookupRow{}}},
+		}
+	}
+	return nil
 }
 
 // deleteAttachmentObjects deletes the objects of cur's attachments once the

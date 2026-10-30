@@ -25,7 +25,10 @@ const MaxAttempts = 4
 const (
 	// JobTimeout bounds one run of a job. A submit pushes up to ten photos
 	// at up to 90 s each (creating the upload, then a storage POST of at
-	// most 60 s) before a few Procore calls of at most 30 s each.
+	// most 60 s), which alone can take the whole 15 minutes, and then makes
+	// a few Procore calls of at most 30 s each. A worst-case run may
+	// therefore time out before it posts the RFI. That is safe: each photo
+	// pushed is stored as it goes, and the retry reuses those uploads.
 	JobTimeout = 15 * time.Minute
 	// RescueStuckJobsAfter is how long a job may stay running before River
 	// assumes its process died (a deploy killed it mid-run) and retries it.

@@ -473,11 +473,15 @@ func TestRunSubmit_RecoveredRFI_DeletesObjectsWithoutRepush(t *testing.T) {
 	e.fp.Uploads = scriptedUploads()
 	e.fp.Created = procore.RFICreated{ID: 999}
 	d, _ := e.storedPhotos(t, 2)
+	// An earlier attempt pushed both photos, long enough ago that a push
+	// now would create new uploads, and posted; its outcome is unknown and
+	// its RFI is in Procore.
+	for i, a := range d.Attachments {
+		e.setUploaded(t, a.ID, fmt.Sprintf("old%d", i+1), e.clock.Now().Add(-6*24*time.Hour))
+	}
 	e.submit(t, d)
 	ctx := context.Background()
-	// An earlier attempt posted and its outcome is unknown; its RFI is in
-	// Procore.
-	if err := e.drafts.writeAttempt(ctx, e.mustGet(t, d.ID), 1, "Twisted column", e.clock.Now()); err != nil {
+	if err := e.drafts.writeAttempt(ctx, e.mustGet(t, d.ID), 1, "Twisted column", e.clock.Now(), "old1", "old2"); err != nil {
 		t.Fatalf("writeAttempt: %v", err)
 	}
 	e.fp.RFIs = []procore.RFI{{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: e.clock.Now().Format(time.RFC3339)}}
@@ -496,5 +500,155 @@ func TestRunSubmit_RecoveredRFI_DeletesObjectsWithoutRepush(t *testing.T) {
 	}
 	if keys := e.blobs.Keys(); len(keys) != 0 {
 		t.Errorf("objects left after recovery: %v", keys)
+	}
+}
+
+// uncoveredRecovery sets up a draft whose earlier attempt posted with photo
+// a (upload u1) and has an unknown outcome, its RFI in Procore, while photo
+// b was stored afterwards and never pushed.
+func uncoveredRecovery(t *testing.T, e *draftsEnv) Draft {
+	t.Helper()
+	e.fp.Uploads = scriptedUploads()
+	e.fp.Created = procore.RFICreated{ID: 999}
+	d, _ := e.storedPhotos(t, 2)
+	e.setUploaded(t, d.Attachments[0].ID, "u1", e.clock.Now())
+	e.submit(t, d)
+	if err := e.drafts.writeAttempt(context.Background(), e.mustGet(t, d.ID), 1, "Twisted column", e.clock.Now(), "u1"); err != nil {
+		t.Fatalf("writeAttempt: %v", err)
+	}
+	e.fp.RFIs = []procore.RFI{{ID: 501, Number: "214", Subject: "Twisted column", CreatedBy: pat, CreatedAt: e.clock.Now().Format(time.RFC3339)}}
+	e.clock.Advance(2 * time.Minute)
+	return e.mustGet(t, d.ID)
+}
+
+func TestRunSubmit_RecoveredRFI_UncoveredPhoto_RefusesWithoutPosting(t *testing.T) {
+	e := newDraftsEnv(t)
+	d := uncoveredRecovery(t, e)
+	ctx := context.Background()
+
+	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
+		t.Fatalf("RunSubmit = %v, want nil (not retried)", err)
+	}
+	msg := fmt.Sprintf("An earlier attempt created this RFI without photo %s. Remove the photo and submit again, or add it in Procore.", d.Attachments[1].Filename)
+	got := e.mustGet(t, d.ID)
+	if got.Status != StatusFailed || got.Error == nil || got.Error.Code != CodeProcoreValidation || got.Error.Message != msg {
+		t.Fatalf("draft = status %q error %+v", got.Status, got.Error)
+	}
+	if u := flagFor(t, got, AttachmentsField); u.Message != msg || u.Reason != ReasonProcoreValidation {
+		t.Errorf("attachments flag = %+v", u)
+	}
+	for _, m := range []string{"CreateUpload", "PostUpload", "CreateRFI"} {
+		if n := e.fp.CallCount(m); n != 0 {
+			t.Errorf("%s called %d times, want 0", m, n)
+		}
+	}
+	if keys := e.blobs.Keys(); len(keys) != 2 {
+		t.Errorf("objects = %v, want both kept", keys)
+	}
+	if evs := auditsOfKind(t, e, d.ID, AuditAttempt); len(evs) != 1 {
+		t.Errorf("%d attempt markers, want only the earlier one", len(evs))
+	}
+	prior, err := e.drafts.priorAttempts(ctx, d.ID)
+	if err != nil || !prior.unknown {
+		t.Errorf("prior attempts = %+v (%v), want the run still unknown", prior, err)
+	}
+	if atts := e.draftAttachments(t, d.ID); atts[0].State != AttachmentUploaded || atts[1].State != AttachmentStored {
+		t.Errorf("attachments = %q, %q; want uploaded, stored", atts[0].State, atts[1].State)
+	}
+}
+
+func TestRunSubmit_RecoveredRFI_AfterUncoveredPhotoRemoved_Adopts(t *testing.T) {
+	e := newDraftsEnv(t)
+	d := uncoveredRecovery(t, e)
+	ctx := context.Background()
+	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if err := e.drafts.DeleteAttachment(ctx, e.user, d.ID, d.Attachments[1].ID); err != nil {
+		t.Fatalf("DeleteAttachment: %v", err)
+	}
+	e.submit(t, d)
+
+	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if got := e.mustGet(t, d.ID); got.Status != StatusSubmitted || got.Result == nil || got.Result.ProcoreID != 501 {
+		t.Fatalf("draft = status %q result %+v", got.Status, got.Result)
+	}
+	for _, m := range []string{"CreateUpload", "PostUpload", "CreateRFI"} {
+		if n := e.fp.CallCount(m); n != 0 {
+			t.Errorf("%s called %d times, want 0", m, n)
+		}
+	}
+	if keys := e.blobs.Keys(); len(keys) != 0 {
+		t.Errorf("objects left after recovery: %v", keys)
+	}
+}
+
+func TestRunSubmit_PartialPush_RetryReusesFirstAndPushesSecond(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.fp.Created = procore.RFICreated{ID: 501}
+	e.fp.Uploads = scriptedUploads()
+	d, _ := e.storedPhotos(t, 2)
+	e.submit(t, d)
+	ctx := context.Background()
+
+	// Photo a goes up; creating photo b's upload then fails transiently.
+	e.fp.OnPostUpload = func() { e.fp.UploadErr = fmt.Errorf("create upload: %w", procore.ErrUnavailable) }
+	if err := e.drafts.RunSubmit(ctx, d.ID); !errors.Is(err, procore.ErrUnavailable) {
+		t.Fatalf("first run = %v, want ErrUnavailable", err)
+	}
+	if atts := e.draftAttachments(t, d.ID); atts[0].State != AttachmentUploaded || atts[0].ProcoreUploadID != "u1" || atts[1].State != AttachmentStored {
+		t.Fatalf("after first run: a %q %q, b %q", atts[0].State, atts[0].ProcoreUploadID, atts[1].State)
+	}
+	creates := e.fp.CallCount("CreateUpload")
+
+	e.fp.OnPostUpload, e.fp.UploadErr = nil, nil
+	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if n := e.fp.CallCount("CreateUpload") - creates; n != 1 {
+		t.Errorf("retry created %d uploads, want 1 (photo b only)", n)
+	}
+	if c := e.fp.Calls(); c[len(c)-3].Method != "CreateUpload" || c[len(c)-3].Upload.ResponseFilename != d.Attachments[1].Filename {
+		t.Errorf("retry's upload was for %+v, want photo b", c[len(c)-3].Upload)
+	}
+	if posted := e.postedRFI(); posted == nil || !reflect.DeepEqual(posted.Question.UploadIDs, []string{"u1", "u2"}) {
+		t.Fatalf("posted rfi = %+v", posted)
+	}
+}
+
+func TestRunSubmit_StorageErrorCodes_TransientOrRefused(t *testing.T) {
+	for _, tc := range []struct {
+		code      string
+		status    int
+		transient bool
+	}{
+		{"RequestTimeout", 400, true},
+		{"RequestTimeTooSkewed", 403, true},
+		{"ExpiredToken", 400, true},
+		{"SlowDown", 503, true},
+		{"AccessDenied", 403, false},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			e := newDraftsEnv(t)
+			e.fp.Uploads = scriptedUploads()
+			e.fp.PostErr = &procore.APIError{Status: tc.status, Body: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>" + tc.code + "</Code><Message>m</Message></Error>"}
+			d, _ := e.storedPhotos(t, 2)
+			e.submit(t, d)
+
+			err := e.drafts.RunSubmit(context.Background(), d.ID)
+			got := e.mustGet(t, d.ID)
+			first := e.draftAttachments(t, d.ID)[0]
+			if tc.transient {
+				if err == nil || got.Status != StatusSubmitting || first.State != AttachmentStored {
+					t.Errorf("RunSubmit = %v, draft %q, photo %q; want a retry with the photo stored", err, got.Status, first.State)
+				}
+				return
+			}
+			if err != nil || got.Status != StatusFailed || first.State != AttachmentFailed || first.Error == nil || first.Error.Code != AttachmentErrProcoreRefused {
+				t.Errorf("RunSubmit = %v, draft %q, photo %q %+v; want refused", err, got.Status, first.State, first.Error)
+			}
+		})
 	}
 }
