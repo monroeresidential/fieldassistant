@@ -96,6 +96,9 @@ final class AppState {
     /// Runs queued submits for Review and for `draftSync`. One for the app's lifetime, so both see
     /// the same running drafts, and built in `init` so Review can queue a submit while offline.
     @ObservationIgnored private(set) var submitRunner: SubmitRunner!
+    /// Background refresh and processing tasks that run one `draftSync` pass. Registered by the app
+    /// at launch; scheduled from `enteredBackground`.
+    @ObservationIgnored private(set) var background: BackgroundSync!
     /// Resends waiting drafts, runs queued submits and reconciles submitting ones while a user is
     /// signed in; `nil` otherwise.
     @ObservationIgnored private(set) var draftSync: DraftSync?
@@ -154,6 +157,17 @@ final class AppState {
             store: store,
             presenter: presenter,
             deviceID: Self.deviceID(in: defaults)
+        )
+        background = BackgroundSync(
+            run: { [weak self] in await self?.runBackgroundPass() },
+            cancelPass: { [weak self] in self?.draftSync?.cancelPass() },
+            counts: { [weak self] in
+                guard let self, let owner = draftOwnerID else { return (0, 0) }
+                return (
+                    drafts.drafts(withStatus: .waiting, owner: owner).count,
+                    drafts.draftsPendingSubmit(owner: owner).count
+                )
+            }
         )
     }
 
@@ -236,6 +250,24 @@ final class AppState {
             await draftSync?.runOnce()
             await recordSync?.runOnce()
         }
+    }
+
+    /// The app went to the background: ask iOS for a background run when a draft is waiting or queued.
+    func enteredBackground() {
+        guard let owner = draftOwnerID else {
+            background.cancelAll()
+            return
+        }
+        background.schedule(
+            waiting: drafts.drafts(withStatus: .waiting, owner: owner).count,
+            pendingSubmit: drafts.draftsPendingSubmit(owner: owner).count
+        )
+    }
+
+    /// One background task's worth of work: a single draft pass. A nil sync means nobody is signed
+    /// in, so there is nothing to do.
+    func runBackgroundPass() async {
+        await draftSync?.runOnce()
     }
 
     /// Syncs the selected project's records now. `force` has the backend pull from Procore first;

@@ -66,6 +66,14 @@ final class DraftSync {
         passAgain = false
     }
 
+    /// Cancels the running pass, if any, and leaves the listener running. A cancelled pass records
+    /// nothing. For a background task the system has expired.
+    func cancelPass() {
+        pass?.cancel()
+        pass = nil
+        passAgain = false
+    }
+
     /// Runs one pass, or, if one is running, makes it run once more and waits for it.
     func runOnce() async {
         if let pass {

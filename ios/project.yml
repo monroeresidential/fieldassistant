@@ -47,6 +47,12 @@ targets:
         NSPhotoLibraryUsageDescription: Field Assistant accesses your photo library to attach photos.
         NSLocationWhenInUseUsageDescription: Field Assistant uses your location to tag site observations.
         UILaunchScreen: {}
+        UIBackgroundModes:
+          - fetch
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - $(PRODUCT_BUNDLE_IDENTIFIER).draftsync.refresh
+          - $(PRODUCT_BUNDLE_IDENTIFIER).draftsync.processing
         UIAppFonts:
           - PublicSans-Regular.ttf
           - PublicSans-Medium.ttf
