@@ -99,6 +99,8 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    Both API env files also carry the LLM settings used for RFI extraction:
    `ANTHROPIC_API_KEY`, `LLM_EXTRACT_MODEL` and `LLM_TIMEOUT_SECONDS` (seconds,
    defaults to 20). The API refuses to start without the first two.
+   Both also need the five `OBJECT_STORE_*` lines; see "Attachments bucket" below,
+   and add them before `docker compose up`.
 
    Each `PROCORE_REDIRECT_URL` must match the redirect URI registered with the
    matching Procore app exactly. Generate `TOKEN_VAULT_KEY` and `SESSION_SECRET`
@@ -189,13 +191,20 @@ add them to the droplet's `.env.dev` and `.env.prod` before the branch deploys.*
    OBJECT_STORE_SECRET_KEY=...
    ```
 4. Apply the lifecycle rule, which expires everything under `attachments/`
-   after 30 days, as `deploy-prod` (the same `s3cmd` config the backups use;
-   it needs access to this bucket as well, so use a key that covers both
-   buckets or reconfigure `s3cmd` for this one command):
+   after 30 days. Use a second `s3cmd` config for the attachments key, so the
+   backups config stays as it is. The key must have write permission on the
+   bucket for `setlifecycle` (a bucket-scoped key with full access to that
+   bucket does). Configure it as `deploy-prod` with the attachments key and
+   secret, endpoint `<region>.digitaloceanspaces.com` and host-bucket template
+   `%(bucket)s.<region>.digitaloceanspaces.com`:
    ```
-   sudo -H -u deploy-prod s3cmd setlifecycle /opt/fieldassistant/deploy/lifecycle-attachments.xml s3://fieldassistant-attachments
+   sudo -H -u deploy-prod s3cmd --configure -c /home/deploy-prod/.s3cfg-attachments
+   sudo -H -u deploy-prod s3cmd -c /home/deploy-prod/.s3cfg-attachments setlifecycle /opt/fieldassistant/deploy/lifecycle-attachments.xml s3://fieldassistant-attachments
    ```
-   Check it with `s3cmd getlifecycle s3://fieldassistant-attachments`.
+   Confirm it:
+   ```
+   sudo -H -u deploy-prod s3cmd -c /home/deploy-prod/.s3cfg-attachments getlifecycle s3://fieldassistant-attachments
+   ```
 
 ### Updating the deploy files
 

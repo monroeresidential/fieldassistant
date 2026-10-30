@@ -93,7 +93,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 - The iOS `.xcodeproj` is generated and never committed. Swift package pins live in `ios/Package.resolved`.
 - Error bodies are `{code,message}` with a fixed code set: `bad_request`, `unauthorized`, `reauth_required`, `forbidden_scope`, `procore_permission_denied`, `not_found`, `procore_unavailable`, `internal`. `not_found` is emitted by the RFI attachment proxy for an RFI or attachment that is not there.
 - The phone reads RFIs from the local mirror (`getRecords`, `syncProject`); `listRFIs` was removed in contract 1.5.1. `getRFIAttachment` streams the file with Procore's real `Content-Type` (declared `*/*` in the contract).
-- Attachment-level error codes `procore_refused`, `expired` and (from this branch) the `attachments` field error live on `DraftResponse.attachments[].error` and in `unresolved[]`, not in HTTP error bodies.
+- Attachment-level codes `procore_refused` and `expired` live on `DraftResponse.attachments[].error`; the draft-level failure is an `unresolved[]` entry with field `attachments` and reason `procore_validation`. Neither is an HTTP error-body code.
 - `procore_validation` is a draft-level error code carried in `DraftResponse.error` and `JobStatus.error`, not an HTTP error-body code.
 - On iOS only `AuthRefreshError.rejected` signs the user out; other refresh failures keep the session.
 
