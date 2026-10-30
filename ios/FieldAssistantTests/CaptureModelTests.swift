@@ -87,7 +87,7 @@ final class CaptureModelTests: XCTestCase {
         let continuation = try XCTUnwrap(transcriber.continuation)
         continuation.yield("Need the slab edge detail at grid C")
         await waitUntil { !model.transcript.isEmpty }
-        try model.addPhoto(Self.image())
+        try await model.addPhoto(image: Self.image(), metadata: nil)
 
         continuation.finish(throwing: SpeechTranscriberError.interrupted)
         await waitUntil { model.state != .recording }
@@ -156,8 +156,8 @@ final class CaptureModelTests: XCTestCase {
         await waitUntil { model.coordinate != nil && !model.transcript.isEmpty }
         model.stop()
 
-        try model.addPhoto(Self.image())
-        try model.addPhoto(Self.image())
+        try await model.addPhoto(image: Self.image(), metadata: nil)
+        try await model.addPhoto(image: Self.image(), metadata: nil)
         let removed = try XCTUnwrap(model.photos.last)
         let removedURL = DraftFiles.photoURL(draftID: model.draftID, fileName: removed.fileName)
         XCTAssertTrue(FileManager.default.fileExists(atPath: removedURL.path(percentEncoded: false)))
@@ -221,7 +221,7 @@ final class CaptureModelTests: XCTestCase {
         let transcriber = FakeTranscriber()
         let model = makeModel(transcriber: transcriber)
         await model.start()
-        try model.addPhoto(Self.image())
+        try await model.addPhoto(image: Self.image(), metadata: nil)
         XCTAssertTrue(FileManager.default.fileExists(atPath: DraftFiles.audioURL(for: model.draftID).deletingLastPathComponent().path))
 
         model.discard()
@@ -229,6 +229,28 @@ final class CaptureModelTests: XCTestCase {
         XCTAssertEqual(transcriber.stopCount, 1)
         XCTAssertTrue(model.photos.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: DraftFiles.audioURL(for: model.draftID).deletingLastPathComponent().path))
+    }
+
+    func testEleventhPhotoIsRefused() async throws {
+        let model = makeModel(transcriber: FakeTranscriber())
+        for _ in 0..<PhotoLimits.maxPerDraft {
+            try await model.addPhoto(image: Self.image(), metadata: nil)
+        }
+        XCTAssertEqual(model.photos.count, 10)
+
+        do {
+            try await model.addPhoto(image: Self.image(), metadata: nil)
+            XCTFail("an eleventh camera photo is refused")
+        } catch PhotoSaverError.tooManyPhotos {}
+        let jpeg = try XCTUnwrap(Self.image().jpegData(compressionQuality: 0.85))
+        do {
+            try await model.addPhoto(data: jpeg)
+            XCTFail("an eleventh library photo is refused")
+        } catch PhotoSaverError.tooManyPhotos {}
+
+        XCTAssertEqual(model.photos.count, 10)
+        let files = try FileManager.default.contentsOfDirectory(atPath: DraftFiles.directory(for: model.draftID).path(percentEncoded: false))
+        XCTAssertEqual(files.filter { $0.hasSuffix(".jpg") }.count, 10, "a refused photo writes no file")
     }
 
     func testDiscardDuringPermissionPromptNeverStartsMic() async {

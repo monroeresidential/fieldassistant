@@ -134,8 +134,8 @@ struct CaptureView: View {
             Task { await addPicked(items) }
         }
         .fullScreenCover(isPresented: $showsCamera) {
-            CameraPicker { image in
-                add(image)
+            CameraPicker { image, metadata in
+                Task { await addCameraPhoto(image, metadata: metadata) }
             }
             .ignoresSafeArea()
         }
@@ -422,19 +422,25 @@ struct CaptureView: View {
                                 if !isBuilding { model.removePhoto(photo) }
                             }
                     }
-                    PhotosPicker(selection: $pickedPhotos, matching: .images) {
-                        Self.addTile(systemImage: "photo.on.rectangle")
-                    }
-                    .disabled(isBuilding)
-                    .accessibilityLabel("Add photos from library")
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        Button {
-                            showsCamera = true
-                        } label: {
-                            Self.addTile(systemImage: "camera")
+                    if model.photos.count < PhotoLimits.maxPerDraft {
+                        PhotosPicker(
+                            selection: $pickedPhotos,
+                            maxSelectionCount: PhotoLimits.maxPerDraft - model.photos.count,
+                            matching: .images
+                        ) {
+                            Self.addTile(systemImage: "photo.on.rectangle")
                         }
                         .disabled(isBuilding)
-                        .accessibilityLabel("Take a photo")
+                        .accessibilityLabel("Add photos from library")
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            Button {
+                                showsCamera = true
+                            } label: {
+                                Self.addTile(systemImage: "camera")
+                            }
+                            .disabled(isBuilding)
+                            .accessibilityLabel("Take a photo")
+                        }
                     }
                 }
             }
@@ -456,18 +462,29 @@ struct CaptureView: View {
     private func addPicked(_ items: [PhotosPickerItem]) async {
         pickedPhotos = []
         for item in items {
-            guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+            guard let data = try? await item.loadTransferable(type: Data.self) else {
                 photoError = "One of the photos could not be read."
                 continue
             }
-            add(image)
+            guard !draftMade else { return }
+            do {
+                try await model.addPhoto(data: data)
+            } catch PhotoSaverError.encodingFailed {
+                photoError = "One of the photos could not be read."
+            } catch PhotoSaverError.tooManyPhotos {
+                // The rest of the selection would be refused too; one alert is enough.
+                photoError = PhotoSaverError.tooManyPhotos.localizedDescription
+                return
+            } catch {
+                photoError = error.localizedDescription
+            }
         }
     }
 
-    private func add(_ image: UIImage) {
+    private func addCameraPhoto(_ image: UIImage, metadata: [CFString: Any]?) async {
         guard !draftMade else { return }
         do {
-            try model.addPhoto(image)
+            try await model.addPhoto(image: image, metadata: metadata)
         } catch {
             photoError = error.localizedDescription
         }
@@ -721,10 +738,10 @@ struct PhotoThumbnail: View {
     }
 }
 
-/// The system camera, returning the photo taken.
+/// The system camera, returning the photo taken and its `mediaMetadata` (which holds the orientation).
 @MainActor
 struct CameraPicker: UIViewControllerRepresentable {
-    let onImage: (UIImage) -> Void
+    let onImage: (UIImage, [CFString: Any]?) -> Void
     @Environment(\.dismiss) private var dismiss
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
@@ -742,10 +759,10 @@ struct CameraPicker: UIViewControllerRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let onImage: (UIImage) -> Void
+        let onImage: (UIImage, [CFString: Any]?) -> Void
         let dismiss: () -> Void
 
-        init(onImage: @escaping (UIImage) -> Void, dismiss: @escaping () -> Void) {
+        init(onImage: @escaping (UIImage, [CFString: Any]?) -> Void, dismiss: @escaping () -> Void) {
             self.onImage = onImage
             self.dismiss = dismiss
         }
@@ -754,7 +771,9 @@ struct CameraPicker: UIViewControllerRepresentable {
             _ picker: UIImagePickerController,
             didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
         ) {
-            if let image = info[.originalImage] as? UIImage { onImage(image) }
+            if let image = info[.originalImage] as? UIImage {
+                onImage(image, info[.mediaMetadata] as? [CFString: Any])
+            }
             dismiss()
         }
 

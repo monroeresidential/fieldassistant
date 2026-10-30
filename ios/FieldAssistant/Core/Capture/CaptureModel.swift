@@ -34,6 +34,10 @@ final class CaptureModel {
     @ObservationIgnored private var finalWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     /// Set once the transcript was typed or the capture discarded; later recognizer results are dropped.
     @ObservationIgnored private var ignoresRecognizer = false
+    /// Photos handed to the saver and not yet back; they count against `PhotoLimits.maxPerDraft`.
+    @ObservationIgnored private var savingPhotos = 0
+    /// Set by `discard()`; a photo whose save finishes afterwards is deleted instead of added.
+    @ObservationIgnored private var discarded = false
 
     init(
         draftID: UUID = UUID(),
@@ -109,6 +113,7 @@ final class CaptureModel {
     /// `start()` still waiting on the permission prompt returns without opening the microphone.
     func discard() {
         ignoresRecognizer = true
+        discarded = true
         if state == .recording { transcriber.stop() }
         if state == .requestingPermission || state == .recording { state = .stopped }
         timerTask?.cancel()
@@ -116,8 +121,39 @@ final class CaptureModel {
         DraftFiles.removeAll(for: draftID)
     }
 
-    func addPhoto(_ image: UIImage) throws {
-        photos.append(try PhotoSaver.save(image, draftID: draftID))
+    /// Adds a library photo from the picker's bytes. The saving (downscale, metadata strip, JPEG
+    /// encode) runs off the main actor. Throws `PhotoSaverError.tooManyPhotos` once the draft has
+    /// `PhotoLimits.maxPerDraft` photos.
+    func addPhoto(data: Data) async throws {
+        let draftID = draftID, location = coordinate
+        try await addPhoto {
+            try PhotoSaver.write(data: data, draftID: draftID, location: location)
+        }
+    }
+
+    /// Adds a camera photo with the picker's `mediaMetadata`; see `addPhoto(data:)`.
+    func addPhoto(image: UIImage, metadata: [CFString: Any]?) async throws {
+        let draftID = draftID, location = coordinate
+        // The metadata is an immutable dictionary of property-list values from the camera picker,
+        // read but never changed by the saver, so handing it to the background task is safe.
+        nonisolated(unsafe) let metadata = metadata
+        try await addPhoto {
+            try PhotoSaver.write(image: image, metadata: metadata, draftID: draftID, location: location)
+        }
+    }
+
+    /// Counts photos still being saved against the limit, so quick taps cannot pass it.
+    private func addPhoto(_ save: @escaping @Sendable () throws -> SavedPhoto) async throws {
+        guard photos.count + savingPhotos < PhotoLimits.maxPerDraft else { throw PhotoSaverError.tooManyPhotos }
+        savingPhotos += 1
+        defer { savingPhotos -= 1 }
+        let saved = try await Task.detached(priority: .userInitiated, operation: save).value
+        guard !discarded else {
+            // The capture was abandoned while the photo was being written; its folder is gone.
+            DraftFiles.removeAll(for: draftID)
+            return
+        }
+        photos.append(saved.makeLocalPhoto())
     }
 
     func removePhoto(_ photo: LocalPhoto) {
