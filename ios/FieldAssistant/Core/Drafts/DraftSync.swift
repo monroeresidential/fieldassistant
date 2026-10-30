@@ -114,13 +114,20 @@ final class DraftSync {
     }
 
     /// Runs each queued submit, oldest first. Returns `false` when the pass should end: no
-    /// connection, or cancelled. A refused draft records its refusal and the pass goes on.
+    /// connection, a session that needs signing in again, or cancelled. A draft refused, or left
+    /// queued by a server failure of its own, does not hold up the next one.
     private func runQueued(owner: Int64) async -> Bool {
         for draft in store.draftsPendingSubmit(owner: owner) {
             // Review or Stop may have settled it, or Review may be running it, while this pass waited.
             guard draft.submitPending, !runner.isRunning(draft.id) else { continue }
             let outcome = await runner.run(draft)
-            if Task.isCancelled || outcome == .stillPending { return false }
+            if Task.isCancelled { return false }
+            switch outcome {
+            case .stillPending(.offline), .stillPending(.reauthRequired):
+                return false
+            case .stillPending(.server), .stillPending(.alreadyRunning), .accepted, .refused, .photoFailed:
+                continue
+            }
         }
         return true
     }

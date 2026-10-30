@@ -212,8 +212,11 @@ final class RFIReviewModel {
         try? store.save()
 
         switch await runner.run(draft) {
-        case .accepted(let response):
+        case .accepted(let response?):
             return takeAccepted(response)
+        case .accepted(nil):
+            // Queued on the server, but the phone has no copy of the draft to show.
+            return .pending(message: Self.pendingMessage)
         case .stillPending:
             return .pending(message: Self.queuedMessage)
         case .refused(let failure):

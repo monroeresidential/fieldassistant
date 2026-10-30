@@ -8,7 +8,8 @@ typealias JobStatus = Components.Schemas.JobStatus
 
 /// The phone's client for the draft endpoints: create, fetch, save, submit, job polling and photo uploads.
 /// Every method throws `APIFailure` (except a photo file `uploadAttachment` cannot read); a 400 on a
-/// draft route becomes `.validation` with the server's message.
+/// draft route becomes `.validation` with the server's message, and a 404 on a draft or attachment
+/// route `.notFound` (the job poll's 404 stays `.server`).
 struct DraftService: Sendable {
     enum SubmitStart: Sendable {
         /// Procore already has the record; carries the refetched draft.
@@ -67,7 +68,7 @@ struct DraftService: Sendable {
         case .ok(let ok): return try await APIFailure.mapping { try ok.body.json }
         case .unauthorized(let response): throw APIFailure(statusCode: 401, response: response)
         case .forbidden(let response): throw APIFailure(statusCode: 403, response: response)
-        case .notFound(let response): throw APIFailure(statusCode: 404, response: response)
+        case .notFound(let response): throw APIFailure(notFound: response)
         case .badGateway(let response): throw APIFailure(statusCode: 502, response: response)
         case .default(let status, let response): throw APIFailure(statusCode: status, response: response)
         }
@@ -87,7 +88,7 @@ struct DraftService: Sendable {
         case .badRequest(let response): throw APIFailure(badRequest: response)
         case .unauthorized(let response): throw APIFailure(statusCode: 401, response: response)
         case .forbidden(let response): throw APIFailure(statusCode: 403, response: response)
-        case .notFound(let response): throw APIFailure(statusCode: 404, response: response)
+        case .notFound(let response): throw APIFailure(notFound: response)
         case .badGateway(let response): throw APIFailure(statusCode: 502, response: response)
         case .default(let status, let response): throw APIFailure(statusCode: status, response: response)
         }
@@ -111,7 +112,7 @@ struct DraftService: Sendable {
         case .badRequest(let response): throw APIFailure(badRequest: response)
         case .unauthorized(let response): throw APIFailure(statusCode: 401, response: response)
         case .forbidden(let response): throw APIFailure(statusCode: 403, response: response)
-        case .notFound(let response): throw APIFailure(statusCode: 404, response: response)
+        case .notFound(let response): throw APIFailure(notFound: response)
         case .badGateway(let response): throw APIFailure(statusCode: 502, response: response)
         case .default(let status, let response): throw APIFailure(statusCode: status, response: response)
         }

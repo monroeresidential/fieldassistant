@@ -10,26 +10,40 @@ import Foundation
 final class SubmitRunner {
     enum Outcome: Equatable {
         /// The server answered 200 or 202 (and the poll, if any, finished); it owns the draft now.
-        case accepted(DraftResponse)
-        /// No connection or no definitive answer: the flag is kept and the next pass tries again.
-        case stillPending
+        /// Carries the server's copy of the draft as it stands: the poll's answer, or, when the poll
+        /// failed, the last copy the phone has, marked `submitting` (`nil` if the phone has none).
+        case accepted(DraftResponse?)
+        /// The draft stays queued (the flag is kept) and a later pass tries again; the reason says why.
+        case stillPending(PendingReason)
         /// The server refused the draft for good: the flag is cleared and the draft persisted `failed`.
         case refused(APIFailure)
         /// A photo upload was refused for good: the flag is cleared, the photo and the draft are `failed`.
         case photoFailed(LocalPhoto)
     }
 
+    /// Why a run left the draft queued.
+    enum PendingReason: Equatable {
+        /// No connection: nothing else can be sent either.
+        case offline
+        /// No definitive answer for this draft (a 5xx, a cancelled run, a transient file read).
+        case server
+        /// The session needs signing in again; the draft sends after the next sign-in.
+        case reauthRequired
+        /// Another run for the draft is in progress and owns it.
+        case alreadyRunning
+    }
+
     /// The backend's 400 for a change to a draft that is submitting or submitted (`ErrDraftLocked`).
     static let lockedMessage = "draft is submitted or being submitted"
     /// Why a photo whose file the phone cannot read is not sent.
-    static let missingFileMessage = "Photo file is missing on this phone"
+    static let missingFileMessage = "Photo file is missing on this phone."
     /// A photo the server refused earlier without saying why.
     static let photoRefusedMessage = "Couldn't send this photo."
 
     private let store: DraftStore
     private let service: @MainActor () -> DraftService
-    /// Drafts with a run in progress.
-    private var running: Set<UUID> = []
+    /// The work of each draft with a run in progress, so `cancelAll` can stop it.
+    private var running: [UUID: Task<Void, Never>] = [:]
 
     init(store: DraftStore, service: @escaping @MainActor () -> DraftService) {
         self.store = store
@@ -37,16 +51,41 @@ final class SubmitRunner {
     }
 
     func isRunning(_ draftID: UUID) -> Bool {
-        running.contains(draftID)
+        running[draftID] != nil
     }
 
     /// Runs the queued work for `draft`. A draft that already has a run in progress returns
-    /// `.stillPending` at once: that run owns it. A cancelled run ends as `.stillPending` unless the
-    /// server has already accepted the submit.
+    /// `.stillPending(.alreadyRunning)` at once: that run owns it. Cancelling the caller, or
+    /// `cancelAll`, cancels the work; a cancelled run ends as `.stillPending` unless the server has
+    /// already accepted the submit.
     func run(_ draft: LocalDraft) async -> Outcome {
-        guard running.insert(draft.id).inserted else { return .stillPending }
-        defer { running.remove(draft.id) }
+        let id = draft.id
+        guard running[id] == nil else { return .stillPending(.alreadyRunning) }
+        let result = OutcomeBox()
         let service = service()
+        // The work runs as its own task so `cancelAll` can reach it whoever started it. `Outcome`
+        // holds a model object and is not `Sendable`, so the task leaves it in the box.
+        let work = Task { @MainActor in
+            result.outcome = await self.perform(draft, service)
+        }
+        running[id] = work
+        await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+        if running[id] == work { running[id] = nil }
+        return result.outcome ?? .stillPending(.server)
+    }
+
+    /// Cancels every run in progress (the session ended): each ends `.stillPending` with its draft
+    /// still queued for its owner's next sign-in.
+    func cancelAll() {
+        for work in running.values { work.cancel() }
+        running.removeAll()
+    }
+
+    private func perform(_ draft: LocalDraft, _ service: DraftService) async -> Outcome {
         if let stop = await savePayload(draft, service) { return stop }
         if let stop = await deleteRemovedPhotos(draft, service) { return stop }
         if let stop = await uploadPendingPhotos(draft, service) { return stop }
@@ -113,9 +152,12 @@ final class SubmitRunner {
                 photo.bytes = attachment.bytes
                 photo.failureMessage = nil
                 save()
-            } catch is CocoaError {
-                // The file is gone or unreadable: no retry can send it.
+            } catch let error as CocoaError where Self.missingFileCodes.contains(error.code) {
+                // The file is gone: no retry can send it.
                 return failPhoto(photo, message: Self.missingFileMessage, draft: draft)
+            } catch is CocoaError {
+                // Any other read error may pass (the phone locked with data protection, say).
+                return .stillPending(.server)
             } catch {
                 let failure = APIFailure(error)
                 switch failure {
@@ -154,10 +196,10 @@ final class SubmitRunner {
                 return accept(response, draft: draft)
             } catch {
                 // The draft as it stands: queued on the server. Reconcile settles it later.
-                guard var response = draft.server else { return .stillPending }
-                response.status = .submitting
                 draft.status = .submitting
                 save()
+                guard var response = draft.server else { return .accepted(nil) }
+                response.status = .submitting
                 return .accepted(response)
             }
         }
@@ -165,16 +207,21 @@ final class SubmitRunner {
 
     // MARK: - Outcomes
 
-    /// Maps a failed save, delete or submit: no definitive answer keeps the draft queued; the
-    /// locked 400 means an earlier submit got through; anything else is a refusal.
+    /// Maps a failed save, delete, upload or submit: no definitive answer, or a session that needs
+    /// signing in again, keeps the draft queued; the locked 400 means an earlier submit got through;
+    /// anything else (including a 404: the server has lost the draft) is a refusal.
     private func settle(_ error: Error, _ draft: LocalDraft, _ service: DraftService) async -> Outcome {
         let failure = APIFailure(error)
         switch failure {
-        case .offline, .server:
-            return .stillPending
+        case .offline:
+            return .stillPending(.offline)
+        case .server:
+            return .stillPending(.server)
+        case .reauthRequired:
+            return .stillPending(.reauthRequired)
         case .validation(Self.lockedMessage):
             return await takeServerCopy(draft, service)
-        case .validation, .permissionDenied, .reauthRequired, .notFound:
+        case .validation, .permissionDenied, .notFound:
             return await refuse(draft, failure: failure, service)
         }
     }
@@ -182,7 +229,7 @@ final class SubmitRunner {
     /// The server refused a change because the draft is already submitting or submitted (an earlier
     /// POST landed but its answer was lost): takes the server's copy as an accepted submit.
     private func takeServerCopy(_ draft: LocalDraft, _ service: DraftService) async -> Outcome {
-        guard let response = try? await service.get(id: draft.id, companyID: draft.companyID) else { return .stillPending }
+        guard let response = try? await service.get(id: draft.id, companyID: draft.companyID) else { return .stillPending(.server) }
         draft.pendingPayloadData = nil
         return accept(response, draft: draft)
     }
@@ -235,4 +282,13 @@ final class SubmitRunner {
     private func save() {
         try? store.save()
     }
+
+    /// The read errors that mean the photo file is not on the phone.
+    private static let missingFileCodes: Set<CocoaError.Code> = [.fileReadNoSuchFile, .fileNoSuchFile]
+}
+
+/// Carries a run's outcome out of its task on the main actor.
+@MainActor
+private final class OutcomeBox {
+    var outcome: SubmitRunner.Outcome?
 }

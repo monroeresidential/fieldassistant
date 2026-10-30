@@ -39,7 +39,7 @@ final class SubmitRunnerTests: XCTestCase {
 
         let outcome = await runner.run(draft)
 
-        guard case .accepted(let response) = outcome else { return XCTFail("expected accepted, got \(outcome)") }
+        guard case .accepted(let response?) = outcome else { return XCTFail("expected accepted, got \(outcome)") }
         XCTAssertEqual(response.status, .submitted)
         XCTAssertEqual(transport.requests.map(\.method), [.patch, .put, .put, .post, .get, .get])
         XCTAssertEqual(transport.requests.map(\.path), [
@@ -74,7 +74,7 @@ final class SubmitRunnerTests: XCTestCase {
 
         let outcome = await runner.run(draft)
 
-        XCTAssertEqual(outcome, .stillPending)
+        XCTAssertEqual(outcome, .stillPending(.offline))
         XCTAssertEqual(transport.requests.count, 1, "nothing more is sent without signal")
         XCTAssertTrue(draft.submitPending)
         XCTAssertEqual(draft.status, .submitting)
@@ -154,7 +154,7 @@ final class SubmitRunnerTests: XCTestCase {
 
         let outcome = await runner.run(draft)
 
-        guard case .accepted(let response) = outcome else { return XCTFail("expected accepted, got \(outcome)") }
+        guard case .accepted(let response?) = outcome else { return XCTFail("expected accepted, got \(outcome)") }
         XCTAssertEqual(response.status, .submitted)
         XCTAssertFalse(draft.submitPending)
         XCTAssertEqual(draft.status, .submitted)
@@ -171,7 +171,7 @@ final class SubmitRunnerTests: XCTestCase {
 
         let outcome = await runner.run(draft)
 
-        guard case .accepted(let response) = outcome else { return XCTFail("expected accepted, got \(outcome)") }
+        guard case .accepted(let response?) = outcome else { return XCTFail("expected accepted, got \(outcome)") }
         XCTAssertEqual(response.status, .submitting, "the draft as it stands: queued on the server")
         XCTAssertFalse(draft.submitPending, "the server owns the draft once it answered 202")
         XCTAssertEqual(draft.status, .submitting)
@@ -185,7 +185,7 @@ final class SubmitRunnerTests: XCTestCase {
         let (runner, _, draft) = try makeRunner(transport, photos: [(photoA, "a.jpg", 1), (photoB, "b.jpg", 2)])
 
         let first = await runner.run(draft)
-        XCTAssertEqual(first, .stillPending)
+        XCTAssertEqual(first, .stillPending(.offline))
 
         // A relaunch: a fresh context over the same store, and a new runner.
         let relaunched = DraftStore(context: ModelContext(try XCTUnwrap(container)))
@@ -206,6 +206,104 @@ final class SubmitRunnerTests: XCTestCase {
                        "the stored photo is not sent again")
         XCTAssertFalse(reloaded.submitPending)
         XCTAssertEqual(reloaded.status, .submitted)
+    }
+
+    func testRunSaveNotFoundRefusesDraft() async throws {
+        let message = "draft not found"
+        let transport = ScriptedTransport([
+            .response(APIStub.error(.notFound, code: "not_found", message: message)),
+            .response(APIStub.error(.notFound, code: "not_found", message: message)),
+        ])
+        let (runner, _, draft) = try makeRunner(transport)
+        draft.pendingPayloadData = try LocalDraft.encoder.encode(try XCTUnwrap(draft.server).payload)
+
+        let outcome = await runner.run(draft)
+
+        XCTAssertEqual(outcome, .refused(.notFound(message)), "a draft the server lost is not retried every pass")
+        XCTAssertEqual(transport.requests.map(\.method), [.patch, .get])
+        XCTAssertFalse(draft.submitPending)
+        XCTAssertEqual(draft.status, .failed)
+        XCTAssertEqual(draft.errorMessage, message)
+    }
+
+    func testReauthDuringRunKeepsQueued() async throws {
+        let transport = ScriptedTransport([
+            .response(APIStub.error(.unauthorized, code: "reauth_required", message: "Sign in again")),
+        ])
+        let (runner, _, draft) = try makeRunner(transport, photos: [(photoA, "a.jpg", 1)])
+
+        let outcome = await runner.run(draft)
+
+        XCTAssertEqual(outcome, .stillPending(.reauthRequired))
+        XCTAssertTrue(draft.submitPending, "the RFI sends after the next sign-in")
+        XCTAssertEqual(draft.status, .submitting)
+        XCTAssertNil(draft.errorMessage)
+        XCTAssertEqual(photo(photoA, in: draft).uploadState, .pending)
+    }
+
+    func testCancelAllEndsRunAndKeepsQueued() async throws {
+        let transport = ScriptedTransport([.hang])
+        let (runner, _, draft) = try makeRunner(transport)
+        let run = Task { await runner.run(draft) == .stillPending(.server) }
+        for _ in 0..<500 where transport.requests.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(runner.isRunning(draftID))
+
+        runner.cancelAll()
+
+        XCTAssertFalse(runner.isRunning(draftID))
+        let endedPending = await run.value
+        XCTAssertTrue(endedPending)
+        XCTAssertTrue(draft.submitPending)
+        XCTAssertEqual(draft.status, .submitting)
+        XCTAssertEqual(transport.requests.count, 1)
+    }
+
+    func testPollErrorWithoutServerCopyIsAccepted() async throws {
+        let transport = ScriptedTransport([
+            .response(APIStub.submit(.accepted, jobID: "job-5", draftID: draftID)),
+            .failure(URLError(.notConnectedToInternet)),
+        ])
+        let (runner, _, draft) = try makeRunner(transport)
+        draft.serverData = nil
+
+        let outcome = await runner.run(draft)
+
+        XCTAssertEqual(outcome, .accepted(nil))
+        XCTAssertFalse(draft.submitPending)
+        XCTAssertEqual(draft.status, .submitting)
+    }
+
+    func testRunMissingPhotoFileMarksPhotoFailed() async throws {
+        let transport = ScriptedTransport([])
+        let (runner, _, draft) = try makeRunner(transport, photos: [(photoA, "a.jpg", 1)])
+        try FileManager.default.removeItem(at: DraftFiles.photoURL(draftID: draftID, fileName: "a.jpg"))
+
+        let outcome = await runner.run(draft)
+
+        XCTAssertEqual(outcome, .photoFailed(photo(photoA, in: draft)))
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertEqual(photo(photoA, in: draft).uploadState, .failed)
+        XCTAssertEqual(photo(photoA, in: draft).failureMessage, "Photo file is missing on this phone.")
+        XCTAssertFalse(draft.submitPending)
+        XCTAssertEqual(draft.status, .failed)
+    }
+
+    func testRunUnreadablePhotoFileStaysPending() async throws {
+        let transport = ScriptedTransport([])
+        let (runner, _, draft) = try makeRunner(transport, photos: [(photoA, "a.jpg", 1)])
+        let fileURL = DraftFiles.photoURL(draftID: draftID, fileName: "a.jpg")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: fileURL.path(percentEncoded: false))
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fileURL.path(percentEncoded: false)) }
+
+        let outcome = await runner.run(draft)
+
+        XCTAssertEqual(outcome, .stillPending(.server), "a read error other than a missing file may pass")
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertEqual(photo(photoA, in: draft).uploadState, .pending)
+        XCTAssertTrue(draft.submitPending)
+        XCTAssertNil(draft.errorMessage)
     }
 
     // MARK: - Helpers

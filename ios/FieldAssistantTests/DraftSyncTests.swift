@@ -341,6 +341,52 @@ final class DraftSyncTests: XCTestCase {
         XCTAssertEqual(owned.status, .submitting)
     }
 
+    @MainActor
+    func testQueuedServerFailureSkipsToNextDraft() async throws {
+        let first = queuedDraft(transcript: "first", minutesAgo: 10)
+        let photoID = UUID()
+        first.photos.append(LocalPhoto(id: photoID, fileName: "a.jpg", bytes: 4, createdAt: first.capturedAt))
+        let folder = try DraftFiles.directory(for: first.id)
+        defer { DraftFiles.removeAll(for: first.id) }
+        try Data([0xFF, 0xD8, 0xFF, 0xD9]).write(to: folder.appending(path: "a.jpg"))
+        let second = queuedDraft(transcript: "second", minutesAgo: 5)
+        let transport = ScriptedTransport([
+            .response(APIStub.error(.internalServerError, code: "internal", message: "Something broke")),
+            .response(APIStub.submit(.ok, draftID: second.id)),
+            .response(APIStub.draft(id: second.id, status: "submitted")),
+        ])
+        let (_, sync) = makeSync(transport: transport, drafts: [first, second])
+
+        await sync.runOnce()
+
+        XCTAssertEqual(transport.requests.map(\.method), [.put, .post, .get])
+        XCTAssertTrue(first.submitPending, "the failing draft retries on the next pass")
+        XCTAssertEqual(first.status, .submitting)
+        XCTAssertNil(first.errorMessage)
+        XCTAssertEqual(second.status, .submitted)
+        XCTAssertFalse(second.submitPending)
+    }
+
+    @MainActor
+    func testSignOutCancelsRunningSubmit() async throws {
+        let draft = queuedDraft(transcript: "queued", minutesAgo: 5)
+        let transport = ScriptedTransport([.hang, .response((HTTPResponse(status: .noContent), nil))])
+        let state = makeState(transport: transport, reachability: FakeReachability(isReachable: true))
+        self.state = state
+        try state.drafts.insert(draft)
+        let run = Task { await state.submitRunner.run(draft) == .stillPending(.server) }
+        try await waitUntil { transport.requests.count == 1 }
+        XCTAssertTrue(state.submitRunner.isRunning(draft.id))
+
+        await state.signOut()
+
+        XCTAssertFalse(state.submitRunner.isRunning(draft.id), "no run continues under the next user")
+        let endedPending = await run.value
+        XCTAssertTrue(endedPending)
+        XCTAssertTrue(draft.submitPending, "the draft stays queued for its owner")
+        XCTAssertEqual(draft.status, .submitting)
+    }
+
     // MARK: - Helpers
 
     /// A draft Submit has queued: `submitting` with the flag set, last touched `minutesAgo`.

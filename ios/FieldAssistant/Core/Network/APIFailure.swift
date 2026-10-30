@@ -12,7 +12,7 @@ enum APIFailure: Error, Equatable {
     case offline
     /// The server refused the request as it stands (a 400 on a draft route), with its message to show.
     case validation(String)
-    /// The draft or attachment is not on the server (a 404 on an attachment route), with its message.
+    /// The draft or attachment is not on the server (a 404 on a draft or attachment route), with its message.
     case notFound(String)
     /// Anything else, with a message to show.
     case server(String)
@@ -63,7 +63,7 @@ enum APIFailure: Error, Equatable {
         }
     }
 
-    /// Maps a 404 from an attachment route: the draft or the photo is not on the server.
+    /// Maps a 404 from a draft or attachment route: the draft or the photo is not on the server.
     init(notFound response: Components.Responses._Error) {
         let message = (try? response.body.json)?.message ?? HTTPURLResponse.localizedString(forStatusCode: 404)
         self = .notFound(message)

@@ -319,6 +319,8 @@ final class AppState {
         offlineRetry = nil
         draftSync?.stop()
         draftSync = nil
+        // Review may be running a submit too; nothing runs on under the next user.
+        submitRunner.cancelAll()
         recordSync?.stop()
         recordSync = nil
         lookups.clearAll()
