@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
+	"github.com/monroeresidential/fieldassistant/api/internal/blob"
 	"github.com/monroeresidential/fieldassistant/api/internal/config"
 	"github.com/monroeresidential/fieldassistant/api/internal/features/rfi"
 	"github.com/monroeresidential/fieldassistant/api/internal/httpapi"
@@ -134,6 +135,10 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	sessions := auth.NewSessions(st, cfg.SessionSecret, time.Now)
 
 	logger := slog.Default()
+	if _, err := buildBlobs(ctx, cfg.ObjectStore, logger); err != nil {
+		st.Close()
+		return httpapi.Deps{}, nil, err
+	}
 	extractor := llm.NewClient(cfg.LLM.APIKey, cfg.LLM.ExtractModel, "", cfg.LLM.Timeout)
 	lookups := pipeline.NewLookups(st, pc, tokens, lookupCacheTTL, time.Now, logger)
 	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens,
@@ -160,4 +165,27 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 		Jobs:      jobsClient,
 		Records:   mirror,
 	}, st.Close, nil
+}
+
+// buildBlobs builds the attachment object store and, when configured (local
+// development), creates its bucket.
+func buildBlobs(ctx context.Context, oc config.ObjectStoreConfig, logger *slog.Logger) (*blob.S3, error) {
+	s, err := blob.NewS3(blob.S3Config{
+		Endpoint:  oc.Endpoint,
+		Region:    oc.Region,
+		Bucket:    oc.Bucket,
+		AccessKey: oc.AccessKey,
+		SecretKey: oc.SecretKey,
+		PathStyle: true, // Spaces and MinIO both accept path-style addressing.
+	})
+	if err != nil {
+		return nil, err
+	}
+	if oc.CreateBucket {
+		if err := s.EnsureBucket(ctx); err != nil {
+			return nil, err
+		}
+	}
+	logger.Info("object store ready", "endpoint", oc.Endpoint, "bucket", oc.Bucket)
+	return s, nil
 }

@@ -12,7 +12,7 @@ evals:
 	cd api && go test -tags evals ./internal/features/rfi/evals/ -v -run TestEvals
 
 db-up:
-	docker compose -f api/docker-compose.yml up -d postgres
+	docker compose -f api/docker-compose.yml up -d postgres minio
 
 db-down:
 	docker compose -f api/docker-compose.yml down
