@@ -178,7 +178,8 @@ final class DraftServiceTests: XCTestCase {
         let body = try APIStub.jsonObject(try XCTUnwrap(transport.requests.first).body)
         let attachments = try XCTUnwrap(body["attachments"] as? [[String: Any]])
         XCTAssertEqual(attachments.count, 2)
-        XCTAssertEqual(attachments.map { ($0["id"] as? String)?.lowercased() }, [
+        // The raw wire id, so an uppercase regression shows.
+        XCTAssertEqual(attachments.map { $0["id"] as? String }, [
             first.id.uuidString.lowercased(), second.id.uuidString.lowercased(),
         ])
         XCTAssertEqual(attachments.map { $0["filename"] as? String }, ["first.jpg", "second.jpg"])

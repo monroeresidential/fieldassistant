@@ -28,7 +28,7 @@ struct DraftService: Sendable {
             location = .init(lat: lat, lng: lng)
         }
         // The photos the phone will upload, in capture order; a draft without photos sends none.
-        let manifest = draft.photos.sorted { $0.createdAt < $1.createdAt }.map {
+        let manifest = draft.photos.inCaptureOrder().map {
             Components.Schemas.AttachmentManifestItem(
                 id: Self.apiID($0.id),
                 filename: $0.fileName,

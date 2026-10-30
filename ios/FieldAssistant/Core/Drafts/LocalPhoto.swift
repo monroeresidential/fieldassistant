@@ -36,3 +36,13 @@ final class LocalPhoto {
         set { uploadStateRaw = newValue.rawValue }
     }
 }
+
+extension Sequence<LocalPhoto> {
+    /// Capture order: oldest first, ties broken by id. The review screen and the create manifest
+    /// both use it, so the photos the user sees and the order the server gets cannot diverge.
+    func inCaptureOrder() -> [LocalPhoto] {
+        sorted { lhs, rhs in
+            lhs.createdAt != rhs.createdAt ? lhs.createdAt < rhs.createdAt : lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+}

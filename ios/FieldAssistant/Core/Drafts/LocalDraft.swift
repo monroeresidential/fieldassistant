@@ -113,9 +113,11 @@ final class LocalDraft {
 
     /// Sets each photo's upload state from the server's attachment list, matched by id. A photo the
     /// server still has as `pending` keeps its local state; ids the phone does not have are ignored.
+    /// A photo removed on the phone stays removed: the DELETE may not have landed yet, and a stale
+    /// server state must not bring it back.
     private func applyAttachmentStates(_ attachments: [Components.Schemas.Attachment]) {
         let byID = Dictionary(attachments.map { ($0.id.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
-        for photo in photos {
+        for photo in photos where photo.uploadState != .removed {
             guard let attachment = byID[photo.id.uuidString.lowercased()] else { continue }
             switch attachment.state {
             case .stored, .uploaded:

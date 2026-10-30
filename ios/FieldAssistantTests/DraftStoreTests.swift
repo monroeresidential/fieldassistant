@@ -97,6 +97,25 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(draft.photos.count, 3, "an id the phone does not have is ignored")
     }
 
+    @MainActor
+    func testApplyLeavesRemovedPhotosAlone() throws {
+        let (store, _) = try makeStore()
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "Need the slab edge detail")
+        let removed = LocalPhoto(fileName: "removed.jpg", bytes: 10)
+        removed.uploadState = .removed
+        draft.photos = [removed]
+        try store.insert(draft)
+        let attachments = """
+        [{"id":"\(removed.id.uuidString.lowercased())","filename":"removed.jpg","bytes":10,"state":"stored"}]
+        """
+        let response = try decodeResponse(id: draft.id, status: "extracted", result: "null", attachments: attachments)
+
+        draft.apply(response)
+        try store.save()
+
+        XCTAssertEqual(removed.uploadState, .removed, "a server state from before the DELETE does not bring it back")
+    }
+
     func testStatusMappingExtractedAndReviewedAreDraft() {
         XCTAssertEqual(LocalDraftStatus(server: .extracted), .draft)
         XCTAssertEqual(LocalDraftStatus(server: .reviewed), .draft)

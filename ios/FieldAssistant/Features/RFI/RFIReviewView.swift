@@ -409,7 +409,7 @@ struct RFIReviewView: View {
 
     @ViewBuilder
     private var photosRow: some View {
-        let photos = draft.photos.sorted { $0.createdAt < $1.createdAt }
+        let photos = draft.photos.inCaptureOrder()
         if !photos.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HairlineDivider()
