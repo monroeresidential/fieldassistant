@@ -31,7 +31,7 @@ func (s *Server) SubmitDraft(ctx context.Context, req SubmitDraftRequestObject) 
 		return nil, badRequest("draft has unresolved fields: " + strings.Join(unresolved.Fields, ", "))
 	}
 	if err != nil {
-		return nil, s.draftFailure("submit draft", err)
+		return nil, s.attachmentFailure("submit draft", err)
 	}
 	body := SubmitResponse{DraftId: req.DraftId}
 	if out.JobID != 0 {

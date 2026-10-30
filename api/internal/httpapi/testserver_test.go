@@ -391,6 +391,8 @@ type testServer struct {
 	LLM *llmtest.Scripted
 	// Store is the test database behind the server.
 	Store *store.Store
+	// Blobs is the object store behind the drafts pipeline.
+	Blobs *blob.Memory
 }
 
 // newDraftTestServer is newTestServer that also returns the scripted
@@ -458,7 +460,8 @@ func startTestServer(t *testing.T, scheme string) testServer {
 	lookups := pipeline.NewLookups(st, pc, tokens, 10*time.Minute, clock.now, logger)
 	scripted := &llmtest.Scripted{Model: "claude-test-model"}
 	features := map[string]pipeline.Feature{"rfi": rfi.New()}
-	drafts := pipeline.NewDrafts(st, lookups, scripted, pc, tokens, blob.NewMemory(), features, "claude-configured", 20*time.Second, clock.now, logger)
+	blobs := blob.NewMemory()
+	drafts := pipeline.NewDrafts(st, lookups, scripted, pc, tokens, blobs, features, "claude-configured", 20*time.Second, clock.now, logger)
 	// The River client works submit jobs for the whole test; it stops
 	// before the database lock is released.
 	mirror := records.NewMirror(st, map[records.Kind]records.Fetcher{
@@ -493,7 +496,7 @@ func startTestServer(t *testing.T, scheme string) testServer {
 	})
 	api.Start()
 	t.Cleanup(api.Close)
-	return testServer{Server: api, Procore: fp, LLM: scripted, Store: st}
+	return testServer{Server: api, Procore: fp, LLM: scripted, Store: st, Blobs: blobs}
 }
 
 // noRedirectClient returns redirects to the caller instead of following them.

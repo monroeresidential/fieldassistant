@@ -204,12 +204,10 @@ func (d *Drafts) lockedAttachment(ctx context.Context, userID, draftID, attachme
 	return cur, row, nil
 }
 
-// checkAttachments refuses a submit of the user's draft while any of its
-// attachments is pending or failed, with *PendingError. It writes nothing.
-func (d *Drafts) checkAttachments(ctx context.Context, userID, draftID uuid.UUID) error {
-	if _, err := d.Get(ctx, userID, draftID); err != nil {
-		return err
-	}
+// checkAttachments refuses a submit of a draft while any of its attachments
+// is pending or failed, with *PendingError. It writes nothing. Submit calls
+// it only for a draft that is not submitting or submitted.
+func (d *Drafts) checkAttachments(ctx context.Context, draftID uuid.UUID) error {
 	n, err := d.st.Q.CountAttachmentsNotUploadable(ctx, pgtype.UUID{Bytes: draftID, Valid: true})
 	if err != nil {
 		return fmt.Errorf("pipeline: count pending attachments: %w", err)

@@ -18,6 +18,45 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AttachmentState.
+const (
+	AttachmentStateFailed   AttachmentState = "failed"
+	AttachmentStatePending  AttachmentState = "pending"
+	AttachmentStateStored   AttachmentState = "stored"
+	AttachmentStateUploaded AttachmentState = "uploaded"
+)
+
+// Valid indicates whether the value is a known member of the AttachmentState enum.
+func (e AttachmentState) Valid() bool {
+	switch e {
+	case AttachmentStateFailed:
+		return true
+	case AttachmentStatePending:
+		return true
+	case AttachmentStateStored:
+		return true
+	case AttachmentStateUploaded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AttachmentManifestItemContentType.
+const (
+	Imagejpeg AttachmentManifestItemContentType = "image/jpeg"
+)
+
+// Valid indicates whether the value is a known member of the AttachmentManifestItemContentType enum.
+func (e AttachmentManifestItemContentType) Valid() bool {
+	switch e {
+	case Imagejpeg:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreateDraftRequestFeature.
 const (
 	CreateDraftRequestFeatureRfi CreateDraftRequestFeature = "rfi"
@@ -282,6 +321,32 @@ func (e GetRecordsParamsKind) Valid() bool {
 	}
 }
 
+// Attachment defines model for Attachment.
+type Attachment struct {
+	Bytes           int64              `json:"bytes"`
+	Error           *Error             `json:"error,omitempty"`
+	Filename        string             `json:"filename"`
+	Id              openapi_types.UUID `json:"id"`
+	ProcoreUploadId *string            `json:"procore_upload_id,omitempty"`
+
+	// State pending until the bytes are uploaded, stored once they are, uploaded once sent to Procore, failed when Procore could not take them (see error).
+	State AttachmentState `json:"state"`
+}
+
+// AttachmentState pending until the bytes are uploaded, stored once they are, uploaded once sent to Procore, failed when Procore could not take them (see error).
+type AttachmentState string
+
+// AttachmentManifestItem defines model for AttachmentManifestItem.
+type AttachmentManifestItem struct {
+	Bytes       int64                             `json:"bytes"`
+	ContentType AttachmentManifestItemContentType `json:"content_type"`
+	Filename    string                            `json:"filename"`
+	Id          openapi_types.UUID                `json:"id"`
+}
+
+// AttachmentManifestItemContentType defines model for AttachmentManifestItem.ContentType.
+type AttachmentManifestItemContentType string
+
 // AuthExchangeRequest defines model for AuthExchangeRequest.
 type AuthExchangeRequest struct {
 	Code string `json:"code"`
@@ -317,10 +382,12 @@ type Company struct {
 
 // CreateDraftRequest defines model for CreateDraftRequest.
 type CreateDraftRequest struct {
-	CapturedAt time.Time                 `json:"captured_at"`
-	Feature    CreateDraftRequestFeature `json:"feature"`
-	Id         openapi_types.UUID        `json:"id"`
-	Location   *struct {
+	// Attachments The photos the client will upload with putDraftAttachment, in order. Each starts pending.
+	Attachments *[]AttachmentManifestItem `json:"attachments,omitempty"`
+	CapturedAt  time.Time                 `json:"captured_at"`
+	Feature     CreateDraftRequestFeature `json:"feature"`
+	Id          openapi_types.UUID        `json:"id"`
+	Location    *struct {
 		Lat float64 `json:"lat"`
 		Lng float64 `json:"lng"`
 	} `json:"location,omitempty"`
@@ -333,6 +400,7 @@ type CreateDraftRequestFeature string
 
 // DraftResponse defines model for DraftResponse.
 type DraftResponse struct {
+	Attachments  []Attachment         `json:"attachments"`
 	Confidence   map[string]float64   `json:"confidence"`
 	CreatedAt    time.Time            `json:"created_at"`
 	Error        *Error               `json:"error,omitempty"`
@@ -651,6 +719,16 @@ type SaveDraftParams struct {
 	XCompanyId int64 `json:"X-Company-Id"`
 }
 
+// DeleteDraftAttachmentParams defines parameters for DeleteDraftAttachment.
+type DeleteDraftAttachmentParams struct {
+	XCompanyId int64 `json:"X-Company-Id"`
+}
+
+// PutDraftAttachmentParams defines parameters for PutDraftAttachment.
+type PutDraftAttachmentParams struct {
+	XCompanyId int64 `json:"X-Company-Id"`
+}
+
 // SubmitDraftParams defines parameters for SubmitDraft.
 type SubmitDraftParams struct {
 	XCompanyId     int64  `json:"X-Company-Id"`
@@ -755,6 +833,12 @@ type ServerInterface interface {
 	// (PATCH /drafts/{draftId})
 	SaveDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params SaveDraftParams)
 
+	// (DELETE /drafts/{draftId}/attachments/{attachmentId})
+	DeleteDraftAttachment(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, attachmentId openapi_types.UUID, params DeleteDraftAttachmentParams)
+
+	// (PUT /drafts/{draftId}/attachments/{attachmentId})
+	PutDraftAttachment(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, attachmentId openapi_types.UUID, params PutDraftAttachmentParams)
+
 	// (POST /drafts/{draftId}/submit)
 	SubmitDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params SubmitDraftParams)
 
@@ -836,6 +920,16 @@ func (_ Unimplemented) GetDraft(w http.ResponseWriter, r *http.Request, draftId 
 
 // (PATCH /drafts/{draftId})
 func (_ Unimplemented) SaveDraft(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, params SaveDraftParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (DELETE /drafts/{draftId}/attachments/{attachmentId})
+func (_ Unimplemented) DeleteDraftAttachment(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, attachmentId openapi_types.UUID, params DeleteDraftAttachmentParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (PUT /drafts/{draftId}/attachments/{attachmentId})
+func (_ Unimplemented) PutDraftAttachment(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, attachmentId openapi_types.UUID, params PutDraftAttachmentParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1258,6 +1352,132 @@ func (siw *ServerInterfaceWrapper) SaveDraft(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SaveDraft(w, r, draftId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteDraftAttachment operation middleware
+func (siw *ServerInterfaceWrapper) DeleteDraftAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "draftId" -------------
+	var draftId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "draftId", chi.URLParam(r, "draftId"), &draftId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "draftId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", chi.URLParam(r, "attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteDraftAttachmentParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteDraftAttachment(w, r, draftId, attachmentId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutDraftAttachment operation middleware
+func (siw *ServerInterfaceWrapper) PutDraftAttachment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "draftId" -------------
+	var draftId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "draftId", chi.URLParam(r, "draftId"), &draftId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "draftId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "attachmentId" -------------
+	var attachmentId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "attachmentId", chi.URLParam(r, "attachmentId"), &attachmentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "attachmentId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutDraftAttachmentParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutDraftAttachment(w, r, draftId, attachmentId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1927,6 +2147,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/drafts/{draftId}/submit", wrapper.SubmitDraft)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/drafts/{draftId}/attachments/{attachmentId}", wrapper.DeleteDraftAttachment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/drafts/{draftId}/attachments/{attachmentId}", wrapper.PutDraftAttachment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/jobs/{jobId}", wrapper.GetJob)
@@ -2754,6 +2980,223 @@ func (response SaveDraftdefaultJSONResponse) VisitSaveDraftResponse(w http.Respo
 	return err
 }
 
+type DeleteDraftAttachmentRequestObject struct {
+	DraftId      openapi_types.UUID `json:"draftId"`
+	AttachmentId openapi_types.UUID `json:"attachmentId"`
+	Params       DeleteDraftAttachmentParams
+}
+
+type DeleteDraftAttachmentResponseObject interface {
+	VisitDeleteDraftAttachmentResponse(w http.ResponseWriter) error
+}
+
+type DeleteDraftAttachment204Response struct {
+}
+
+func (response DeleteDraftAttachment204Response) VisitDeleteDraftAttachmentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteDraftAttachment400JSONResponse struct{ ErrorJSONResponse }
+
+func (response DeleteDraftAttachment400JSONResponse) VisitDeleteDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteDraftAttachment401JSONResponse Error
+
+func (response DeleteDraftAttachment401JSONResponse) VisitDeleteDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteDraftAttachment403JSONResponse Error
+
+func (response DeleteDraftAttachment403JSONResponse) VisitDeleteDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteDraftAttachment404JSONResponse Error
+
+func (response DeleteDraftAttachment404JSONResponse) VisitDeleteDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteDraftAttachment502JSONResponse Error
+
+func (response DeleteDraftAttachment502JSONResponse) VisitDeleteDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteDraftAttachmentdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response DeleteDraftAttachmentdefaultJSONResponse) VisitDeleteDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDraftAttachmentRequestObject struct {
+	DraftId      openapi_types.UUID `json:"draftId"`
+	AttachmentId openapi_types.UUID `json:"attachmentId"`
+	Params       PutDraftAttachmentParams
+	Body         io.Reader
+}
+
+type PutDraftAttachmentResponseObject interface {
+	VisitPutDraftAttachmentResponse(w http.ResponseWriter) error
+}
+
+type PutDraftAttachment200JSONResponse Attachment
+
+func (response PutDraftAttachment200JSONResponse) VisitPutDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDraftAttachment400JSONResponse struct{ ErrorJSONResponse }
+
+func (response PutDraftAttachment400JSONResponse) VisitPutDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDraftAttachment401JSONResponse Error
+
+func (response PutDraftAttachment401JSONResponse) VisitPutDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDraftAttachment403JSONResponse Error
+
+func (response PutDraftAttachment403JSONResponse) VisitPutDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDraftAttachment404JSONResponse Error
+
+func (response PutDraftAttachment404JSONResponse) VisitPutDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDraftAttachment502JSONResponse Error
+
+func (response PutDraftAttachment502JSONResponse) VisitPutDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutDraftAttachmentdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response PutDraftAttachmentdefaultJSONResponse) VisitPutDraftAttachmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SubmitDraftRequestObject struct {
 	DraftId openapi_types.UUID `json:"draftId"`
 	Params  SubmitDraftParams
@@ -3501,6 +3944,12 @@ type StrictServerInterface interface {
 	// (PATCH /drafts/{draftId})
 	SaveDraft(ctx context.Context, request SaveDraftRequestObject) (SaveDraftResponseObject, error)
 
+	// (DELETE /drafts/{draftId}/attachments/{attachmentId})
+	DeleteDraftAttachment(ctx context.Context, request DeleteDraftAttachmentRequestObject) (DeleteDraftAttachmentResponseObject, error)
+
+	// (PUT /drafts/{draftId}/attachments/{attachmentId})
+	PutDraftAttachment(ctx context.Context, request PutDraftAttachmentRequestObject) (PutDraftAttachmentResponseObject, error)
+
 	// (POST /drafts/{draftId}/submit)
 	SubmitDraft(ctx context.Context, request SubmitDraftRequestObject) (SubmitDraftResponseObject, error)
 
@@ -3871,6 +4320,64 @@ func (sh *strictHandler) SaveDraft(w http.ResponseWriter, r *http.Request, draft
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SaveDraftResponseObject); ok {
 		if err := validResponse.VisitSaveDraftResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteDraftAttachment operation middleware
+func (sh *strictHandler) DeleteDraftAttachment(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, attachmentId openapi_types.UUID, params DeleteDraftAttachmentParams) {
+	var request DeleteDraftAttachmentRequestObject
+
+	request.DraftId = draftId
+	request.AttachmentId = attachmentId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteDraftAttachment(ctx, request.(DeleteDraftAttachmentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteDraftAttachment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteDraftAttachmentResponseObject); ok {
+		if err := validResponse.VisitDeleteDraftAttachmentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutDraftAttachment operation middleware
+func (sh *strictHandler) PutDraftAttachment(w http.ResponseWriter, r *http.Request, draftId openapi_types.UUID, attachmentId openapi_types.UUID, params PutDraftAttachmentParams) {
+	var request PutDraftAttachmentRequestObject
+
+	request.DraftId = draftId
+	request.AttachmentId = attachmentId
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutDraftAttachment(ctx, request.(PutDraftAttachmentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutDraftAttachment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutDraftAttachmentResponseObject); ok {
+		if err := validResponse.VisitPutDraftAttachmentResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

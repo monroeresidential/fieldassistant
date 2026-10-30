@@ -305,3 +305,29 @@ func TestSubmit_FailedAttachment_Refused(t *testing.T) {
 		t.Fatalf("draft status %q, enqueued %v", got.Status, q.drafts)
 	}
 }
+
+func TestSubmit_AlreadySubmitted_IgnoresAttachmentGuard(t *testing.T) {
+	e := newDraftsEnv(t)
+	d := e.withPhotos(t, 1)
+	ctx := context.Background()
+	if err := e.st.Q.SetAttachmentFailed(ctx, db.SetAttachmentFailedParams{
+		ID:           pgtype.UUID{Bytes: d.Attachments[0].ID, Valid: true},
+		ErrorCode:    pgtype.Text{String: "procore_refused", Valid: true},
+		ErrorMessage: pgtype.Text{String: "Photo IMG_A.jpg could not be sent to Procore.", Valid: true},
+	}); err != nil {
+		t.Fatalf("SetAttachmentFailed: %v", err)
+	}
+	e.setStatus(t, d.ID, StatusSubmitted)
+	q := &enqueuer{}
+
+	out, err := e.drafts.Submit(ctx, e.user, d.ID, q)
+	if err != nil {
+		t.Fatalf("Submit = %v, want the already-submitted outcome", err)
+	}
+	if !out.AlreadySubmitted || out.Draft.ID != d.ID {
+		t.Fatalf("Submit = %+v, want AlreadySubmitted for draft %s", out, d.ID)
+	}
+	if len(q.drafts) != 0 {
+		t.Errorf("enqueued %v", q.drafts)
+	}
+}

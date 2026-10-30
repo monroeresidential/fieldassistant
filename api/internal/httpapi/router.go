@@ -56,7 +56,7 @@ func NewRouter(deps Deps) http.Handler {
 
 	r.Get("/healthz", handleHealthz)
 
-	strict := NewStrictHandlerWithOptions(&Server{deps: deps}, nil, StrictHTTPServerOptions{
+	strict := NewStrictHandlerWithOptions(&Server{deps: deps}, []StrictMiddlewareFunc{keepContentType}, StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  badRequestErrorHandler,
 		ResponseErrorHandlerFunc: newStrictErrorHandler(logger),
 	})
