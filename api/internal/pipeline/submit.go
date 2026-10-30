@@ -114,7 +114,14 @@ const maxSubmitPasses = 3
 // A submitting draft whose job finished without settling it (discarded,
 // cancelled, or gone) gets a new job, which runs RunSubmit's check for an
 // earlier attempt's RFI before posting.
+//
+// A draft with any attachment pending or failed is refused first with
+// *PendingError (ErrAttachmentsPending), before anything is validated or
+// stored.
 func (d *Drafts) Submit(ctx context.Context, userID, id uuid.UUID, q SubmitQueue) (SubmitOutcome, error) {
+	if err := d.checkAttachments(ctx, userID, id); err != nil {
+		return SubmitOutcome{}, err
+	}
 	pid := pgtype.UUID{Bytes: id, Valid: true}
 	edits := 0
 	for pass := 0; pass < maxSubmitPasses; pass++ {

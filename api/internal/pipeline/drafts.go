@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/monroeresidential/fieldassistant/api/internal/blob"
 	"github.com/monroeresidential/fieldassistant/api/internal/llm"
 	"github.com/monroeresidential/fieldassistant/api/internal/store"
 	"github.com/monroeresidential/fieldassistant/api/internal/store/db"
@@ -66,9 +67,11 @@ type Draft struct {
 	ModelVersion, PromptVersion string
 	ExtractMS                   int
 	// JobID is the submit job, once one is queued.
-	JobID                int64
-	Result               *Result
-	Error                *DraftError
+	JobID  int64
+	Result *Result
+	Error  *DraftError
+	// Attachments are the draft's photos in manifest order.
+	Attachments          []Attachment
 	CreatedAt, UpdatedAt time.Time
 }
 
@@ -98,6 +101,8 @@ type CreateInput struct {
 	CompanyID, ProjectID int64
 	Feature, Transcript  string
 	CapturedAt           time.Time
+	// Attachments is the photo manifest, at most MaxAttachments entries.
+	Attachments []AttachmentInput
 }
 
 // Drafts runs extraction and submission and stores drafts and their audit
@@ -108,6 +113,7 @@ type Drafts struct {
 	extractor llm.Extractor
 	procore   ProcoreRFIs
 	tokens    AccessTokenSource
+	blobs     blob.Store
 	features  map[string]Feature
 	model     string
 	// llmTimeout is the extractor's per-request timeout; zero means none.
@@ -122,15 +128,15 @@ type Drafts struct {
 }
 
 // NewDrafts builds a Drafts. pc and tokens post submitted drafts to Procore
-// as the draft's user. model is recorded when the extractor reports none.
-// llmTimeout is the extractor's per-request timeout (zero for none); it
-// bounds a detached extraction (see Create). A nil logger means
-// slog.Default().
-func NewDrafts(st *store.Store, lookups *Lookups, extractor llm.Extractor, pc ProcoreRFIs, tokens AccessTokenSource, features map[string]Feature, model string, llmTimeout time.Duration, now func() time.Time, logger *slog.Logger) *Drafts {
+// as the draft's user; blobs holds attachment bytes. model is recorded when
+// the extractor reports none. llmTimeout is the extractor's per-request
+// timeout (zero for none); it bounds a detached extraction (see Create). A
+// nil logger means slog.Default().
+func NewDrafts(st *store.Store, lookups *Lookups, extractor llm.Extractor, pc ProcoreRFIs, tokens AccessTokenSource, blobs blob.Store, features map[string]Feature, model string, llmTimeout time.Duration, now func() time.Time, logger *slog.Logger) *Drafts {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Drafts{st: st, lookups: lookups, extractor: extractor, procore: pc, tokens: tokens, features: features, model: model, llmTimeout: llmTimeout, now: now, log: logger}
+	return &Drafts{st: st, lookups: lookups, extractor: extractor, procore: pc, tokens: tokens, blobs: blobs, features: features, model: model, llmTimeout: llmTimeout, now: now, log: logger}
 }
 
 // createSlack is the time a detached extraction gets beyond the
@@ -144,8 +150,13 @@ const createSlack = 30 * time.Second
 // the draft even when the request that started it is cancelled; a cancelled
 // caller returns its context's error at once and the extraction goes on. A
 // draft with that ID owned by another user or company is reported as
-// ErrNotFound.
+// ErrNotFound. The manifest's attachments are stored pending with the
+// draft; a manifest over MaxAttachments is ErrTooManyAttachments and
+// nothing is extracted or stored.
 func (d *Drafts) Create(ctx context.Context, in CreateInput) (Draft, error) {
+	if len(in.Attachments) > MaxAttachments {
+		return Draft{}, ErrTooManyAttachments
+	}
 	ch := d.flight.DoChan(in.ID.String(), func() (any, error) {
 		fctx := context.WithoutCancel(ctx)
 		if bound := llm.LoopTimeout(d.llmTimeout, maxToolCalls); bound > 0 {
@@ -279,17 +290,20 @@ func (d *Drafts) create(ctx context.Context, in CreateInput) (Draft, error) {
 		if err != nil {
 			return err
 		}
+		if err := d.insertManifest(ctx, q, in); err != nil {
+			return err
+		}
 		return insertAudit(ctx, q, in.CompanyID, in.ID, AuditExtracted, newExtractedAudit(res), extractMS)
 	})
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "drafts_pkey" {
 		// Another process stored this ID first; theirs wins.
 		return d.load(ctx, in.ID)
 	}
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: store draft: %w", err)
 	}
-	return d.toDraft(row)
+	return d.toDraft(ctx, row)
 }
 
 // Get returns the user's draft.
@@ -303,7 +317,7 @@ func (d *Drafts) Get(ctx context.Context, userID, id uuid.UUID) (Draft, error) {
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: load draft: %w", err)
 	}
-	return d.toDraft(row)
+	return d.toDraft(ctx, row)
 }
 
 // GetByJob returns the user's draft whose current submit job is jobID, or
@@ -318,7 +332,7 @@ func (d *Drafts) GetByJob(ctx context.Context, userID uuid.UUID, jobID int64) (D
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: load draft by job: %w", err)
 	}
-	return d.toDraft(row)
+	return d.toDraft(ctx, row)
 }
 
 // SaveEdits stores the reviewer's payload after validating its IDs and dates
@@ -387,7 +401,7 @@ func (d *Drafts) storeEdits(ctx context.Context, cur Draft, payload map[string]a
 	if err != nil {
 		return Draft{}, err
 	}
-	return d.toDraft(row)
+	return d.toDraft(ctx, row)
 }
 
 // warm loads f's lookup kinds for one extraction or validation. A fatal
@@ -488,7 +502,7 @@ func (d *Drafts) List(ctx context.Context, userID uuid.UUID, projectID int64, li
 	}
 	out := make([]Draft, 0, len(rows))
 	for _, r := range rows {
-		dr, err := d.toDraft(r)
+		dr, err := d.toDraft(ctx, r)
 		if err != nil {
 			return nil, err
 		}
@@ -506,18 +520,22 @@ func (d *Drafts) load(ctx context.Context, id uuid.UUID) (Draft, error) {
 	if err != nil {
 		return Draft{}, fmt.Errorf("pipeline: load draft: %w", err)
 	}
-	return d.toDraft(row)
+	return d.toDraft(ctx, row)
 }
 
 // toDraft is fromRow with each unresolved entry's Blocking recomputed for
 // the draft's feature, so a row stored before Blocking existed, or under
-// different RequiredFields, reads the same as a fresh one.
-func (d *Drafts) toDraft(r db.Draft) (Draft, error) {
+// different RequiredFields, reads the same as a fresh one, and with the
+// draft's attachments loaded.
+func (d *Drafts) toDraft(ctx context.Context, r db.Draft) (Draft, error) {
 	dr, err := fromRow(r)
 	if err != nil {
 		return Draft{}, err
 	}
 	dr.Unresolved = markBlocking(d.features[dr.Feature], dr.Unresolved)
+	if dr.Attachments, err = d.attachments(ctx, dr.ID); err != nil {
+		return Draft{}, err
+	}
 	return dr, nil
 }
 

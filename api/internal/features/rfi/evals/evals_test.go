@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/monroeresidential/fieldassistant/api/internal/blob"
 	"github.com/monroeresidential/fieldassistant/api/internal/features/rfi"
 	"github.com/monroeresidential/fieldassistant/api/internal/llm"
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline"
@@ -59,7 +60,7 @@ func TestEvals(t *testing.T) {
 	now := func() time.Time { return clock }
 	lookups := pipeline.NewLookups(st, fp, evalTokens{}, lookupTTL, now, nil)
 	extractor := llm.NewClient(os.Getenv("ANTHROPIC_API_KEY"), model, "", extractTimeout)
-	drafts := pipeline.NewDrafts(st, lookups, extractor, nil, evalTokens{}, map[string]pipeline.Feature{feature.Name(): feature}, model, extractTimeout, now, nil)
+	drafts := pipeline.NewDrafts(st, lookups, extractor, nil, evalTokens{}, blob.NewMemory(), map[string]pipeline.Feature{feature.Name(): feature}, model, extractTimeout, now, nil)
 
 	type row struct {
 		name string

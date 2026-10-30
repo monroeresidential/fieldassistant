@@ -135,13 +135,14 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	sessions := auth.NewSessions(st, cfg.SessionSecret, time.Now)
 
 	logger := slog.Default()
-	if _, err := buildBlobs(ctx, cfg.ObjectStore, logger); err != nil {
+	blobs, err := buildBlobs(ctx, cfg.ObjectStore)
+	if err != nil {
 		st.Close()
 		return httpapi.Deps{}, nil, err
 	}
 	extractor := llm.NewClient(cfg.LLM.APIKey, cfg.LLM.ExtractModel, "", cfg.LLM.Timeout)
 	lookups := pipeline.NewLookups(st, pc, tokens, lookupCacheTTL, time.Now, logger)
-	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens,
+	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens, blobs,
 		map[string]pipeline.Feature{"rfi": rfi.New()}, cfg.LLM.ExtractModel, cfg.LLM.Timeout, time.Now, logger)
 	mirror := records.NewMirror(st, map[records.Kind]records.Fetcher{
 		records.KindRFI: records.RFIFetcher{PC: pc},
@@ -169,7 +170,7 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 
 // buildBlobs builds the attachment object store and, when configured (local
 // development), creates its bucket.
-func buildBlobs(ctx context.Context, oc config.ObjectStoreConfig, logger *slog.Logger) (*blob.S3, error) {
+func buildBlobs(ctx context.Context, oc config.ObjectStoreConfig) (*blob.S3, error) {
 	s, err := blob.NewS3(blob.S3Config{
 		Endpoint:  oc.Endpoint,
 		Region:    oc.Region,
@@ -186,6 +187,5 @@ func buildBlobs(ctx context.Context, oc config.ObjectStoreConfig, logger *slog.L
 			return nil, err
 		}
 	}
-	logger.Info("object store ready", "endpoint", oc.Endpoint, "bucket", oc.Bucket)
 	return s, nil
 }

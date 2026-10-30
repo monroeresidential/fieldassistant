@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/monroeresidential/fieldassistant/api/internal/blob"
 	"github.com/monroeresidential/fieldassistant/api/internal/llm"
 	"github.com/monroeresidential/fieldassistant/api/internal/llm/llmtest"
 	"github.com/monroeresidential/fieldassistant/api/internal/pipeline/pipelinetest"
@@ -109,6 +110,7 @@ type draftsEnv struct {
 	drafts *Drafts
 	llm    *llmtest.Scripted
 	fp     *pipelinetest.FakeProcore
+	blobs  *blob.Memory
 	st     *store.Store
 	clock  *testClock
 	tokens *testTokens
@@ -124,8 +126,9 @@ func newDraftsEnv(t *testing.T) *draftsEnv {
 	}
 	fp.Project = procore.ProjectDetail{ID: testProject, Name: "Tower", DisplayName: "Tower One", TimeZone: "Central Time (US & Canada)"}
 	scripted := &llmtest.Scripted{Model: "claude-test-model"}
-	d := NewDrafts(st, l, scripted, fp, tokens, map[string]Feature{"rfi": draftsFeature{}}, "claude-configured", 20*time.Second, clock.Now, nil)
-	return &draftsEnv{drafts: d, llm: scripted, fp: fp, st: st, clock: clock, tokens: tokens, user: newDBUser(t, st, 42, "Pat Field")}
+	blobs := blob.NewMemory()
+	d := NewDrafts(st, l, scripted, fp, tokens, blobs, map[string]Feature{"rfi": draftsFeature{}}, "claude-configured", 20*time.Second, clock.Now, nil)
+	return &draftsEnv{drafts: d, llm: scripted, fp: fp, blobs: blobs, st: st, clock: clock, tokens: tokens, user: newDBUser(t, st, 42, "Pat Field")}
 }
 
 func newDBUser(t *testing.T, st *store.Store, procoreID int64, name string) uuid.UUID {
