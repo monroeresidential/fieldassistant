@@ -128,6 +128,7 @@ final class DraftStoreTests: XCTestCase {
         {"id":"\(id.uuidString)","feature":"rfi","project_id":99,"status":"\(status)",
          "payload":{"subject":"Slab edge detail at grid C","assignee_ids":[],"distribution_ids":[],"private":false,"draft":false},
          "unresolved":[],"confidence":{},"transcript":"Need the slab edge detail","model_version":"test-model",
+         "attachments":[],
          "result":\(result),
          "created_at":"2026-10-24T15:00:00Z","updated_at":"2026-10-24T15:01:02.345Z"}
         """

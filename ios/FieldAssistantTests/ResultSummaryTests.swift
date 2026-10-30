@@ -87,6 +87,7 @@ final class ResultSummaryTests: XCTestCase {
          "payload":{"subject":"Core through beam at grid C-4","assignee_ids":[12],"distribution_ids":[],
                     "private":false,"draft":false\#(due)},
          "unresolved":[],"confidence":{},"transcript":"Core through beam",
+         "attachments":[],
          "result":{"procore_id":5001,"number":"214","url":"https://sandbox.procore.com/rfis/5001"},
          "created_at":"2026-10-30T19:13:20Z","updated_at":"2026-10-30T19:14:00Z"}
         """#

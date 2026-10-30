@@ -49,6 +49,7 @@ final class RecentDraftsViewTests: XCTestCase {
         {"id":"\(draft.id.uuidString)","feature":"rfi","project_id":7,"status":"submitted",
          "payload":{"subject":"Header size over garage door","assignee_ids":[],"distribution_ids":[],"private":false,"draft":false},
          "unresolved":[],"confidence":{},"transcript":"Header size","model_version":"test-model",
+         "attachments":[],
          "result":{"procore_id":183206,"number":"1","url":"https://sandbox.procore.com/rfi/183206"},
          "created_at":"2026-10-26T15:00:00Z","updated_at":"2026-10-26T15:01:02.345Z"}
         """
