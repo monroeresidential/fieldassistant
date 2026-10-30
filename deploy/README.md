@@ -165,6 +165,38 @@ The API applies database migrations itself on startup, in each stack's own datab
 Before the first deploy each stack runs its branch tag (`:develop` or `:main`).
 After that it runs the digest pinned in `.env`; see Releases and Rollback below.
 
+### Attachments bucket
+
+Draft photos are held in an object store until the submit job has pushed them
+to Procore. Dev and prod share one Space.
+
+**The API refuses to start without the five `OBJECT_STORE_*` lines below, so
+add them to the droplet's `.env.dev` and `.env.prod` before the branch deploys.**
+
+1. In the DigitalOcean control panel, create a Space named
+   `fieldassistant-attachments` in the same region as the droplet, with file
+   listing restricted (the bucket is never public).
+2. Create a Spaces access key scoped to that bucket only (not the backups
+   bucket) and note the key and secret.
+3. Add to both `/opt/fieldassistant/deploy/.env.dev` and `.env.prod`, using the
+   Space's region (for example `nyc3`). Leave `OBJECT_STORE_CREATE_BUCKET`
+   unset: it is for local MinIO only.
+   ```
+   OBJECT_STORE_ENDPOINT=https://<region>.digitaloceanspaces.com
+   OBJECT_STORE_REGION=<region>
+   OBJECT_STORE_BUCKET=fieldassistant-attachments
+   OBJECT_STORE_ACCESS_KEY=...
+   OBJECT_STORE_SECRET_KEY=...
+   ```
+4. Apply the lifecycle rule, which expires everything under `attachments/`
+   after 30 days, as `deploy-prod` (the same `s3cmd` config the backups use;
+   it needs access to this bucket as well, so use a key that covers both
+   buckets or reconfigure `s3cmd` for this one command):
+   ```
+   sudo -H -u deploy-prod s3cmd setlifecycle /opt/fieldassistant/deploy/lifecycle-attachments.xml s3://fieldassistant-attachments
+   ```
+   Check it with `s3cmd getlifecycle s3://fieldassistant-attachments`.
+
 ### Updating the deploy files
 
 Deploys only change the image. After changing `docker-compose.yml`, the
