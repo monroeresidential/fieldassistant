@@ -34,6 +34,23 @@ struct SavedPhoto: Sendable {
     }
 }
 
+/// How `CaptureModel` saves photos, injectable so tests can hold a save open. The defaults are the
+/// real saver. A library photo never gets the draft's location: it keeps the GPS it had, or none.
+struct PhotoWriter: Sendable {
+    var library: @Sendable (_ data: Data, _ draftID: UUID) async throws -> SavedPhoto = { data, draftID in
+        try PhotoSaver.write(data: data, draftID: draftID, location: nil)
+    }
+
+    var camera: @Sendable (
+        _ image: UIImage,
+        _ metadata: [CFString: Any]?,
+        _ draftID: UUID,
+        _ location: CLLocationCoordinate2D?
+    ) async throws -> SavedPhoto = { image, metadata, draftID, location in
+        try PhotoSaver.write(image: image, metadata: metadata, draftID: draftID, location: location)
+    }
+}
+
 /// Writes a photo into the draft's folder as `<photo id>.jpg`, final as saved: at most 2,500 px on
 /// the long edge (never upscaled), JPEG at quality 0.85, and only two pieces of metadata carried
 /// over, the orientation tag and the GPS dictionary. A photo without GPS of its own gets the
@@ -157,9 +174,9 @@ enum PhotoSaver {
         let properties = outputProperties(orientation: orientation, gps: gps, location: location)
         CGImageDestinationAddImage(destination, thumbnail, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { throw PhotoSaverError.encodingFailed }
+        // Sized before the rename, so nothing that can throw runs once the `.jpg` exists.
+        let size = try FileManager.default.attributesOfItem(atPath: tempURL.path(percentEncoded: false))[.size] as? NSNumber
         try FileManager.default.moveItem(at: tempURL, to: finalURL)
-
-        let size = try FileManager.default.attributesOfItem(atPath: finalURL.path(percentEncoded: false))[.size] as? NSNumber
         return SavedPhoto(id: id, fileName: fileName, bytes: size?.int64Value ?? 0)
     }
 }

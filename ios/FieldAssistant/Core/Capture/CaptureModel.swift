@@ -27,6 +27,7 @@ final class CaptureModel {
     @ObservationIgnored private let transcriber: Transcriber
     @ObservationIgnored private let location: LocationOnce?
     @ObservationIgnored private let clock: any Clock<Duration>
+    @ObservationIgnored private let photoWriter: PhotoWriter
     @ObservationIgnored private var timerTask: Task<Void, Never>?
     /// Whether a recognizer stream was started and has not finished yet.
     @ObservationIgnored private var listening = false
@@ -34,8 +35,9 @@ final class CaptureModel {
     @ObservationIgnored private var finalWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     /// Set once the transcript was typed or the capture discarded; later recognizer results are dropped.
     @ObservationIgnored private var ignoresRecognizer = false
-    /// Photos handed to the saver and not yet back; they count against `PhotoLimits.maxPerDraft`.
-    @ObservationIgnored private var savingPhotos = 0
+    /// Photos handed to the saver and not yet back. They count against `PhotoLimits.maxPerDraft`
+    /// and hold Build, so the draft's photos always match the files on disk.
+    private var savingPhotos = 0
     /// Set by `discard()`; a photo whose save finishes afterwards is deleted instead of added.
     @ObservationIgnored private var discarded = false
 
@@ -43,17 +45,22 @@ final class CaptureModel {
         draftID: UUID = UUID(),
         transcriber: Transcriber,
         location: LocationOnce? = nil,
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        photoWriter: PhotoWriter = PhotoWriter()
     ) {
         self.draftID = draftID
         self.transcriber = transcriber
         self.location = location
         self.clock = clock
+        self.photoWriter = photoWriter
     }
 
     var canBuild: Bool {
-        state == .stopped && !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        state == .stopped && !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSavingPhotos
     }
+
+    /// Whether a photo is still being written; Build waits for it.
+    var isSavingPhotos: Bool { savingPhotos > 0 }
 
     /// Asks for permission, then records until `stop()`. Returns once recording has begun (or failed
     /// to); the transcript keeps updating in the background.
@@ -122,28 +129,30 @@ final class CaptureModel {
     }
 
     /// Adds a library photo from the picker's bytes. The saving (downscale, metadata strip, JPEG
-    /// encode) runs off the main actor. Throws `PhotoSaverError.tooManyPhotos` once the draft has
+    /// encode) runs off the main actor. The photo keeps the GPS it had and never gets the draft's
+    /// location. Throws `PhotoSaverError.tooManyPhotos` once the draft has
     /// `PhotoLimits.maxPerDraft` photos.
     func addPhoto(data: Data) async throws {
-        let draftID = draftID, location = coordinate
+        let draftID = draftID, write = photoWriter.library
         try await addPhoto {
-            try PhotoSaver.write(data: data, draftID: draftID, location: location)
+            try await write(data, draftID)
         }
     }
 
-    /// Adds a camera photo with the picker's `mediaMetadata`; see `addPhoto(data:)`.
+    /// Adds a camera photo with the picker's `mediaMetadata`, tagged with the draft's location when
+    /// there is one; see `addPhoto(data:)`.
     func addPhoto(image: UIImage, metadata: [CFString: Any]?) async throws {
-        let draftID = draftID, location = coordinate
+        let draftID = draftID, location = coordinate, write = photoWriter.camera
         // The metadata is an immutable dictionary of property-list values from the camera picker,
         // read but never changed by the saver, so handing it to the background task is safe.
         nonisolated(unsafe) let metadata = metadata
         try await addPhoto {
-            try PhotoSaver.write(image: image, metadata: metadata, draftID: draftID, location: location)
+            try await write(image, metadata, draftID, location)
         }
     }
 
     /// Counts photos still being saved against the limit, so quick taps cannot pass it.
-    private func addPhoto(_ save: @escaping @Sendable () throws -> SavedPhoto) async throws {
+    private func addPhoto(_ save: @escaping @Sendable () async throws -> SavedPhoto) async throws {
         guard photos.count + savingPhotos < PhotoLimits.maxPerDraft else { throw PhotoSaverError.tooManyPhotos }
         savingPhotos += 1
         defer { savingPhotos -= 1 }

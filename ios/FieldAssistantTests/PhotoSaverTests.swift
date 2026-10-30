@@ -105,6 +105,8 @@ final class PhotoSaverTests: XCTestCase {
         let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))[.size] as? Int64)
         XCTAssertGreaterThan(photo.bytes, 0)
         XCTAssertEqual(photo.bytes, size)
+        let folder = try FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path(percentEncoded: false))
+        XCTAssertEqual(folder, [photo.fileName], "the temporary file is renamed into place, nothing left behind")
         XCTAssertEqual(photo.fileName, "\(photo.id.uuidString).jpg")
         XCTAssertEqual(photo.uploadState, .pending)
         XCTAssertNil(photo.failureMessage)
