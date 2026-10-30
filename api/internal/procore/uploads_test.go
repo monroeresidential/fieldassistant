@@ -64,7 +64,7 @@ func TestPostUpload_MultipartFieldsThenFileLast_NoAuth(t *testing.T) {
 		parts            []storagePart
 		readBytes        int64
 	)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotHeader = r.Header.Clone()
 		gotContentLength, gotTE = r.ContentLength, r.TransferEncoding
 		mt, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -150,7 +150,7 @@ func TestPostUpload_MultipartFieldsThenFileLast_NoAuth(t *testing.T) {
 }
 
 func TestPostUpload_Non2xx_APIError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(http.StatusForbidden)
@@ -205,7 +205,7 @@ func TestPostUpload_HTTPRedirect_Refused(t *testing.T) {
 func TestPostUpload_FilenameControlCharsStripped(t *testing.T) {
 	var gotFilename, gotDisposition string
 	var gotInjected bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil {
 			t.Errorf("content type: %v", err)
@@ -234,6 +234,25 @@ func TestPostUpload_FilenameControlCharsStripped(t *testing.T) {
 	}
 	if gotFilename != "IMGX-Injected: 1_0001.jpg" || gotInjected {
 		t.Errorf("filename = %q (disposition %q), injected header %v", gotFilename, gotDisposition, gotInjected)
+	}
+}
+
+// A storage URL that is not https is refused before anything is sent.
+func TestPostUpload_NonHTTPSURL_Refused(t *testing.T) {
+	c := NewClient("http://unused.invalid", nil, nil, nil)
+	for _, raw := range []string{"http://storage.example.com/bucket", "ftp://storage.example.com/bucket", "//storage.example.com/bucket", "::bad"} {
+		r := &countingReader{r: strings.NewReader("abc")}
+		err := c.PostUpload(context.Background(), Upload{UUID: "u", URL: raw}, "a.jpg", 3, r)
+		if !errors.Is(err, ErrUnavailable) {
+			t.Errorf("%q: error %v, want ErrUnavailable", raw, err)
+		}
+		if r.n != 0 {
+			t.Errorf("%q: read %d bytes of the body, want none", raw, r.n)
+		}
+	}
+	err := c.PostUpload(context.Background(), Upload{UUID: "u", URL: "http://storage.example.com/bucket"}, "a.jpg", 3, strings.NewReader("abc"))
+	if err == nil || !strings.Contains(err.Error(), `"http"`) {
+		t.Errorf("error %v, want it to name the scheme", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -55,19 +56,27 @@ func (c *Client) CreateUpload(ctx context.Context, accessToken string, companyID
 // filename and content type image/jpeg as the last part. The form is
 // streamed, not buffered, with its exact Content-Length declared, since the
 // storage service refuses chunked bodies. No Authorization or Procore header
-// is sent, redirects are followed only to https, and the request is bounded
-// by a 60 s timeout as well as ctx.
+// is sent, up.URL must be https and redirects are followed only to https,
+// and the request is bounded by a 60 s timeout as well as ctx.
 //
 // ASCII control characters (CR and LF among them) are dropped from
 // filename, so it cannot break out of the file part's header.
 //
 // A non-2xx answer is *APIError with the body truncated as Procore errors
-// are; a refused redirect and a transport failure are ErrUnavailable. A
+// are; an up.URL that is not https (nothing is sent), a refused redirect and
+// a transport failure are ErrUnavailable. A
 // failure reading r is returned as is. PostUpload has finished with r when it
 // returns.
 func (c *Client) PostUpload(ctx context.Context, up Upload, filename string, size int64, r io.Reader) error {
 	if size < 0 {
 		return fmt.Errorf("procore: upload size %d is negative", size)
+	}
+	if u, err := url.Parse(up.URL); err != nil || u.Scheme != "https" {
+		scheme := ""
+		if u != nil {
+			scheme = u.Scheme
+		}
+		return fmt.Errorf("procore: upload url scheme %q is not https: %w", scheme, ErrUnavailable)
 	}
 	filename = stripControl(filename)
 	keys := make([]string, 0, len(up.Fields))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -80,8 +81,35 @@ func (s *Server) DeleteDraftAttachment(ctx context.Context, req DeleteDraftAttac
 	return DeleteDraftAttachment204Response{}, nil
 }
 
+// filenameControl reports whether r is dropped from a photo filename: an
+// ASCII control (U+0000 to U+001F, U+007F), a C1 control (U+0080 to U+009F)
+// or a Unicode bidi control (U+200E, U+200F, U+202A to U+202E, U+2066 to
+// U+2069), none of which belong in a name shown to people or sent in a
+// multipart header.
+func filenameControl(r rune) bool {
+	switch {
+	case r < 0x20, r >= 0x7f && r <= 0x9f:
+		return true
+	case r == 0x200e, r == 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+		return true
+	}
+	return false
+}
+
+// normalizeFilename drops the characters filenameControl names from s.
+func normalizeFilename(s string) string {
+	return strings.Map(func(r rune) rune {
+		if filenameControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // manifestInput converts a create request's manifest for the pipeline,
-// checking each entry against the contract.
+// checking each entry against the contract. Each filename is normalized
+// (normalizeFilename) before its length is checked, so one that is only
+// control characters is refused as empty.
 func manifestInput(items *[]AttachmentManifestItem) ([]pipeline.AttachmentInput, error) {
 	if items == nil {
 		return nil, nil
@@ -89,6 +117,7 @@ func manifestInput(items *[]AttachmentManifestItem) ([]pipeline.AttachmentInput,
 	out := make([]pipeline.AttachmentInput, 0, len(*items))
 	seen := make(map[uuid.UUID]bool, len(*items))
 	for _, it := range *items {
+		it.Filename = normalizeFilename(it.Filename)
 		switch {
 		case !it.ContentType.Valid():
 			return nil, badRequest("photo content_type must be image/jpeg")

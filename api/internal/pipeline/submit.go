@@ -311,10 +311,12 @@ func (d *Drafts) revalidate(ctx context.Context, userID uuid.UUID, cur Draft, pa
 //   - A submitted draft is left alone, so a retried job never posts twice.
 //   - Before the attempt, the draft's photos are pushed to Procore (see
 //     pushAttachments) and the RFI is posted with their upload ids. A photo
-//     Procore refuses or whose bytes are gone fails the draft with
-//     procore_validation on the attachments field; a push that may succeed
-//     later returns its error before any attempt is marked. An RFI adopted
-//     before posting skips the push.
+//     Procore refuses, whose bytes are gone or whose stored size is not its
+//     record's fails the draft with procore_validation on the attachments
+//     field; a push that may succeed later returns its error before any
+//     attempt is marked. An RFI adopted before posting skips the push. The
+//     access token is fetched again after the push, so the POST never uses
+//     one the push outlived.
 //   - Before posting, an attempt audit event is written; if that write fails
 //     the attempt stops without posting. A crash or a lost write after the
 //     POST therefore always leaves evidence for the next attempt.
@@ -397,7 +399,7 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 			d.auditAttemptFailed(ctx, cur, nil, err, 0, false)
 			return fmt.Errorf("pipeline: look for an earlier attempt's rfi: %w", err)
 		case n == 1:
-			if fail := uncoveredPhotoFailure(cur, prior.uploadIDs); fail != nil {
+			if fail := uncoveredPhotoFailure(cur, rfi, prior.uploadIDs); fail != nil {
 				// Adopting would drop the photo and posting would make a
 				// second RFI: refuse, keep the run unknown.
 				d.log.Warn("earlier attempt's rfi lacks a photo; not adopting", "draft_id", cur.ID, "procore_id", rfi.ID)
@@ -423,13 +425,25 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 
 	// Photos go up before the attempt marker: a push that fails leaves no
 	// attempt whose RFI the next run must look for.
-	uploadIDs, fail, err := d.pushAttachments(ctx, token, cur)
+	uploadIDs, fail, err := d.pushAttachments(ctx, cur)
 	if err != nil {
-		d.auditAttemptFailed(ctx, cur, nil, err, 0, false)
+		// Audit the retry even when the job's context ended the push.
+		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postWriteTimeout)
+		d.auditAttemptFailed(actx, cur, nil, err, 0, false)
+		cancel()
 		return err
 	}
 	if fail != nil {
 		return d.failSubmit(ctx, cur, *fail)
+	}
+	// The push may have outlived the token fetched above; fetch it again
+	// for the POST and anything after it.
+	if token, err = d.tokens.AccessToken(ctx, cur.UserID); err != nil {
+		if errors.Is(err, auth.ErrReauthRequired) {
+			return d.failSubmit(ctx, cur, submitFailure{code: CodeReauthRequired, message: "Sign in to Procore again, then submit.", cause: err})
+		}
+		d.auditAttemptFailed(ctx, cur, nil, err, 0, false)
+		return fmt.Errorf("pipeline: access token: %w", err)
 	}
 	body.Question.UploadIDs = uploadIDs
 	request, err := json.Marshal(map[string]procore.RFICreate{"rfi": body})

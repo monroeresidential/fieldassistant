@@ -179,6 +179,36 @@ func TestCreateDraft_WithManifest_ReturnsPendingAttachments(t *testing.T) {
 	wantMessage(t, res, b, http.StatusBadRequest, "bad_request", "photo content_type must be image/jpeg")
 }
 
+func TestCreateDraft_ManifestFilenames_ControlCharsStripped(t *testing.T) {
+	ts, token := newDraftServer(t)
+	body := createDraftBody(uuid.New())
+	items := manifest(2)
+	// ASCII, C1 and bidi controls go; the rest of the name stays.
+	items[0].Filename = "IMG\r\n\x00\x7f\u0085\u009f_\u202egpj.0001\u202c\u200e\u200f\u2066\u2069.jpg"
+	items[1].Filename = "Façade é.jpg"
+	body.Attachments = &items
+
+	res, b := draftCall(t, ts.Server, http.MethodPost, "/v1/drafts", token, draftCompany, body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d; body %s", res.StatusCode, b)
+	}
+	d := decode[DraftResponse](t, b)
+	if len(d.Attachments) != 2 || d.Attachments[0].Filename != "IMG_gpj.0001.jpg" || d.Attachments[1].Filename != "Façade é.jpg" {
+		t.Fatalf("attachments = %+v", d.Attachments)
+	}
+	if got := getDraft(t, ts.Server, token, body.Id).Attachments; got[0].Filename != "IMG_gpj.0001.jpg" {
+		t.Errorf("stored filename = %q", got[0].Filename)
+	}
+
+	// A name of control characters only is empty once normalized.
+	body = createDraftBody(uuid.New())
+	items = manifest(1)
+	items[0].Filename = "\u202e\r\n\u0085"
+	body.Attachments = &items
+	res, b = draftCall(t, ts.Server, http.MethodPost, "/v1/drafts", token, draftCompany, body)
+	wantMessage(t, res, b, http.StatusBadRequest, "bad_request", "photo filename must be 1 to 255 characters")
+}
+
 func TestPutAttachment_StoresAndReturns200(t *testing.T) {
 	ts, token := newDraftServer(t)
 	d := createDraftWithPhotos(t, ts.Server, token, 1)

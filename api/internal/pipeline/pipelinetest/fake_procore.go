@@ -241,11 +241,15 @@ func (f *FakeProcore) CreateUpload(_ context.Context, token string, companyID, p
 }
 
 // PostUpload records a "PostUpload" call, reads r fully and appends what
-// would have been sent to Posted. It makes no HTTP request and checks
-// nothing. Its error is the one scripted in Err/ErrForToken, else PostErr,
-// else the error reading r. OnPostUpload runs when that is nil.
-func (f *FakeProcore) PostUpload(_ context.Context, up procore.Upload, filename string, _ int64, r io.Reader) error {
+// would have been sent to Posted. It makes no HTTP request. Its error is the
+// one scripted in Err/ErrForToken, else PostErr, else the error reading r,
+// else an error when the bytes read are not size, as the real client fails
+// a body that is short or long. OnPostUpload runs when that is nil.
+func (f *FakeProcore) PostUpload(_ context.Context, up procore.Upload, filename string, size int64, r io.Reader) error {
 	n, readErr := io.Copy(io.Discard, r)
+	if readErr == nil && n != size {
+		readErr = fmt.Errorf("pipelinetest: read %d bytes, size says %d", n, size)
+	}
 	order := make([]string, 0, len(up.Fields)+1)
 	for k := range up.Fields {
 		order = append(order, k)

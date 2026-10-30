@@ -529,7 +529,7 @@ func TestRunSubmit_RecoveredRFI_UncoveredPhoto_RefusesWithoutPosting(t *testing.
 	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
 		t.Fatalf("RunSubmit = %v, want nil (not retried)", err)
 	}
-	msg := fmt.Sprintf("An earlier attempt created this RFI without photo %s. Remove the photo and submit again, or add it in Procore.", d.Attachments[1].Filename)
+	msg := fmt.Sprintf("An earlier attempt created RFI 214 without photo %s. Remove the photo and submit again, or add it in Procore.", d.Attachments[1].Filename)
 	got := e.mustGet(t, d.ID)
 	if got.Status != StatusFailed || got.Error == nil || got.Error.Code != CodeProcoreValidation || got.Error.Message != msg {
 		t.Fatalf("draft = status %q error %+v", got.Status, got.Error)
@@ -650,5 +650,246 @@ func TestRunSubmit_StorageErrorCodes_TransientOrRefused(t *testing.T) {
 				t.Errorf("RunSubmit = %v, draft %q, photo %q %+v; want refused", err, got.Status, first.State, first.Error)
 			}
 		})
+	}
+}
+
+func TestUncoveredPhotoFailure_NamesRFIByNumberElseID(t *testing.T) {
+	cur := Draft{Attachments: []Attachment{
+		{ID: uuid.New(), Filename: "IMG_A.jpg", State: AttachmentUploaded, ProcoreUploadID: "u1"},
+		{ID: uuid.New(), Filename: "IMG_B.jpg", State: AttachmentStored},
+	}}
+	for _, tc := range []struct {
+		rfi  procore.RFI
+		want string
+	}{
+		{procore.RFI{ID: 501, Number: "214"}, "An earlier attempt created RFI 214 without photo IMG_B.jpg. Remove the photo and submit again, or add it in Procore."},
+		{procore.RFI{ID: 501}, "An earlier attempt created RFI 501 without photo IMG_B.jpg. Remove the photo and submit again, or add it in Procore."},
+	} {
+		fail := uncoveredPhotoFailure(cur, tc.rfi, []string{"u1"})
+		if fail == nil || fail.message != tc.want || len(fail.invalid) != 1 || fail.invalid[0].Message != tc.want {
+			t.Errorf("rfi %+v: failure = %+v, want message %q", tc.rfi, fail, tc.want)
+		}
+	}
+	if fail := uncoveredPhotoFailure(cur, procore.RFI{ID: 501}, []string{"u1"}); fail == nil {
+		t.Error("uncovered photo b passed")
+	}
+	cur.Attachments[1].ProcoreUploadID = "u2"
+	if fail := uncoveredPhotoFailure(cur, procore.RFI{ID: 501}, []string{"u1", "u2"}); fail != nil {
+		t.Errorf("covered photos refused: %+v", fail)
+	}
+}
+
+func TestRunSubmit_PhotoRefused_DeleteThenResubmit_PostsRemaining(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.fp.Uploads = scriptedUploads()
+	e.fp.PostErr = &procore.APIError{Status: 403}
+	d, bodies := e.storedPhotos(t, 2)
+	e.submit(t, d)
+	ctx := context.Background()
+
+	// Storage refuses photo a: the draft fails on the attachments field.
+	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
+		t.Fatalf("first run = %v, want nil (not retried)", err)
+	}
+	photoFailed(t, e, d, AttachmentErrProcoreRefused,
+		fmt.Sprintf("Photo %s could not be sent to Procore. Remove it and submit again.", d.Attachments[0].Filename))
+
+	// Removing the refused photo clears the photo flag and the failure.
+	if err := e.drafts.DeleteAttachment(ctx, e.user, d.ID, d.Attachments[0].ID); err != nil {
+		t.Fatalf("DeleteAttachment: %v", err)
+	}
+	got := e.mustGet(t, d.ID)
+	for _, u := range got.Unresolved {
+		if u.Field == AttachmentsField {
+			t.Fatalf("attachments flag left after the photo was removed: %+v", u)
+		}
+	}
+	if got.Status != StatusReviewed || got.Error != nil || len(got.Attachments) != 1 || got.Attachments[0].ID != d.Attachments[1].ID {
+		t.Fatalf("after delete: status %q error %+v attachments %+v", got.Status, got.Error, got.Attachments)
+	}
+
+	// The resubmit is accepted and posts the remaining photo only.
+	e.fp.PostErr = nil
+	e.fp.Created = procore.RFICreated{ID: 501, Number: "214"}
+	if _, err := e.drafts.Submit(ctx, e.user, d.ID, &enqueuer{}); err != nil {
+		var unresolved *ErrUnresolved
+		if errors.As(err, &unresolved) {
+			t.Fatalf("Submit = %v: a stale photo flag blocked the resubmit", err)
+		}
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if posted := e.postedRFI(); posted == nil || !reflect.DeepEqual(posted.Question.UploadIDs, []string{"u2"}) {
+		t.Fatalf("posted rfi = %+v, want upload_ids [u2]", posted)
+	}
+	got = e.mustGet(t, d.ID)
+	if got.Status != StatusSubmitted || got.Result == nil || got.Result.ProcoreID != 501 || got.Error != nil {
+		t.Fatalf("draft = status %q result %+v error %+v", got.Status, got.Result, got.Error)
+	}
+	for _, u := range got.Unresolved {
+		if u.Field == AttachmentsField {
+			t.Errorf("submitted draft still reports a photo failure: %+v", u)
+		}
+	}
+	if a := got.Attachments; len(a) != 1 || a[0].State != AttachmentUploaded || a[0].ProcoreUploadID != "u2" {
+		t.Errorf("attachments = %+v, want photo b uploaded as u2", a)
+	}
+	if p := e.fp.Posted[len(e.fp.Posted)-1]; p.Filename != d.Attachments[1].Filename || p.Bytes != len(bodies[1]) {
+		t.Errorf("last storage post = %+v, want photo b", p)
+	}
+	if keys := e.blobs.Keys(); len(keys) != 0 {
+		t.Errorf("objects left after submit: %v", keys)
+	}
+}
+
+func TestDeleteAttachment_ClearsOnlyTheAttachmentsFlag(t *testing.T) {
+	e := newDraftsEnv(t)
+	ctx := context.Background()
+	d, _ := e.storedPhotos(t, 2)
+	flags := []Unresolved{
+		{Field: AttachmentsField, Reason: ReasonProcoreValidation, Message: "Photo IMG_A.jpg could not be sent to Procore. Remove it and submit again.", Candidates: []LookupRow{}},
+		{Field: "location_id", Reason: ReasonNotInLookup, Message: "pick a location", Candidates: []LookupRow{}},
+	}
+	raw, err := json.Marshal(flags)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.Q.SetDraftFailed(ctx, db.SetDraftFailedParams{
+		ID:           pgtype.UUID{Bytes: d.ID, Valid: true},
+		ErrorCode:    pgtype.Text{String: CodeProcoreValidation, Valid: true},
+		ErrorMessage: pgtype.Text{String: flags[0].Message, Valid: true},
+		Unresolved:   raw,
+	}); err != nil {
+		t.Fatalf("set failed: %v", err)
+	}
+	before := e.mustGet(t, d.ID)
+
+	if err := e.drafts.DeleteAttachment(ctx, e.user, d.ID, d.Attachments[0].ID); err != nil {
+		t.Fatalf("DeleteAttachment: %v", err)
+	}
+	got := e.mustGet(t, d.ID)
+	if len(got.Unresolved) != 1 || got.Unresolved[0].Field != "location_id" || got.Unresolved[0].Message != "pick a location" {
+		t.Errorf("unresolved = %+v, want only the location_id flag", got.Unresolved)
+	}
+	if got.Status != StatusReviewed || got.Error != nil {
+		t.Errorf("status %q error %+v, want reviewed without the photo failure", got.Status, got.Error)
+	}
+	if !sameJSONBytes(t, got.Payload(), before.Payload()) {
+		t.Errorf("payload changed: %s, was %s", got.Payload(), before.Payload())
+	}
+	if evs := auditsOfKind(t, e, d.ID, AuditEdited); len(evs) != 1 {
+		t.Errorf("%d edited audit events, want 1", len(evs))
+	}
+
+	// Without a photo flag, a delete writes nothing to the draft.
+	if err := e.drafts.DeleteAttachment(ctx, e.user, d.ID, d.Attachments[1].ID); err != nil {
+		t.Fatalf("second DeleteAttachment: %v", err)
+	}
+	if again := e.mustGet(t, d.ID); !again.UpdatedAt.Equal(got.UpdatedAt) || len(auditsOfKind(t, e, d.ID, AuditEdited)) != 1 {
+		t.Errorf("draft written by a delete with no photo flag: updated %s, was %s", again.UpdatedAt, got.UpdatedAt)
+	}
+}
+
+// sameJSONBytes reports whether a and b hold the same JSON value.
+func sameJSONBytes(t *testing.T, a, b []byte) bool {
+	t.Helper()
+	var x, y any
+	if err := json.Unmarshal(a, &x); err != nil {
+		t.Fatalf("decode %s: %v", a, err)
+	}
+	if err := json.Unmarshal(b, &y); err != nil {
+		t.Fatalf("decode %s: %v", b, err)
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+func TestRunSubmit_SizeMismatch_FailsWithoutSending(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.fp.Uploads = scriptedUploads()
+	d, _ := e.storedPhotos(t, 2)
+	e.submit(t, d)
+	ctx := context.Background()
+	// The object under photo a's key no longer has the recorded size.
+	other := jpegBody(500)
+	if err := e.blobs.Put(ctx, d.Attachments[0].ObjectKey, "image/jpeg", int64(len(other)), bytes.NewReader(other)); err != nil {
+		t.Fatalf("replace object: %v", err)
+	}
+
+	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
+		t.Fatalf("RunSubmit = %v, want nil (not retried)", err)
+	}
+	if n, m := e.fp.CallCount("CreateUpload"), e.fp.CallCount("PostUpload"); n != 0 || m != 0 {
+		t.Errorf("CreateUpload %d PostUpload %d, want none", n, m)
+	}
+	photoFailed(t, e, d, AttachmentErrSizeMismatch,
+		fmt.Sprintf("Photo %s on the server does not match its record. Remove it and submit again.", d.Attachments[0].Filename))
+}
+
+func TestRunSubmit_PushFetchesTokenPerCall(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.fp.Uploads = scriptedUploads()
+	e.fp.Created = procore.RFICreated{ID: 501}
+	d, _ := e.storedPhotos(t, 2)
+	e.submit(t, d)
+
+	// The token is refreshed while photo a goes up.
+	e.fp.OnPostUpload = func() { e.tokens.setToken(e.user, "tok2") }
+	if err := e.drafts.RunSubmit(context.Background(), d.ID); err != nil {
+		t.Fatalf("RunSubmit: %v", err)
+	}
+	var got []string
+	for _, c := range e.fp.Calls() {
+		if c.Method == "CreateUpload" || c.Method == "CreateRFI" {
+			got = append(got, c.Method+":"+c.AccessToken)
+		}
+	}
+	if want := []string{"CreateUpload:tok", "CreateUpload:tok2", "CreateRFI:tok2"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("tokens used = %v, want %v", got, want)
+	}
+}
+
+func TestRunSubmit_TokenLostMidPush_ReauthRequired(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.fp.Uploads = scriptedUploads()
+	d, _ := e.storedPhotos(t, 2)
+	e.submit(t, d)
+
+	e.fp.OnPostUpload = func() { e.tokens.setErr(e.user, fmt.Errorf("refresh: %w", auth.ErrReauthRequired)) }
+	if err := e.drafts.RunSubmit(context.Background(), d.ID); err != nil {
+		t.Fatalf("RunSubmit = %v, want nil", err)
+	}
+	got := e.mustGet(t, d.ID)
+	if got.Status != StatusFailed || got.Error == nil || got.Error.Code != CodeReauthRequired {
+		t.Fatalf("draft = status %q error %+v", got.Status, got.Error)
+	}
+	if n := e.fp.CallCount("CreateUpload"); n != 1 {
+		t.Errorf("CreateUpload called %d times, want 1", n)
+	}
+	if n := e.fp.CallCount("CreateRFI"); n != 0 {
+		t.Errorf("CreateRFI called %d times", n)
+	}
+	if atts := e.draftAttachments(t, d.ID); atts[0].State != AttachmentUploaded || atts[1].State != AttachmentStored || atts[1].Error != nil {
+		t.Errorf("attachments = %q, %q %+v; want uploaded, stored", atts[0].State, atts[1].State, atts[1].Error)
+	}
+}
+
+func TestRunSubmit_PushTransient_AuditsAfterContextEnds(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.fp.Uploads = scriptedUploads()
+	d, _ := e.storedPhotos(t, 2)
+	e.submit(t, d)
+
+	// The job's context ends right after the first storage POST, so storing
+	// its upload id fails and the push returns a transient error.
+	ctx, cancel := context.WithCancel(context.Background())
+	e.fp.OnPostUpload = cancel
+	if err := e.drafts.RunSubmit(ctx, d.ID); err == nil {
+		t.Fatal("RunSubmit = nil, want an error for River to retry")
+	}
+	var r failedAudit
+	if err := json.Unmarshal(lastAudit(t, e, d.ID, AuditFailed).ProcoreResponse, &r); err != nil || !r.BeforePost || r.UnknownOutcome {
+		t.Errorf("failed audit = %+v (%v), want before_post written despite the ended context", r, err)
 	}
 }

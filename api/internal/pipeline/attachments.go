@@ -3,6 +3,7 @@ package pipeline
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -162,12 +163,18 @@ func (d *Drafts) StoreAttachment(ctx context.Context, userID, draftID, attachmen
 }
 
 // DeleteAttachment removes one of the user's draft's attachments and its
-// object. The object is deleted best effort: a failure is logged and the
-// row is still gone. A submitting or submitted draft is ErrDraftLocked; an
-// attachment not on the draft is ErrAttachmentNotFound.
+// object. A photo failure flagged on the draft (an unresolved entry on
+// AttachmentsField) is cleared first, so a later submit does not report a
+// photo that is gone (see clearAttachmentFlags). The object is deleted best
+// effort: a failure is logged and the row is still gone. A submitting or
+// submitted draft is ErrDraftLocked; an attachment not on the draft is
+// ErrAttachmentNotFound.
 func (d *Drafts) DeleteAttachment(ctx context.Context, userID, draftID, attachmentID uuid.UUID) error {
-	_, row, err := d.lockedAttachment(ctx, userID, draftID, attachmentID)
+	cur, row, err := d.lockedAttachment(ctx, userID, draftID, attachmentID)
 	if err != nil {
+		return err
+	}
+	if err := d.clearAttachmentFlags(ctx, cur); err != nil {
 		return err
 	}
 	if err := d.st.Q.DeleteAttachment(ctx, db.DeleteAttachmentParams{ID: row.ID, DraftID: row.DraftID}); err != nil {
@@ -178,6 +185,34 @@ func (d *Drafts) DeleteAttachment(ctx context.Context, userID, draftID, attachme
 		d.log.Warn("delete attachment object", "draft_id", draftID, "attachment_id", attachmentID, "key", key, "error", err)
 	}
 	return nil
+}
+
+// clearAttachmentFlags drops cur's unresolved entries on AttachmentsField
+// and stores the rest as SaveEdits stores an edit of an unchanged payload:
+// status reviewed, the failure error cleared, an edited audit event. It
+// writes nothing when there is no such entry. A draft that became submitting
+// or submitted since cur was read is ErrDraftLocked.
+func (d *Drafts) clearAttachmentFlags(ctx context.Context, cur Draft) error {
+	kept := make([]Unresolved, 0, len(cur.Unresolved))
+	for _, u := range cur.Unresolved {
+		if u.Field != AttachmentsField {
+			kept = append(kept, u)
+		}
+	}
+	if len(kept) == len(cur.Unresolved) {
+		return nil
+	}
+	payload := map[string]any{}
+	if raw := cur.Payload(); len(raw) > 0 {
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return fmt.Errorf("pipeline: decode payload: %w", err)
+		}
+	}
+	_, err := d.storeEdits(ctx, cur, payload, kept, false)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrDraftLocked
+	}
+	return err
 }
 
 // lockedAttachment loads the user's draft and one of its attachments for a
