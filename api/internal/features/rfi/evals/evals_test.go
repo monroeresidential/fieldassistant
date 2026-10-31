@@ -116,7 +116,7 @@ func TestEvals(t *testing.T) {
 		}
 		rows = append(rows, row{name: c.File, s: s, ms: d.ExtractMS})
 	}
-	for _, m := range []string{"ListProjectUsers", "ListLocations", "ListSpecSections", "ListCostCodes", "ListVendors", "ListDrawings"} {
+	for _, m := range []string{"ListProjectUsers", "ListPotentialRFIManagers", "ListLocations", "ListSpecSections", "ListCostCodes", "ListVendors", "ListDrawings"} {
 		if n := fp.CallCount(m); n > 0 {
 			t.Errorf("%s reached Procore %d times; the fixture cache should serve every lookup", m, n)
 		}

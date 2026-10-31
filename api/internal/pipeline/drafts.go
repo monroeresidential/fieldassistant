@@ -115,7 +115,10 @@ type Drafts struct {
 	tokens    AccessTokenSource
 	blobs     blob.Store
 	features  map[string]Feature
-	model     string
+	// featureStates, when set, is told the outcome of each RFI create (see
+	// Features.RecordCreateOutcome). Nil is allowed.
+	featureStates *Features
+	model         string
 	// llmTimeout is the extractor's per-request timeout; zero means none.
 	llmTimeout time.Duration
 	now        func() time.Time
@@ -137,6 +140,12 @@ func NewDrafts(st *store.Store, lookups *Lookups, extractor llm.Extractor, pc Pr
 		logger = slog.Default()
 	}
 	return &Drafts{st: st, lookups: lookups, extractor: extractor, procore: pc, tokens: tokens, blobs: blobs, features: features, model: model, llmTimeout: llmTimeout, now: now, log: logger}
+}
+
+// SetFeatureStates gives d the Features to tell each RFI create's outcome,
+// for the create_outcome probe. Call it before d is used.
+func (d *Drafts) SetFeatureStates(f *Features) {
+	d.featureStates = f
 }
 
 // createSlack is the time a detached extraction gets beyond the
@@ -233,7 +242,7 @@ func (d *Drafts) create(ctx context.Context, in CreateInput) (Draft, error) {
 		MaxToolCalls: maxToolCalls,
 	}
 	start := time.Now()
-	res, err := d.extractor.Extract(ctx, req, toolHandler(sets))
+	res, err := d.extractor.Extract(ctx, req, toolHandler(toolSets(f, sets)))
 	elapsed := time.Since(start)
 	if err != nil {
 		d.log.Warn("extraction failed", "draft_id", in.ID, "feature", f.Name(), "turns", len(res.Turns), "error", err)
@@ -595,11 +604,23 @@ var toolDescriptions = map[LookupKind]string{
 	KindDrawings:     "Search the project's drawings by sheet number, title or discipline.",
 }
 
-// tools offers a list_<kind> tool for every lookup the user can read, then
-// the final tool.
+// toolSets is the part of the warmed sets the extractor may search: the
+// kinds in ToolKinds(f).
+func toolSets(f Feature, sets map[LookupKind]LookupSet) map[LookupKind]LookupSet {
+	out := map[LookupKind]LookupSet{}
+	for _, k := range ToolKinds(f) {
+		if set, ok := sets[k]; ok {
+			out[k] = set
+		}
+	}
+	return out
+}
+
+// tools offers a list_<kind> tool for every lookup in ToolKinds(f) the user
+// can read, then the final tool.
 func tools(f Feature, sets map[LookupKind]LookupSet) []llm.Tool {
 	var out []llm.Tool
-	for _, k := range f.LookupKinds() {
+	for _, k := range ToolKinds(f) {
 		set, ok := sets[k]
 		if !ok || set.Unavailable {
 			continue

@@ -114,6 +114,21 @@ func (e DraftResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for FeatureStateFeature.
+const (
+	FeatureStateFeatureRfi FeatureStateFeature = "rfi"
+)
+
+// Valid indicates whether the value is a known member of the FeatureStateFeature enum.
+func (e FeatureStateFeature) Valid() bool {
+	switch e {
+	case FeatureStateFeatureRfi:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ImpactStatus.
 const (
 	No         ImpactStatus = "no"
@@ -167,6 +182,7 @@ const (
 	LookupResponseKindCostCodes    LookupResponseKind = "cost_codes"
 	LookupResponseKindDrawings     LookupResponseKind = "drawings"
 	LookupResponseKindLocations    LookupResponseKind = "locations"
+	LookupResponseKindRfiManagers  LookupResponseKind = "rfi_managers"
 	LookupResponseKindSpecSections LookupResponseKind = "spec_sections"
 	LookupResponseKindUsers        LookupResponseKind = "users"
 	LookupResponseKindVendors      LookupResponseKind = "vendors"
@@ -180,6 +196,8 @@ func (e LookupResponseKind) Valid() bool {
 	case LookupResponseKindDrawings:
 		return true
 	case LookupResponseKindLocations:
+		return true
+	case LookupResponseKindRfiManagers:
 		return true
 	case LookupResponseKindSpecSections:
 		return true
@@ -281,6 +299,7 @@ const (
 	GetLookupParamsKindCostCodes    GetLookupParamsKind = "cost_codes"
 	GetLookupParamsKindDrawings     GetLookupParamsKind = "drawings"
 	GetLookupParamsKindLocations    GetLookupParamsKind = "locations"
+	GetLookupParamsKindRfiManagers  GetLookupParamsKind = "rfi_managers"
 	GetLookupParamsKindSpecSections GetLookupParamsKind = "spec_sections"
 	GetLookupParamsKindUsers        GetLookupParamsKind = "users"
 	GetLookupParamsKindVendors      GetLookupParamsKind = "vendors"
@@ -294,6 +313,8 @@ func (e GetLookupParamsKind) Valid() bool {
 	case GetLookupParamsKindDrawings:
 		return true
 	case GetLookupParamsKindLocations:
+		return true
+	case GetLookupParamsKindRfiManagers:
 		return true
 	case GetLookupParamsKindSpecSections:
 		return true
@@ -433,6 +454,24 @@ type DraftResult struct {
 type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// FeatureState defines model for FeatureState.
+type FeatureState struct {
+	Available bool                `json:"available"`
+	Feature   FeatureStateFeature `json:"feature"`
+
+	// Reason Why the feature is unavailable, in Procore's words when Procore gave any. Absent when available.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// FeatureStateFeature defines model for FeatureState.Feature.
+type FeatureStateFeature string
+
+// FeaturesResponse defines model for FeaturesResponse.
+type FeaturesResponse struct {
+	Features  []FeatureState `json:"features"`
+	FetchedAt time.Time      `json:"fetched_at"`
 }
 
 // Impact defines model for Impact.
@@ -740,6 +779,14 @@ type GetJobParams struct {
 	XCompanyId int64 `json:"X-Company-Id"`
 }
 
+// GetProjectFeaturesParams defines parameters for GetProjectFeatures.
+type GetProjectFeaturesParams struct {
+	XCompanyId int64 `json:"X-Company-Id"`
+
+	// CacheControl `no-cache` asks Procore again.
+	CacheControl *string `json:"Cache-Control,omitempty"`
+}
+
 // GetLookupParams defines parameters for GetLookup.
 type GetLookupParams struct {
 	XCompanyId  int64   `json:"X-Company-Id"`
@@ -851,6 +898,9 @@ type ServerInterface interface {
 	// (PUT /me/selection)
 	PutMeSelection(w http.ResponseWriter, r *http.Request)
 
+	// (GET /projects/{projectId}/features)
+	GetProjectFeatures(w http.ResponseWriter, r *http.Request, projectId int64, params GetProjectFeaturesParams)
+
 	// (GET /projects/{projectId}/lookups/{kind})
 	GetLookup(w http.ResponseWriter, r *http.Request, projectId int64, kind GetLookupParamsKind, params GetLookupParams)
 
@@ -950,6 +1000,11 @@ func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
 
 // (PUT /me/selection)
 func (_ Unimplemented) PutMeSelection(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// (GET /projects/{projectId}/features)
+func (_ Unimplemented) GetProjectFeatures(w http.ResponseWriter, r *http.Request, projectId int64, params GetProjectFeaturesParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1646,6 +1701,79 @@ func (siw *ServerInterfaceWrapper) PutMeSelection(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetProjectFeatures operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectFeatures(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", chi.URLParam(r, "projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetProjectFeaturesParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Company-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Company-Id")]; found {
+		var XCompanyId int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Company-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Company-Id", valueList[0], &XCompanyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Company-Id", Err: err})
+			return
+		}
+
+		params.XCompanyId = XCompanyId
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Company-Id is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Company-Id", Err: err})
+		return
+	}
+
+	// ------------- Optional header parameter "Cache-Control" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Cache-Control")]; found {
+		var CacheControl string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Cache-Control", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Cache-Control", valueList[0], &CacheControl, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Cache-Control", Err: err})
+			return
+		}
+
+		params.CacheControl = &CacheControl
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectFeatures(w, r, projectId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetLookup operation middleware
 func (siw *ServerInterfaceWrapper) GetLookup(w http.ResponseWriter, r *http.Request) {
 
@@ -2123,6 +2251,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/projects/{projectId}/lookups/{kind}", wrapper.GetLookup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/projects/{projectId}/features", wrapper.GetProjectFeatures)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/projects/{projectId}/records/{kind}", wrapper.GetRecords)
@@ -3544,6 +3675,88 @@ func (response PutMeSelectiondefaultJSONResponse) VisitPutMeSelectionResponse(w 
 	return err
 }
 
+type GetProjectFeaturesRequestObject struct {
+	ProjectId int64 `json:"projectId"`
+	Params    GetProjectFeaturesParams
+}
+
+type GetProjectFeaturesResponseObject interface {
+	VisitGetProjectFeaturesResponse(w http.ResponseWriter) error
+}
+
+type GetProjectFeatures200JSONResponse FeaturesResponse
+
+func (response GetProjectFeatures200JSONResponse) VisitGetProjectFeaturesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFeatures401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetProjectFeatures401JSONResponse) VisitGetProjectFeaturesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFeatures403JSONResponse Error
+
+func (response GetProjectFeatures403JSONResponse) VisitGetProjectFeaturesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFeatures502JSONResponse Error
+
+func (response GetProjectFeatures502JSONResponse) VisitGetProjectFeaturesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFeaturesdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetProjectFeaturesdefaultJSONResponse) VisitGetProjectFeaturesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetLookupRequestObject struct {
 	ProjectId int64               `json:"projectId"`
 	Kind      GetLookupParamsKind `json:"kind"`
@@ -3961,6 +4174,9 @@ type StrictServerInterface interface {
 
 	// (PUT /me/selection)
 	PutMeSelection(ctx context.Context, request PutMeSelectionRequestObject) (PutMeSelectionResponseObject, error)
+
+	// (GET /projects/{projectId}/features)
+	GetProjectFeatures(ctx context.Context, request GetProjectFeaturesRequestObject) (GetProjectFeaturesResponseObject, error)
 
 	// (GET /projects/{projectId}/lookups/{kind})
 	GetLookup(ctx context.Context, request GetLookupRequestObject) (GetLookupResponseObject, error)
@@ -4487,6 +4703,33 @@ func (sh *strictHandler) PutMeSelection(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutMeSelectionResponseObject); ok {
 		if err := validResponse.VisitPutMeSelectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetProjectFeatures operation middleware
+func (sh *strictHandler) GetProjectFeatures(w http.ResponseWriter, r *http.Request, projectId int64, params GetProjectFeaturesParams) {
+	var request GetProjectFeaturesRequestObject
+
+	request.ProjectId = projectId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProjectFeatures(ctx, request.(GetProjectFeaturesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProjectFeatures")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetProjectFeaturesResponseObject); ok {
+		if err := validResponse.VisitGetProjectFeaturesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

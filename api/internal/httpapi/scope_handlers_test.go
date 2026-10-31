@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
@@ -177,5 +178,46 @@ func TestMe_AfterProcoreRevocation_401Reauth(t *testing.T) {
 	}
 	if me := decode[User](t, b); !me.ReauthRequired {
 		t.Fatalf("me %+v, want reauth_required true", me)
+	}
+}
+
+func TestProjects_PermissionDenied_CarriesProcoreReason(t *testing.T) {
+	srv, fp := newTestServer(t)
+	fp.With(func(f *fakeProcore) {
+		f.Companies = []procore.Company{{ID: 7, Name: "Monroe Residential"}}
+		f.Forbidden["/projects"] = true
+		f.ForbiddenBodies["/projects"] = `{"errors":["App is not connected to this company."]}`
+	})
+	pair := signIn(t, srv, "device-1")
+
+	res, b := call(t, srv, http.MethodGet, "/v1/companies/7/projects", pair.AccessToken, nil)
+	wantError(t, res, b, http.StatusForbidden, "procore_permission_denied")
+	if e := decode[Error](t, b); e.Message != "App is not connected to this company." {
+		t.Fatalf("message %q, want Procore's text", e.Message)
+	}
+}
+
+func TestProjects_PermissionDenied_NoBody_GenericMessage(t *testing.T) {
+	srv, fp := newTestServer(t)
+	fp.With(func(f *fakeProcore) {
+		f.Companies = []procore.Company{{ID: 7, Name: "Monroe Residential"}}
+		f.Forbidden["/projects"] = true
+		f.ForbiddenBodies["/projects"] = ""
+	})
+	pair := signIn(t, srv, "device-1")
+
+	res, b := call(t, srv, http.MethodGet, "/v1/companies/7/projects", pair.AccessToken, nil)
+	wantError(t, res, b, http.StatusForbidden, "procore_permission_denied")
+	if e := decode[Error](t, b); e.Message != "Procore permission denied" {
+		t.Fatalf("message %q, want the generic text", e.Message)
+	}
+}
+
+// A read answered with a 400 or 422 field-error body is a Procore failure
+// (502), as an *APIError of that status was, not an internal error.
+func TestMapProcoreErr_ValidationError_IsProcoreUnavailable(t *testing.T) {
+	got := mapProcoreErr(fmt.Errorf("list: %w", &procore.ValidationError{Fields: map[string][]string{"filters": {"invalid"}}}))
+	if got == nil || got.Status != http.StatusBadGateway || got.Code != "procore_unavailable" {
+		t.Fatalf("mapProcoreErr = %+v, want 502 procore_unavailable", got)
 	}
 }

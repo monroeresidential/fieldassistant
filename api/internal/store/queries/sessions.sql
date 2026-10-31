@@ -1,6 +1,6 @@
 -- name: CreateSession :one
-insert into sessions (user_id, device_id, refresh_hash, expires_at)
-values ($1, $2, $3, $4)
+insert into sessions (user_id, device_id, refresh_hash, expires_at, refresh_enc)
+values ($1, $2, $3, $4, $5)
 returning *;
 
 -- name: GetSession :one
@@ -14,7 +14,7 @@ select * from sessions where prev_refresh_hash = $1;
 
 -- name: RotateSessionRefresh :one
 update sessions
-set refresh_hash = $2, prev_refresh_hash = refresh_hash, expires_at = $3
+set refresh_hash = $2, prev_refresh_hash = refresh_hash, rotated_at = $6, refresh_enc = $5, expires_at = $3
 where id = $1 and refresh_hash = $4
 returning id;
 

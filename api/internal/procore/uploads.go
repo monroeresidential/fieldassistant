@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -123,8 +124,8 @@ func (c *Client) PostUpload(ctx context.Context, up Upload, filename string, siz
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
-		return &APIError{Status: resp.StatusCode, Body: string(b)}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody*utf8.UTFMax))
+		return &APIError{Status: resp.StatusCode, Body: errBodyPrefix(b)}
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrBody))
 	return nil

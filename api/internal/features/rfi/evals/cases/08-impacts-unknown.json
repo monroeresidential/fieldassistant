@@ -121,6 +121,22 @@
           "discipline": "Structural"
         }
       }
+    ],
+    "rfi_managers": [
+      {
+        "id": 12,
+        "label": "Mike Ross",
+        "extra": {
+          "login": "mike.ross@example.com"
+        }
+      },
+      {
+        "id": 42,
+        "label": "Pat Field",
+        "extra": {
+          "login": "pat.field@example.com"
+        }
+      }
     ]
   },
   "expect": {

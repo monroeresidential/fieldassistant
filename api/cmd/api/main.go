@@ -132,7 +132,7 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	oauth := procore.NewOAuth(cfg.Procore, hc, time.Now)
 	pc := procore.NewClient(cfg.Procore.APIURL, hc, nil, nil)
 	tokens := auth.NewTokenSource(st, vault, oauth, time.Now)
-	sessions := auth.NewSessions(st, cfg.SessionSecret, time.Now)
+	sessions := auth.NewSessions(st, cfg.SessionSecret, vault, time.Now)
 
 	logger := slog.Default()
 	blobs, err := buildBlobs(ctx, cfg.ObjectStore)
@@ -142,8 +142,10 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	}
 	extractor := llm.NewClient(cfg.LLM.APIKey, cfg.LLM.ExtractModel, "", cfg.LLM.Timeout)
 	lookups := pipeline.NewLookups(st, pc, tokens, lookupCacheTTL, time.Now, logger)
+	features := pipeline.NewFeatures(lookups, pc, tokens, pipeline.FeatureProbe(cfg.FeaturesProbe), lookupCacheTTL, time.Now, logger)
 	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens, blobs,
 		map[string]pipeline.Feature{"rfi": rfi.New()}, cfg.LLM.ExtractModel, cfg.LLM.Timeout, time.Now, logger)
+	drafts.SetFeatureStates(features)
 	mirror := records.NewMirror(st, map[records.Kind]records.Fetcher{
 		records.KindRFI: records.RFIFetcher{PC: pc},
 	}, tokens, time.Now, logger)
@@ -162,6 +164,7 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 		Procore:   pc,
 		Companies: auth.NewCompanyCache(pc, tokens, companyCacheTTL, time.Now),
 		Lookups:   lookups,
+		Features:  features,
 		Drafts:    drafts,
 		Jobs:      jobsClient,
 		Records:   mirror,

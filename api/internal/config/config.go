@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +19,12 @@ const (
 	defaultAppRedirectScheme = "fieldassistant"
 
 	defaultLLMTimeoutSeconds = 20
+
+	defaultFeaturesProbe = "rfi_managers"
 )
+
+// featuresProbes are the values FEATURES_PROBE accepts.
+var featuresProbes = []string{"rfi_managers", "create_outcome"}
 
 // schemePattern is the lowercase subset of an RFC 3986 URI scheme.
 var schemePattern = regexp.MustCompile(`^[a-z][a-z0-9+.-]*$`)
@@ -57,6 +63,11 @@ type Config struct {
 	ObjectStore       ObjectStoreConfig
 	TokenVaultKey     []byte
 	SessionSecret     []byte
+	// FeaturesProbe is how the features endpoint decides whether a user may
+	// create RFIs (FEATURES_PROBE): "rfi_managers" (the default) asks
+	// Procore for the project's potential RFI managers with the user's
+	// token; "create_outcome" follows the user's last RFI create.
+	FeaturesProbe string
 }
 
 // Load reads configuration through getenv and validates it.
@@ -75,6 +86,7 @@ func Load(getenv func(string) string) (Config, error) {
 		DatabaseURL:       req("DATABASE_URL"),
 		PublicBaseURL:     req("PUBLIC_BASE_URL"),
 		AppRedirectScheme: getenv("APP_REDIRECT_SCHEME"),
+		FeaturesProbe:     getenv("FEATURES_PROBE"),
 		Procore: ProcoreConfig{
 			ClientID:     req("PROCORE_CLIENT_ID"),
 			ClientSecret: req("PROCORE_CLIENT_SECRET"),
@@ -108,6 +120,13 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if !schemePattern.MatchString(cfg.AppRedirectScheme) {
 		return Config{}, fmt.Errorf("APP_REDIRECT_SCHEME %q is not a valid URL scheme (want lowercase letters, digits, +, . or -, starting with a letter)", cfg.AppRedirectScheme)
+	}
+
+	if cfg.FeaturesProbe == "" {
+		cfg.FeaturesProbe = defaultFeaturesProbe
+	}
+	if !slices.Contains(featuresProbes, cfg.FeaturesProbe) {
+		return Config{}, fmt.Errorf("FEATURES_PROBE %q must be one of %s", cfg.FeaturesProbe, strings.Join(featuresProbes, ", "))
 	}
 
 	timeoutSeconds := defaultLLMTimeoutSeconds

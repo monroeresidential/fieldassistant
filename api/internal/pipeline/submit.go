@@ -458,6 +458,9 @@ func (d *Drafts) RunSubmit(ctx context.Context, draftID uuid.UUID) error {
 	start := time.Now()
 	created, err := d.procore.CreateRFI(ctx, token, cur.CompanyID, cur.ProjectID, body)
 	ms := int(time.Since(start).Milliseconds())
+	if d.featureStates != nil {
+		d.featureStates.RecordCreateOutcome(cur.UserID, cur.CompanyID, cur.ProjectID, err)
+	}
 
 	// Record the outcome even if the job's context is done.
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), postWriteTimeout)

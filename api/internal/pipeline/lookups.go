@@ -34,10 +34,13 @@ const (
 	KindCostCodes    LookupKind = "cost_codes"
 	KindVendors      LookupKind = "vendors"
 	KindDrawings     LookupKind = "drawings"
+	// KindRFIManagers is Procore's potential RFI managers list: the people
+	// who may manage an RFI on the project.
+	KindRFIManagers LookupKind = "rfi_managers"
 )
 
 // AllKinds lists every lookup kind in a stable order.
-var AllKinds = []LookupKind{KindUsers, KindLocations, KindSpecSections, KindCostCodes, KindVendors, KindDrawings}
+var AllKinds = []LookupKind{KindUsers, KindLocations, KindSpecSections, KindCostCodes, KindVendors, KindDrawings, KindRFIManagers}
 
 // ParseKind returns the kind named s.
 func ParseKind(s string) (LookupKind, bool) {
@@ -91,6 +94,7 @@ type ProcoreLookups interface {
 	ListCostCodes(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.CostCode, error)
 	ListVendors(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.Vendor, error)
 	ListDrawings(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.Drawing, error)
+	ListPotentialRFIManagers(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.RFIManager, error)
 	GetProject(ctx context.Context, accessToken string, companyID, projectID int64) (procore.ProjectDetail, error)
 	// ProbeKind checks the token may read kind's list (one page-1 request,
 	// body discarded); kind is a LookupKind's string.
@@ -317,7 +321,9 @@ func (l *Lookups) requireAccess(ctx context.Context, userID uuid.UUID, companyID
 
 // fetchProject reads the project with the user's own token. Success records
 // the user's access and refreshes the shared detail cache. A 403 or 404 means
-// the user cannot see the project and is reported as ErrPermissionDenied.
+// the user cannot see the project and is reported as ErrPermissionDenied,
+// wrapping Procore's *procore.APIError when there is one so its body can be
+// shown (ProcoreReason).
 func (l *Lookups) fetchProject(ctx context.Context, userID uuid.UUID, companyID, projectID int64) (procore.ProjectDetail, error) {
 	token, err := l.tokens.AccessToken(ctx, userID)
 	if err != nil {
@@ -326,7 +332,11 @@ func (l *Lookups) fetchProject(ctx context.Context, userID uuid.UUID, companyID,
 	detail, err := l.pc.GetProject(ctx, token, companyID, projectID)
 	if err != nil {
 		var api *procore.APIError
-		if errors.Is(err, procore.ErrPermissionDenied) || (errors.As(err, &api) && api.Status == http.StatusNotFound) {
+		hasAPI := errors.As(err, &api)
+		if errors.Is(err, procore.ErrPermissionDenied) || (hasAPI && api.Status == http.StatusNotFound) {
+			if hasAPI {
+				return procore.ProjectDetail{}, fmt.Errorf("%w: %w", procore.ErrPermissionDenied, api)
+			}
 			return procore.ProjectDetail{}, procore.ErrPermissionDenied
 		}
 		return procore.ProjectDetail{}, err
@@ -452,6 +462,8 @@ func (l *Lookups) fetch(ctx context.Context, userID uuid.UUID, companyID, projec
 		items, err = l.pc.ListVendors(ctx, token, companyID, projectID)
 	case KindDrawings:
 		items, err = l.pc.ListDrawings(ctx, token, companyID, projectID)
+	case KindRFIManagers:
+		items, err = l.pc.ListPotentialRFIManagers(ctx, token, companyID, projectID)
 	default:
 		return nil, fmt.Errorf("pipeline: unknown lookup kind %q", kind)
 	}

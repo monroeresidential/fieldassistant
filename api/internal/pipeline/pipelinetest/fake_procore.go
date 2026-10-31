@@ -39,6 +39,11 @@ type FakeProcore struct {
 	Drawings     []procore.Drawing
 	Project      procore.ProjectDetail
 	RFIs         []procore.RFI
+	// RFIManagers is returned by ListPotentialRFIManagers when no error is
+	// scripted; RFIManagersErr, when set, is returned instead (after any
+	// error scripted in Err or ErrForToken).
+	RFIManagers    []procore.RFIManager
+	RFIManagersErr error
 	// Created is returned by CreateRFI when no error is scripted.
 	Created procore.RFICreated
 	// Err maps a method name ("ListProjectUsers", "CreateRFI", ...) to the
@@ -142,6 +147,7 @@ var listMethods = map[string]string{
 	"cost_codes":    "ListCostCodes",
 	"vendors":       "ListVendors",
 	"drawings":      "ListDrawings",
+	"rfi_managers":  "ListPotentialRFIManagers",
 }
 
 // ProbeKind records a "ProbeKind" call. Its error is the one scripted for
@@ -191,6 +197,19 @@ func (f *FakeProcore) ListDrawings(_ context.Context, token string, companyID, p
 		return nil, err
 	}
 	return f.Drawings, nil
+}
+
+// ListPotentialRFIManagers records a "ListPotentialRFIManagers" call.
+func (f *FakeProcore) ListPotentialRFIManagers(_ context.Context, token string, companyID, projectID int64) ([]procore.RFIManager, error) {
+	if err := f.record(Call{Method: "ListPotentialRFIManagers", AccessToken: token, CompanyID: companyID, ProjectID: projectID}); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.RFIManagersErr != nil {
+		return nil, f.RFIManagersErr
+	}
+	return f.RFIManagers, nil
 }
 
 func (f *FakeProcore) GetProject(_ context.Context, token string, companyID, projectID int64) (procore.ProjectDetail, error) {

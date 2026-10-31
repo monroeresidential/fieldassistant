@@ -46,8 +46,8 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("procore: API status %d: %s", e.Status, e.Body)
 }
 
-// ValidationError is a 422 response whose body maps Procore field names to
-// messages.
+// ValidationError is a 400 or 422 response whose body maps Procore field
+// names to messages.
 type ValidationError struct {
 	Fields map[string][]string
 }
@@ -172,6 +172,7 @@ const (
 	KindCostCodes    = "cost_codes"
 	KindVendors      = "vendors"
 	KindDrawings     = "drawings"
+	KindRFIManagers  = "rfi_managers"
 )
 
 // lookupEndpoint returns the list endpoint of a lookup kind: its path and
@@ -191,6 +192,8 @@ func lookupEndpoint(kind string, projectID int64) (string, url.Values, bool) {
 		return projectPath(projectID, "/vendors"), url.Values{}, true
 	case KindDrawings:
 		return "/rest/v1.1/drawings", byProject, true
+	case KindRFIManagers:
+		return projectPath(projectID, "/rfis/potential_rfi_managers"), url.Values{}, true
 	}
 	return "", nil, false
 }
@@ -203,6 +206,13 @@ func listKind[T any](ctx context.Context, c *Client, token string, companyID, pr
 // ListProjectUsers returns every user on projectID, following pagination.
 func (c *Client) ListProjectUsers(ctx context.Context, accessToken string, companyID, projectID int64) ([]ProjectUser, error) {
 	return listKind[ProjectUser](ctx, c, accessToken, companyID, projectID, KindUsers)
+}
+
+// ListPotentialRFIManagers returns the users who may manage an RFI in
+// projectID, following pagination. A 403 is ErrPermissionDenied; a project
+// without the RFI tool answers 404.
+func (c *Client) ListPotentialRFIManagers(ctx context.Context, accessToken string, companyID, projectID int64) ([]RFIManager, error) {
+	return listKind[RFIManager](ctx, c, accessToken, companyID, projectID, KindRFIManagers)
 }
 
 // ListLocations returns every location in projectID, following pagination.
@@ -257,7 +267,8 @@ func (c *Client) GetProject(ctx context.Context, accessToken string, companyID, 
 }
 
 // CreateRFI posts a new RFI to projectID with Procore's configurable
-// validations on. A 422 is returned as *ValidationError.
+// validations on. A 400 or 422 with field errors is returned as
+// *ValidationError.
 func (c *Client) CreateRFI(ctx context.Context, accessToken string, companyID, projectID int64, body RFICreate) (RFICreated, error) {
 	var out RFICreated
 	q := url.Values{"run_configurable_validations": {"true"}}
@@ -344,17 +355,23 @@ func unavailable(ctx context.Context, err error) error {
 	return fmt.Errorf("%w: %w", ErrUnavailable, err)
 }
 
+// decodeResponse decodes a 2xx body into out. Any other status reads up to
+// maxErrorBodyParse of the body: a 400 or 422 whose body has a non-empty
+// errors object is a *ValidationError (Procore reports some field problems,
+// such as an invalid rfi_manager_id, with a 400); anything else is an
+// *APIError carrying the body's first maxErrBody runes, wrapped in
+// ErrUnauthorized on a 401 and ErrPermissionDenied on a 403.
 func decodeResponse(ctx context.Context, resp *http.Response, method, path string, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
-		apiErr := &APIError{Status: resp.StatusCode, Body: string(b)}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyParse))
+		apiErr := &APIError{Status: resp.StatusCode, Body: errBodyPrefix(b)}
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
 			return fmt.Errorf("%w: %w", ErrUnauthorized, apiErr)
 		case http.StatusForbidden:
 			return fmt.Errorf("%w: %w", ErrPermissionDenied, apiErr)
-		case http.StatusUnprocessableEntity:
+		case http.StatusBadRequest, http.StatusUnprocessableEntity:
 			if ve, ok := parseValidationErrors(b); ok {
 				return ve
 			}
@@ -365,6 +382,20 @@ func decodeResponse(ctx context.Context, resp *http.Response, method, path strin
 		return unavailable(ctx, fmt.Errorf("procore: decode %s %s response: %w", method, path, err))
 	}
 	return nil
+}
+
+// errBodyPrefix is the start of an error body kept on an APIError: its
+// first maxErrBody runes.
+func errBodyPrefix(b []byte) string {
+	s := string(b)
+	n := 0
+	for i := range s {
+		if n == maxErrBody {
+			return s[:i]
+		}
+		n++
+	}
+	return s
 }
 
 // rateWait turns an X-Rate-Limit-Reset unix timestamp into a bounded wait.

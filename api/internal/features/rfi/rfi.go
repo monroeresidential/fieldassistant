@@ -21,6 +21,13 @@ const (
 	// draftUntil is how many RFIs a user submits as Procore drafts before
 	// new ones default to open.
 	draftUntil = 5
+	// notManagerMessage flags rfi_manager_id when the speaker is not among
+	// Procore's potential RFI managers.
+	notManagerMessage = "You are not an RFI manager on this project"
+	// noManagersMessage flags rfi_manager_id when the potential RFI managers
+	// list could not be read (a 403, the RFI tool off, a failed fetch), so
+	// whether the speaker is a manager is unknown.
+	noManagersMessage = "Procore did not list RFI managers for this project"
 )
 
 // Feature implements pipeline.Feature for RFIs.
@@ -46,13 +53,29 @@ func (*Feature) LookupKinds() []pipeline.LookupKind {
 	return []pipeline.LookupKind{
 		pipeline.KindUsers, pipeline.KindLocations, pipeline.KindSpecSections,
 		pipeline.KindCostCodes, pipeline.KindVendors, pipeline.KindDrawings,
+		pipeline.KindRFIManagers,
 	}
 }
+
+// ExtractorKinds are the kinds the model may search: every lookup kind but
+// rfi_managers, which only ApplyDefaults and Validate use (the prompt tells
+// the model to leave rfi_manager_id to the server).
+func (f *Feature) ExtractorKinds() []pipeline.LookupKind {
+	var out []pipeline.LookupKind
+	for _, k := range f.LookupKinds() {
+		if k != pipeline.KindRFIManagers {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+var _ pipeline.ExtractorKinder = (*Feature)(nil)
 
 func (*Feature) IDFields() []pipeline.IDField {
 	return []pipeline.IDField{
 		{Field: "assignee_ids", Kind: pipeline.KindUsers, Multi: true},
-		{Field: "rfi_manager_id", Kind: pipeline.KindUsers},
+		{Field: "rfi_manager_id", Kind: pipeline.KindRFIManagers},
 		{Field: "distribution_ids", Kind: pipeline.KindUsers, Multi: true},
 		{Field: "responsible_contractor_id", Kind: pipeline.KindVendors},
 		{Field: "location_id", Kind: pipeline.KindLocations},
@@ -163,16 +186,29 @@ func (*Feature) ApplyDefaults(ctx pipeline.ExtractContext, payload map[string]an
 	}
 	var un []pipeline.Unresolved
 
+	// The RFI manager defaults to the speaker when Procore lists them as a
+	// potential RFI manager; otherwise the reviewer picks one of those. When
+	// the list could not be read, the field is flagged without claiming the
+	// speaker is not a manager.
 	if out["rfi_manager_id"] == nil && !open["rfi_manager_id"] {
 		delete(out, "rfi_manager_id")
-		if lookups[pipeline.KindUsers].Has(ctx.UserProcoreID) {
-			out["rfi_manager_id"] = ctx.UserProcoreID
-		} else {
+		managers, loaded := lookups[pipeline.KindRFIManagers]
+		switch {
+		case !loaded || managers.Unavailable:
 			un = append(un, pipeline.Unresolved{
 				Field:      "rfi_manager_id",
 				Reason:     pipeline.ReasonNotFound,
-				Message:    "You are not in this project's directory",
+				Message:    noManagersMessage,
 				Candidates: []pipeline.LookupRow{},
+			})
+		case managers.Has(ctx.UserProcoreID):
+			out["rfi_manager_id"] = ctx.UserProcoreID
+		default:
+			un = append(un, pipeline.Unresolved{
+				Field:      "rfi_manager_id",
+				Reason:     pipeline.ReasonNotFound,
+				Message:    notManagerMessage,
+				Candidates: append([]pipeline.LookupRow{}, managers.Rows...),
 			})
 		}
 	}

@@ -121,6 +121,32 @@ func TestGetLookup_NoCache_Refetches(t *testing.T) {
 	}
 }
 
+// RFI manager candidates come from Procore's potential RFI managers list.
+func TestGetLookup_RFIManagers_Rows(t *testing.T) {
+	srv, fp, token := newLookupServer(t)
+	fp.With(func(f *fakeProcore) {
+		f.RFIManagers[9] = []procore.RFIManager{{ID: 21, Name: "Mia Manager", Login: "mia@example.com"}}
+	})
+
+	res, b := getLookup(t, srv, token, 7, 9, "rfi_managers")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d; body %s", res.StatusCode, b)
+	}
+	got := decode[LookupResponse](t, b)
+	if got.Kind != "rfi_managers" || got.Unavailable {
+		t.Fatalf("response %+v", got)
+	}
+	if len(got.Rows) != 1 || got.Rows[0].Id != 21 || got.Rows[0].Label != "Mia Manager" {
+		t.Fatalf("rows %+v, want Mia Manager", got.Rows)
+	}
+	if got.Rows[0].Extra == nil || (*got.Rows[0].Extra)["login"] != "mia@example.com" {
+		t.Fatalf("extra %v, want login", got.Rows[0].Extra)
+	}
+	if n := fp.requestsTo("/rest/v1.0/projects/9/rfis/potential_rfi_managers"); n != 1 {
+		t.Fatalf("managers fetched %d times, want 1", n)
+	}
+}
+
 func TestGetLookup_BadKind_400(t *testing.T) {
 	srv, _, token := newLookupServer(t)
 	res, b := getLookup(t, srv, token, 7, 9, "people")

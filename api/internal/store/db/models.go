@@ -105,6 +105,8 @@ type Session struct {
 	PrevRefreshHash []byte
 	ExpiresAt       pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+	RotatedAt       pgtype.Timestamptz
+	RefreshEnc      []byte
 }
 
 type User struct {

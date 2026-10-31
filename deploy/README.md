@@ -267,6 +267,41 @@ First create its log file: `touch /var/log/fa-backup.log && chown deploy-prod /v
 0 3 * * * /opt/fieldassistant/deploy/backup.sh >> /var/log/fa-backup.log 2>&1
 ```
 
+## Weekly pilot summary
+
+The API image also holds `/pilotreport`, which prints one week of the pilot as
+Markdown from the prod database: drafts created, built, submitted and failed by
+error code; corrections per submitted draft and how many submitted drafts
+needed more than two (the pilot gate; drafts never submitted are left out);
+duplicates (more than one submitted event, attempts whose outcome is still
+unknown, mirror RFIs matching a submitted draft; expected: none); extraction
+p50 and p95; photos pushed and photo failures by code; a per-user table (names
+only, no emails); and the five submitted drafts with the most corrections, each
+with its transcript, extracted payload and final payload, ready to turn into
+eval cases.
+
+A correction is a field whose final submitted value differs from the
+extraction's, counted once per field. When a lookup changed between extraction
+and submit, revalidation can drop a stale ID or date from the payload without
+the user touching it, and that field then counts as a correction too.
+
+From a laptop with the `fieldassistant-droplet` SSH alias:
+```
+make pilot-report ARGS='--from 2026-11-03T00:00:00Z --to 2026-11-10T00:00:00Z' > pilot-2026-11-03.md
+```
+Without `ARGS` it covers the last seven days. `--from` is inclusive and `--to`
+exclusive, both RFC 3339, on each draft's `created_at`. The duplicate checks also
+look at older drafts with an attempt, submitted or failed event in the window,
+and at every draft still submitting. Counts and statuses are as of the run,
+while the audit trail is cut at `--to`, so a back-dated window can show a draft
+as submitted whose attempt was still open at `--to`. The command runs inside
+the `api-prod` container (`docker compose exec`) and takes `DATABASE_URL` from
+that container's environment (`.env.prod`). It is read-only: its connections
+run with `default_transaction_read_only` on, and it adds no tables or
+migrations.
+
+Before opening a backend PR to `develop` that touches extraction, prompts, lookups or the model config, run the live RFI evals once on the branch head (`gh workflow run api.yml --ref <branch>`; the `api-evals` job). The `develop` push runs them again when those files changed, and the promotion PR to `main` inherits that result.
+
 ## Connecting the app to a Procore company
 
 Procore returns `403 {"errors":["App is not connected to this company."]}` until a

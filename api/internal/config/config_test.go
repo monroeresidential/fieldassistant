@@ -233,3 +233,24 @@ func TestLoad_ObjectStoreCreateBucketInvalid(t *testing.T) {
 		t.Fatalf("want error naming OBJECT_STORE_CREATE_BUCKET, got %v", err)
 	}
 }
+
+func TestLoad_FeaturesProbe(t *testing.T) {
+	cfg, err := Load(getter(validEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FeaturesProbe != "rfi_managers" {
+		t.Errorf("default FeaturesProbe = %q, want rfi_managers", cfg.FeaturesProbe)
+	}
+
+	env := validEnv()
+	env["FEATURES_PROBE"] = "create_outcome"
+	if cfg, err = Load(getter(env)); err != nil || cfg.FeaturesProbe != "create_outcome" {
+		t.Errorf("FEATURES_PROBE=create_outcome: cfg %q err %v", cfg.FeaturesProbe, err)
+	}
+
+	env["FEATURES_PROBE"] = "guess"
+	if _, err := Load(getter(env)); err == nil || !strings.Contains(err.Error(), "FEATURES_PROBE") {
+		t.Errorf("FEATURES_PROBE=guess: want an error mentioning FEATURES_PROBE, got %v", err)
+	}
+}

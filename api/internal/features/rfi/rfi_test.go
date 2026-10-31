@@ -2,6 +2,8 @@ package rfi
 
 import (
 	"encoding/json"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +101,17 @@ func usersWith(ids ...int64) map[pipeline.LookupKind]pipeline.LookupSet {
 	return map[pipeline.LookupKind]pipeline.LookupSet{pipeline.KindUsers: {Kind: pipeline.KindUsers, Rows: rows}}
 }
 
+// managersWith is usersWith plus Procore's potential RFI managers.
+func managersWith(users []int64, managers ...int64) map[pipeline.LookupKind]pipeline.LookupSet {
+	sets := usersWith(users...)
+	rows := []pipeline.LookupRow{}
+	for _, id := range managers {
+		rows = append(rows, pipeline.LookupRow{ID: id, Label: "M"})
+	}
+	sets[pipeline.KindRFIManagers] = pipeline.LookupSet{Kind: pipeline.KindRFIManagers, Rows: rows}
+	return sets
+}
+
 func ctxFor(userID int64, submitted int) pipeline.ExtractContext {
 	return pipeline.ExtractContext{
 		ProjectName: "Tower", TimeZone: "America/Chicago",
@@ -152,7 +165,7 @@ func TestRFI_OutputSchema_IsValidJSONSchema(t *testing.T) {
 
 func TestRFI_ApplyDefaults_ManagerAndDraft(t *testing.T) {
 	f := New()
-	out, un := f.ApplyDefaults(ctxFor(42, 2), map[string]any{}, nil, usersWith(42))
+	out, un := f.ApplyDefaults(ctxFor(42, 2), map[string]any{}, nil, managersWith([]int64{42}, 42))
 	if len(un) != 0 {
 		t.Errorf("unresolved = %+v", un)
 	}
@@ -164,14 +177,14 @@ func TestRFI_ApplyDefaults_ManagerAndDraft(t *testing.T) {
 		t.Errorf("empty arrays not defaulted: %s", b)
 	}
 
-	out, _ = f.ApplyDefaults(ctxFor(42, 5), map[string]any{}, nil, usersWith(42))
+	out, _ = f.ApplyDefaults(ctxFor(42, 5), map[string]any{}, nil, managersWith([]int64{42}, 42))
 	if out["draft"] != false {
 		t.Errorf("SubmittedCount 5: draft = %v, want false", out["draft"])
 	}
 
 	// Values already set are kept, and the input is not mutated.
 	in := map[string]any{"rfi_manager_id": float64(7), "draft": false, "private": true}
-	out, _ = f.ApplyDefaults(ctxFor(42, 0), in, nil, usersWith(42))
+	out, _ = f.ApplyDefaults(ctxFor(42, 0), in, nil, managersWith([]int64{42}, 42))
 	if out["rfi_manager_id"] != float64(7) || out["draft"] != false || out["private"] != true {
 		t.Errorf("explicit values overridden: %v", out)
 	}
@@ -180,14 +193,83 @@ func TestRFI_ApplyDefaults_ManagerAndDraft(t *testing.T) {
 	}
 }
 
-func TestRFI_ApplyDefaults_ManagerNotInDirectory_Unresolved(t *testing.T) {
-	out, un := New().ApplyDefaults(ctxFor(42, 0), map[string]any{}, nil, usersWith(1, 2))
+// The RFI manager defaults to the speaker only when Procore lists them as a
+// potential RFI manager; the project directory does not decide it.
+func TestApplyDefaults_RFIManagerFromPotentialManagers(t *testing.T) {
+	out, un := New().ApplyDefaults(ctxFor(42, 0), map[string]any{}, nil, managersWith([]int64{1, 2}, 7, 42))
+	if len(un) != 0 {
+		t.Errorf("unresolved = %+v, want none", un)
+	}
+	if out["rfi_manager_id"] != int64(42) {
+		t.Errorf("rfi_manager_id = %v, want 42 from the RFI managers list", out["rfi_manager_id"])
+	}
+}
+
+// A speaker in the directory who may not manage RFIs leaves the field for
+// the reviewer, offered Procore's potential managers.
+func TestApplyDefaults_UserNotManager_Unresolved(t *testing.T) {
+	sets := managersWith([]int64{42}, 7, 8)
+	out, un := New().ApplyDefaults(ctxFor(42, 0), map[string]any{}, nil, sets)
 	if _, ok := out["rfi_manager_id"]; ok {
-		t.Error("rfi_manager_id set for a user not in the directory")
+		t.Errorf("rfi_manager_id = %v, want unset for a user who is not an RFI manager", out["rfi_manager_id"])
 	}
 	if len(un) != 1 || un[0].Field != "rfi_manager_id" || un[0].Reason != pipeline.ReasonNotFound ||
-		un[0].Message != "You are not in this project's directory" || un[0].Candidates == nil {
-		t.Errorf("unresolved = %+v", un)
+		un[0].Message != "You are not an RFI manager on this project" {
+		t.Fatalf("unresolved = %+v", un)
+	}
+	if want := sets[pipeline.KindRFIManagers].Rows; !reflect.DeepEqual(un[0].Candidates, want) {
+		t.Errorf("candidates = %+v, want the RFI managers %+v", un[0].Candidates, want)
+	}
+	if b := mustJSON(t, out); !strings.Contains(b, `"assignee_ids":[]`) {
+		t.Errorf("assignee default changed: %s", b)
+	}
+
+}
+
+// When Procore did not give us the managers list (a 403, the RFI tool off, a
+// failed fetch), we do not know whether the speaker is a manager: the field
+// is flagged with a message that says only that, and no candidates.
+func TestApplyDefaults_ManagersUnavailable_Unresolved(t *testing.T) {
+	unavailable := usersWith(42)
+	unavailable[pipeline.KindRFIManagers] = pipeline.LookupSet{Kind: pipeline.KindRFIManagers, Rows: []pipeline.LookupRow{}, Unavailable: true, Reason: "RFI tool not enabled on this project"}
+	for name, sets := range map[string]map[pipeline.LookupKind]pipeline.LookupSet{
+		"unavailable": unavailable,
+		"not loaded":  usersWith(42),
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, un := New().ApplyDefaults(ctxFor(42, 0), map[string]any{}, nil, sets)
+			if _, ok := out["rfi_manager_id"]; ok {
+				t.Errorf("rfi_manager_id = %v, want unset", out["rfi_manager_id"])
+			}
+			if len(un) != 1 || un[0].Field != "rfi_manager_id" || un[0].Reason != pipeline.ReasonNotFound ||
+				un[0].Message != "Procore did not list RFI managers for this project" ||
+				un[0].Candidates == nil || len(un[0].Candidates) != 0 {
+				t.Errorf("unresolved = %+v", un)
+			}
+		})
+	}
+}
+
+func TestRFI_RFIManagerKind(t *testing.T) {
+	f := New()
+	var kind pipeline.LookupKind
+	for _, idf := range f.IDFields() {
+		if idf.Field == "rfi_manager_id" {
+			kind = idf.Kind
+		}
+	}
+	if kind != pipeline.KindRFIManagers {
+		t.Errorf("rfi_manager_id kind = %q, want %q", kind, pipeline.KindRFIManagers)
+	}
+	if !slices.Contains(f.LookupKinds(), pipeline.KindRFIManagers) {
+		t.Errorf("LookupKinds = %v, want rfi_managers warmed", f.LookupKinds())
+	}
+	want := []pipeline.LookupKind{
+		pipeline.KindUsers, pipeline.KindLocations, pipeline.KindSpecSections,
+		pipeline.KindCostCodes, pipeline.KindVendors, pipeline.KindDrawings,
+	}
+	if got := pipeline.ToolKinds(f); !slices.Equal(got, want) {
+		t.Errorf("ToolKinds = %v, want the six kinds the extractor had before (no rfi_managers)", got)
 	}
 }
 
@@ -253,7 +335,7 @@ func TestRFI_Prompt_LoadsWithVersion(t *testing.T) {
 
 func TestRFI_Metadata(t *testing.T) {
 	f := New()
-	if f.Name() != "rfi" || len(f.LookupKinds()) != 6 || len(f.IDFields()) != 7 {
+	if f.Name() != "rfi" || len(f.LookupKinds()) != 7 || len(f.IDFields()) != 7 {
 		t.Errorf("name %q, kinds %d, id fields %d", f.Name(), len(f.LookupKinds()), len(f.IDFields()))
 	}
 	if d := f.DateFields(); len(d) != 1 || d[0] != "due_date" {

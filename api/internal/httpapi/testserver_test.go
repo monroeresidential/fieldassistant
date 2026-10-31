@@ -77,6 +77,9 @@ type fakeProcore struct {
 	RefreshErrors bool                        // /oauth/token refresh_token grant answers 500
 	Status429Once bool                        // the next REST request answers 429
 	Forbidden     map[string]bool             // REST paths without the version prefix, e.g. "/projects/5/rfis", that answer 403
+	// ForbiddenBodies overrides the body a Forbidden path answers with; an
+	// entry with "" answers an empty body.
+	ForbiddenBodies map[string]string
 
 	// Lookup lists by project id. Cost codes and drawings are matched on
 	// the project_id query parameter.
@@ -86,6 +89,8 @@ type fakeProcore struct {
 	CostCodes    map[int64][]procore.CostCode
 	Vendors      map[int64][]procore.Vendor
 	Drawings     map[int64][]procore.Drawing
+	// RFIManagers answers GET /projects/{id}/rfis/potential_rfi_managers.
+	RFIManagers map[int64][]procore.RFIManager
 	// ProjectDetails answers GET /projects/{id}; a missing project is 404.
 	ProjectDetails map[int64]procore.ProjectDetail
 
@@ -203,7 +208,13 @@ func (f *fakeProcore) rest(w http.ResponseWriter, r *http.Request) {
 	firstPage := page <= 1
 	version, path := r.URL.Path[len("/rest/"):len("/rest/v1.0")], r.URL.Path[len("/rest/v1.0"):]
 	if f.Forbidden[path] {
-		http.Error(w, `{"errors":"forbidden"}`, http.StatusForbidden)
+		body, ok := f.ForbiddenBodies[path]
+		if !ok {
+			body = `{"errors":"forbidden"}`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, body)
 		return
 	}
 	queryProject, _ := strconv.ParseInt(r.URL.Query().Get("project_id"), 10, 64)
@@ -211,7 +222,7 @@ func (f *fakeProcore) rest(w http.ResponseWriter, r *http.Request) {
 	route := r.Method + " " + version + " " + path
 	if isProject {
 		route = r.Method + " " + version + " /projects/{id}" + sub
-		if strings.HasPrefix(sub, "/rfis/") {
+		if strings.HasPrefix(sub, "/rfis/") && sub != "/rfis/potential_rfi_managers" {
 			route = r.Method + " " + version + " /projects/{id}/rfis/{rfi}"
 		}
 	}
@@ -261,6 +272,8 @@ func (f *fakeProcore) rest(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, resp)
+	case "GET v1.0 /projects/{id}/rfis/potential_rfi_managers":
+		writeJSON(w, pageOf(f.RFIManagers[projectID], firstPage))
 	case "GET v1.0 /projects/{id}/users":
 		writeJSON(w, pageOf(f.ProjectUsers[projectID], firstPage))
 	case "GET v1.0 /projects/{id}/locations":
@@ -413,6 +426,9 @@ func startTestServer(t *testing.T, scheme string) testServer {
 		RFIs:      map[int64][]procore.RFI{},
 		Forbidden: map[string]bool{},
 
+		ForbiddenBodies: map[string]string{},
+		RFIManagers:     map[int64][]procore.RFIManager{},
+
 		ProjectUsers:   map[int64][]procore.ProjectUser{},
 		Locations:      map[int64][]procore.Location{},
 		SpecSections:   map[int64][]procore.SpecSection{},
@@ -455,13 +471,15 @@ func startTestServer(t *testing.T, scheme string) testServer {
 	oauth := procore.NewOAuth(cfg.Procore, procoreSrv.Client(), clock.now)
 	pc := procore.NewClient(cfg.Procore.APIURL, procoreSrv.Client(), func(time.Duration) {}, clock.now)
 	tokens := auth.NewTokenSource(st, vault, oauth, clock.now)
-	sessions := auth.NewSessions(st, cfg.SessionSecret, clock.now)
+	sessions := auth.NewSessions(st, cfg.SessionSecret, vault, clock.now)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	lookups := pipeline.NewLookups(st, pc, tokens, 10*time.Minute, clock.now, logger)
+	featureSet := pipeline.NewFeatures(lookups, pc, tokens, pipeline.ProbeRFIManagers, 10*time.Minute, clock.now, logger)
 	scripted := &llmtest.Scripted{Model: "claude-test-model"}
 	features := map[string]pipeline.Feature{"rfi": rfi.New()}
 	blobs := blob.NewMemory()
 	drafts := pipeline.NewDrafts(st, lookups, scripted, pc, tokens, blobs, features, "claude-configured", 20*time.Second, clock.now, logger)
+	drafts.SetFeatureStates(featureSet)
 	// The River client works submit jobs for the whole test; it stops
 	// before the database lock is released.
 	mirror := records.NewMirror(st, map[records.Kind]records.Fetcher{
@@ -490,6 +508,7 @@ func startTestServer(t *testing.T, scheme string) testServer {
 		Procore:   pc,
 		Companies: auth.NewCompanyCache(pc, tokens, 10*time.Minute, clock.now),
 		Lookups:   lookups,
+		Features:  featureSet,
 		Drafts:    drafts,
 		Jobs:      riverClient,
 		Records:   mirror,

@@ -40,6 +40,10 @@ type ExtractContext struct {
 // list) and then Validate on every save and submit.
 type Feature interface {
 	Name() string
+	// LookupKinds are the kinds warmed for an extraction or a save: the
+	// lists ApplyDefaults and Validate see. The extractor is offered a
+	// list_<kind> tool for each of them unless the feature narrows that with
+	// ExtractorKinds (see ToolKinds).
 	LookupKinds() []LookupKind
 	IDFields() []IDField
 	DateFields() []string
@@ -128,4 +132,21 @@ func blockingFields(us []Unresolved) []string {
 		}
 	}
 	return fields
+}
+
+// ExtractorKinder is implemented by a Feature whose extractor is offered
+// list_<kind> tools for only some of its LookupKinds; the rest are warmed
+// for defaults and validation alone.
+type ExtractorKinder interface {
+	ExtractorKinds() []LookupKind
+}
+
+// ToolKinds returns the lookup kinds the extractor is offered as list_<kind>
+// tools: the feature's ExtractorKinds when it has them, else its
+// LookupKinds.
+func ToolKinds(f Feature) []LookupKind {
+	if ek, ok := f.(ExtractorKinder); ok {
+		return ek.ExtractorKinds()
+	}
+	return f.LookupKinds()
 }

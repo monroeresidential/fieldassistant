@@ -32,6 +32,8 @@ type Deps struct {
 	Companies *auth.CompanyCache
 	// Lookups serves project lookup lists from the Postgres-backed cache.
 	Lookups *pipeline.Lookups
+	// Features answers which features a user may use on a project.
+	Features *pipeline.Features
 	// Drafts extracts, stores, revalidates and submits drafts.
 	Drafts *pipeline.Drafts
 	// Jobs is the River client that queues submit jobs and reports on them.

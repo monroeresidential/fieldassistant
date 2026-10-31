@@ -18,8 +18,13 @@ import (
 // ErrTokenRevoked means Procore rejected the refresh token as invalid or revoked.
 var ErrTokenRevoked = errors.New("procore token revoked")
 
-// maxErrBody caps how much of an upstream error body is echoed into errors.
+// maxErrBody caps how much of an upstream error body is echoed into errors:
+// an APIError's Body is at most this many runes.
 const maxErrBody = 200
+
+// maxErrorBodyParse caps how much of an API error body is read to parse its
+// field errors. A real 422 runs well past maxErrBody.
+const maxErrorBodyParse = 64 << 10
 
 // Tokens is a Procore access/refresh token pair.
 type Tokens struct {

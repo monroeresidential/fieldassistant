@@ -724,3 +724,123 @@ func TestClient_CreateRFI_403_IsErrPermissionDenied(t *testing.T) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
 }
+
+func TestClient_ListPotentialRFIManagers_PathAndDecode(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis/potential_rfi_managers": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":3,"name":"Pat Manager","login":"pat@x.com","locale":"en"},{"id":4,"name":"Sam","login":"sam@x.com"}]`)
+		},
+	})
+	got, err := newTestClient(f, &sleepRecorder{}).ListPotentialRFIManagers(context.Background(), "tok", 7, 9)
+	if err != nil {
+		t.Fatalf("ListPotentialRFIManagers: %v", err)
+	}
+	want := []RFIManager{{ID: 3, Name: "Pat Manager", Login: "pat@x.com"}, {ID: 4, Name: "Sam", Login: "sam@x.com"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("managers = %+v, want %+v", got, want)
+	}
+	reqs := f.recorded()
+	if len(reqs) != 1 || reqs[0].Header.Get("Procore-Company-Id") != "7" || reqs[0].Header.Get("Authorization") != "Bearer tok" {
+		t.Fatalf("requests = %+v", reqs)
+	}
+	if reqs[0].Query["per_page"] != "100" || reqs[0].Query["page"] != "1" {
+		t.Errorf("query = %v, want paginated (per_page 100, page 1)", reqs[0].Query)
+	}
+}
+
+// A real 422 can run to kilobytes; the whole body is parsed, so no field is
+// lost to truncation.
+func TestClient_CreateRFI_422_LargeBody_IsValidationError(t *testing.T) {
+	errs := map[string][]string{}
+	for i := range 40 {
+		errs[fmt.Sprintf("custom_field_%02d", i)] = []string{fmt.Sprintf("is not valid for the configurable field set on this project (%02d)", i)}
+	}
+	b, err := json.Marshal(map[string]any{"errors": errs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b) < 3000 {
+		t.Fatalf("body is %d bytes, want at least 3 KB", len(b))
+	}
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 422, string(b))
+		},
+	})
+	_, err = newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, RFICreate{Subject: "S"})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want *ValidationError", err)
+	}
+	if !reflect.DeepEqual(ve.Fields, errs) {
+		t.Errorf("fields = %d entries, want all %d: %v", len(ve.Fields), len(errs), ve.Fields)
+	}
+}
+
+// Procore answers some field problems with a 400; an errors map there is a
+// field error like a 422's.
+func TestClient_CreateRFI_400_WithErrorsMap_IsValidationError(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 400, `{"errors":{"rfi_manager_id":["invalid"]}}`)
+		},
+	})
+	_, err := newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, RFICreate{Subject: "S"})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want *ValidationError", err)
+	}
+	if want := map[string][]string{"rfi_manager_id": {"invalid"}}; !reflect.DeepEqual(ve.Fields, want) {
+		t.Errorf("fields = %v, want %v", ve.Fields, want)
+	}
+}
+
+func TestClient_400_WithoutErrorsMap_IsAPIError(t *testing.T) {
+	for _, body := range []string{`{"error":"param is missing: rfi"}`, `{"errors":{}}`, `{"errors":["Subject is too long"]}`, `bad request`, ``} {
+		t.Run(body, func(t *testing.T) {
+			f := newFakeProcore(t, map[string]http.HandlerFunc{
+				"/rest/v1.0/projects/9/rfis": func(w http.ResponseWriter, r *http.Request) {
+					writeJSON(w, 400, body)
+				},
+			})
+			_, err := newTestClient(f, &sleepRecorder{}).CreateRFI(context.Background(), "tok", 7, 9, RFICreate{Subject: "S"})
+			var ve *ValidationError
+			var apiErr *APIError
+			if errors.As(err, &ve) || !errors.As(err, &apiErr) || apiErr.Status != 400 || apiErr.Body != body {
+				t.Fatalf("err = %v, want *APIError 400 with the body", err)
+			}
+		})
+	}
+}
+
+// The stored and logged body is the first 200 runes, never a split rune.
+func TestClient_APIErrorBody_CappedAt200Runes(t *testing.T) {
+	body := strings.Repeat("é", 150) + strings.Repeat("x", 100)
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/companies": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusBadGateway, body)
+		},
+	})
+	_, err := newTestClient(f, &sleepRecorder{}).ListCompanies(context.Background(), "tok")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadGateway {
+		t.Fatalf("err = %v, want *APIError 502", err)
+	}
+	if want := strings.Repeat("é", 150) + strings.Repeat("x", 50); apiErr.Body != want {
+		t.Errorf("body = %q (%d runes), want the first %d runes", apiErr.Body, len([]rune(apiErr.Body)), maxErrBody)
+	}
+}
+
+func TestClient_ProbeKind_RFIManagers(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis/potential_rfi_managers": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":3,"name":"Pat","login":"pat@x.com"}]`)
+		},
+	})
+	if err := newTestClient(f, &sleepRecorder{}).ProbeKind(context.Background(), "tok", 7, 9, KindRFIManagers); err != nil {
+		t.Fatalf("ProbeKind rfi_managers = %v", err)
+	}
+	if r := f.recorded()[0]; r.Query["per_page"] != "1" {
+		t.Errorf("probe query = %v", r.Query)
+	}
+}
