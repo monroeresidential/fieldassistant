@@ -95,8 +95,8 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 - The phone reads RFIs from the local mirror (`getRecords`, `syncProject`); `listRFIs` was removed in contract 1.5.1. `getRFIAttachment` streams the file with Procore's real `Content-Type` (declared `*/*` in the contract).
 - Attachment-level codes `procore_refused`, `expired` and `size_mismatch` (the stored object's size differs from its record) live on `DraftResponse.attachments[].error`; the draft-level failure is an `unresolved[]` entry with field `attachments` and reason `procore_validation`. Neither is an HTTP error-body code.
 - `procore_validation` is a draft-level error code carried in `DraftResponse.error` and `JobStatus.error`, not an HTTP error-body code.
-- `submitting` plus `submitPending` is the queued intent on the phone; reconcile skips queued drafts; only the server's answer clears the flag.
 - On iOS only `AuthRefreshError.rejected` signs the user out; other refresh failures keep the session.
+- `submitting` plus `submitPending` is the queued intent on the phone; reconcile skips queued drafts; the flag clears when the server owns the draft (200, 202 or a locked 400), on a definitive refusal, on a local photo failure, or when the user taps Stop sending.
 
 ## Repository layout
 
