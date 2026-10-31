@@ -25,6 +25,27 @@ final class AppState {
         static let draftOwnerID = "draftOwnerProcoreUserID"
     }
 
+    /// Why the last session ended. The sign-in screen explains a sign-out the user did not choose.
+    enum SignOutReason: Equatable {
+        /// The user tapped Sign out.
+        case user
+        /// The backend refused to refresh the session.
+        case refreshRejected
+        /// Procore no longer accepts the user's tokens (`reauth_required`).
+        case procoreSignedOut
+    }
+
+    /// The sign-in screen's note after a sign-out the user did not choose.
+    static let signedOutNote = "Procore signed you out. Sign in again and your drafts will send."
+
+    /// What the sign-in screen says about why the user is there; `nil` when there is nothing to say.
+    static func signInNote(for reason: SignOutReason?) -> String? {
+        switch reason {
+        case .procoreSignedOut, .refreshRejected: signedOutNote
+        case .user, nil: nil
+        }
+    }
+
     /// What happened when a captured draft was sent for extraction.
     enum SendOutcome: Equatable {
         /// The server extracted it; the draft holds the response and opens in Review.
@@ -45,6 +66,8 @@ final class AppState {
     private(set) var isSigningIn = false
     /// Why the last sign-in attempt failed, or `nil`. `.cancelled` means the user closed the sheet.
     private(set) var signInError: AuthError?
+    /// Why the last session ended, until the next sign-in succeeds; `nil` at launch.
+    private(set) var signOutReason: SignOutReason?
     /// Advances each time a session is (re)established, after `/me` has loaded. Screens key their
     /// load tasks on it so they reload after "Sign in again" or a successful offline retry.
     private(set) var sessionGeneration = 0
@@ -163,6 +186,9 @@ final class AppState {
             },
             onSignedOut: { [weak self] in
                 await self?.handleSignedOut()
+            },
+            onReauthRequired: { [weak self] in
+                await self?.handleReauthRequired()
             }
         )
         let client = Client(
@@ -227,6 +253,7 @@ final class AppState {
             signInError = .server(code: "unavailable", message: error.localizedDescription)
             return
         }
+        signOutReason = nil
         await loadMe()
         advanceSessionGeneration()
     }
@@ -234,7 +261,16 @@ final class AppState {
     func signOut() async {
         cancelPrefetch()
         await authService.signOut()
-        endSession()
+        endSession(reason: .user)
+    }
+
+    /// A call answered `reauth_required`: Procore no longer accepts the user's tokens. Ends the
+    /// session once, whichever screen or background pass saw it first; the sign-in screen says why.
+    /// Drafts stay on the phone, queued ones still queued, and send after the next sign-in.
+    func handleReauthRequired() {
+        guard phase != .signedOut else { return }
+        try? store.clear()
+        endSession(reason: .procoreSignedOut)
     }
 
     /// The signed-in user's draft with this id, or `nil` if it is missing or someone else's.
@@ -348,7 +384,7 @@ final class AppState {
     private func loadMeFailed(_ error: Error) {
         if Self.isRefreshRejection(error) {
             // The middleware already cleared the store and reported the sign-out.
-            endSession()
+            endSession(reason: .refreshRejected)
         } else {
             // Offline or transport failure: a field user must not be logged out for that.
             enterOffline()
@@ -363,8 +399,9 @@ final class AppState {
                 return
             }
             if user.reauth_required {
+                // Not `handleReauthRequired`: during a sign-in the phase is still `.signedOut`.
                 try? store.clear()
-                endSession()
+                endSession(reason: .procoreSignedOut)
                 return
             }
             if selectedCompanyID == nil, let id = user.last_company_id { selectedCompanyID = id }
@@ -380,7 +417,7 @@ final class AppState {
             refreshFeatures()
         case .unauthorized:
             try? store.clear()
-            endSession()
+            endSession(reason: .refreshRejected)
         case .default:
             enterOffline()
         }
@@ -391,13 +428,14 @@ final class AppState {
     }
 
     private func handleSignedOut() {
-        endSession()
+        endSession(reason: .refreshRejected)
     }
 
     /// The selection belongs to the signed-in user, so it is dropped whenever the session ends.
     /// Setting the IDs to nil also removes their `UserDefaults` keys.
     /// The cached lookups and mirrored records belong to the signed-in user too, so they are deleted here as well.
-    private func endSession() {
+    /// `reason` is kept for the sign-in screen.
+    private func endSession(reason: SignOutReason) {
         sessionEpoch += 1
         cancelPrefetch()
         featuresTask?.cancel()
@@ -418,6 +456,7 @@ final class AppState {
         // Drafts stay on the phone (a forced re-sign-in must not lose field work); they are hidden
         // until their owner signs in again.
         draftOwnerID = nil
+        signOutReason = reason
         phase = .signedOut
     }
 

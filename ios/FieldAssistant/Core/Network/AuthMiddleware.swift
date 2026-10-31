@@ -9,6 +9,8 @@ import OpenAPIRuntime
 /// - Concurrent callers share a single in-flight refresh.
 /// - If the refresh is rejected (`AuthRefreshError.rejected`), clears the store, calls `onSignedOut` once per
 ///   sign-out and rethrows. Any other refresh error is rethrown and the session is kept.
+/// - If the retried request is still a 401 whose body code is `reauth_required` (Procore signed the user
+///   out), clears the store, calls `onReauthRequired` once per sign-out and returns the response.
 /// - A 401 that arrives after the session was cleared is returned as is, never refreshed.
 actor AuthMiddleware: ClientMiddleware {
     /// Operations that are public (`security: []` in the contract) and must not carry a bearer.
@@ -16,10 +18,13 @@ actor AuthMiddleware: ClientMiddleware {
     static let refreshLeeway: TimeInterval = 30
     /// Largest single-shot request body buffered so it can be replayed after a 401.
     static let maxReplayableBodyBytes = 1024 * 1024
+    /// Largest retried 401 body read for its error code; a larger one is returned unread.
+    static let maxErrorBodyBytes = 64 * 1024
 
     private let store: SessionStore
     private let refresh: @Sendable (String) async throws -> Session
     private let onSignedOut: @Sendable () async -> Void
+    private let onReauthRequired: @Sendable () async -> Void
     private let now: @Sendable () -> Date
 
     private var inFlightRefresh: Task<Session, Error>?
@@ -29,11 +34,13 @@ actor AuthMiddleware: ClientMiddleware {
         store: SessionStore,
         refresh: @Sendable @escaping (String) async throws -> Session,
         onSignedOut: @Sendable @escaping () async -> Void,
+        onReauthRequired: @Sendable @escaping () async -> Void,
         now: @Sendable @escaping () -> Date = Date.init
     ) {
         self.store = store
         self.refresh = refresh
         self.onSignedOut = onSignedOut
+        self.onReauthRequired = onReauthRequired
         self.now = now
     }
 
@@ -64,7 +71,15 @@ actor AuthMiddleware: ClientMiddleware {
         guard let retrySession = try await sessionForRetry(replacing: session) else {
             return (response, responseBody)
         }
-        return try await next(authorized(request, with: retrySession), replay.retryAttempt, baseURL)
+        let (retryResponse, retryBody) = try await next(authorized(request, with: retrySession), replay.retryAttempt, baseURL)
+        guard retryResponse.status == .unauthorized else {
+            return (retryResponse, retryBody)
+        }
+        let (code, readBody) = try await Self.errorCode(of: retryBody)
+        if code == "reauth_required" {
+            await signalReauthRequired()
+        }
+        return (retryResponse, readBody)
     }
 
     // MARK: - Session
@@ -120,6 +135,29 @@ actor AuthMiddleware: ClientMiddleware {
             // Transient failure (network, server error): keep the session so a later request can retry.
             throw error
         }
+    }
+
+    /// A fresh session was refused too: Procore no longer accepts the user's tokens. Ends the session
+    /// as a rejected refresh does, so later requests go out unauthenticated and do not signal again.
+    private func signalReauthRequired() async {
+        try? store.clear()
+        guard !hasSignaledSignOut else { return }
+        hasSignaledSignOut = true
+        await onReauthRequired()
+    }
+
+    /// Reads an error body's `code` and returns it with a body the caller can still read. A body that
+    /// is missing, larger than `maxErrorBodyBytes` or not JSON has no code.
+    private static func errorCode(of body: HTTPBody?) async throws -> (String?, HTTPBody?) {
+        guard let body else { return (nil, nil) }
+        if case .known(let length) = body.length, length > maxErrorBodyBytes { return (nil, body) }
+        let bytes = try await [UInt8](collecting: body, upTo: maxErrorBodyBytes)
+        let code = (try? JSONDecoder().decode(ErrorCode.self, from: Data(bytes)))?.code
+        return (code, HTTPBody(bytes))
+    }
+
+    private struct ErrorCode: Decodable {
+        let code: String
     }
 
     private func authorized(_ request: HTTPRequest, with session: Session) -> HTTPRequest {

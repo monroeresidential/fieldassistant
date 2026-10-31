@@ -271,6 +271,11 @@ struct ProjectPickerView: View {
             try await scope.saveSelection(companyID: companyID, projectID: project.id)
         } catch {
             let failure = APIFailure(error)
+            if failure == .reauthRequired {
+                // The session ends; the sign-in screen says why.
+                appState.handleReauthRequired()
+                return
+            }
             guard failure == .offline else {
                 saveError = failure
                 return
@@ -294,8 +299,9 @@ struct ProjectPickerView: View {
         switch failure {
         case .permissionDenied(let message), .validation(let message), .notFound(let message), .server(let message):
             message
-        case .reauthRequired: "Your session expired. Sign in again."
         case .offline: "You're offline."
+        // Never presented: `choose` ends the session instead.
+        case .reauthRequired: failure.userMessage
         }
     }
 }

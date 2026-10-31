@@ -184,6 +184,8 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.phase, .signedOut)
         XCTAssertNil(store.current)
         XCTAssertEqual(transport.requests.map(\.request.path), ["/me", "/auth/logout"])
+        XCTAssertEqual(state.signOutReason, .user)
+        XCTAssertNil(AppState.signInNote(for: state.signOutReason), "a chosen sign-out needs no note")
     }
 
     @MainActor
@@ -241,6 +243,124 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.phase, .signedOut)
         XCTAssertNil(store.current)
         XCTAssertEqual(transport.requests.map(\.request.path), ["/auth/refresh"])
+        XCTAssertEqual(state.signOutReason, .refreshRejected)
+    }
+
+    @MainActor
+    func testSignInNoteByReason() {
+        let sentence = "Procore signed you out. Sign in again and your drafts will send."
+        XCTAssertEqual(AppState.signInNote(for: .procoreSignedOut), sentence)
+        XCTAssertEqual(AppState.signInNote(for: .refreshRejected), sentence)
+        XCTAssertNil(AppState.signInNote(for: .user))
+        XCTAssertNil(AppState.signInNote(for: nil))
+    }
+
+    @MainActor
+    func testReauthRequiredEndsSessionWithNote() async throws {
+        let store = InMemorySessionStore(validSession())
+        let state = makeState(store: store, transport: StubTransport([APIStub.me(procoreUserID: 42)]))
+        await state.bootstrap()
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+
+        state.handleReauthRequired()
+        state.handleReauthRequired()
+
+        XCTAssertEqual(state.phase, .signedOut)
+        XCTAssertEqual(state.signOutReason, .procoreSignedOut)
+        XCTAssertEqual(
+            AppState.signInNote(for: state.signOutReason),
+            "Procore signed you out. Sign in again and your drafts will send."
+        )
+        XCTAssertNil(store.current)
+        XCTAssertEqual(store.clearCount, 1, "the second call finds the session already ended")
+        XCTAssertNil(state.draftOwnerID)
+    }
+
+    @MainActor
+    func testSignInClearsSignOutReason() async throws {
+        let store = InMemorySessionStore(validSession())
+        let transport = StubTransport([
+            APIStub.me(procoreUserID: 42),
+            APIStub.authStartOK(),
+            APIStub.tokenPair(access: "acc2", refresh: "ref2"),
+            APIStub.me(procoreUserID: 42),
+        ])
+        let presenter = FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth?code=abc")!)
+        let state = makeState(store: store, transport: transport, presenter: presenter)
+        await state.bootstrap()
+        state.handleReauthRequired()
+        XCTAssertEqual(state.signOutReason, .procoreSignedOut)
+
+        await state.signIn()
+
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+        XCTAssertNil(state.signOutReason)
+        XCTAssertNil(AppState.signInNote(for: state.signOutReason))
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testReauthFromBackgroundPassKeepsDraftAndShowsNote() async throws {
+        // A Submit queued with no signal: the reviewed payload still has to be saved (PATCH).
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "t",
+                               capturedAt: .now.addingTimeInterval(-600))
+        let payload = try LocalDraft.decoder.decode(RFIDraftPayload.self, from: Data(
+            #"{"subject":"Header height at grid C","assignee_ids":[],"distribution_ids":[],"private":false,"draft":false}"#.utf8
+        ))
+        draft.pendingPayloadData = try LocalDraft.encoder.encode(payload)
+        draft.submitPending = true
+        let path = "/drafts/\(draft.id.uuidString.lowercased())"
+        let reauth = APIStub.error(.unauthorized, code: "reauth_required", message: "sign in to Procore again")
+        let transport = ScriptedTransport([
+            .response(APIStub.me(procoreUserID: 42)),
+            .response(reauth),
+            .response(APIStub.tokenPair(access: "acc2", refresh: "ref2")),
+            .response(reauth),
+        ])
+        let store = InMemorySessionStore(validSession())
+        let state = makeState(
+            store: store, transport: transport,
+            presenter: FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth?code=abc")!),
+            reachability: FakeReachability(isReachable: true)
+        )
+        try state.drafts.insert(draft)
+
+        // A cold background launch: bootstrap, then one pass, whose PATCH finds Procore signed out.
+        await state.runBackgroundPass()
+        try await waitUntil { state.phase == .signedOut }
+        await settle()
+
+        XCTAssertEqual(state.signOutReason, .procoreSignedOut)
+        XCTAssertEqual(
+            AppState.signInNote(for: state.signOutReason),
+            "Procore signed you out. Sign in again and your drafts will send."
+        )
+        XCTAssertNil(store.current)
+        XCTAssertNil(state.draftSync)
+        XCTAssertEqual(transport.requests.map(\.path), ["/me", path, "/auth/refresh", path],
+                       "the session ended once: no second refresh, nothing sent after it")
+        XCTAssertTrue(draft.submitPending, "the draft stays queued")
+        XCTAssertEqual(draft.status, .submitting)
+        XCTAssertNotNil(draft.pendingPayloadData, "the reviewed payload still waits to be saved")
+
+        // Signing in again runs a pass that saves, submits and polls the draft.
+        transport.append(.response(APIStub.authStartOK()))
+        transport.append(.response(APIStub.tokenPair(access: "acc3", refresh: "ref3")))
+        transport.append(.response(APIStub.me(procoreUserID: 42)))
+        transport.append(.response(APIStub.draft(id: draft.id, status: "reviewed")))
+        transport.append(.response(APIStub.submit(.ok, draftID: draft.id)))
+        transport.append(.response(APIStub.draft(id: draft.id, status: "submitted")))
+
+        await state.signIn()
+        try await waitUntil { draft.status == .submitted }
+
+        XCTAssertNil(state.signOutReason)
+        XCTAssertFalse(draft.submitPending)
+        XCTAssertNil(draft.pendingPayloadData)
+        XCTAssertEqual(Array(transport.requests.map(\.path).suffix(6)), [
+            "/auth/start", "/auth/exchange", "/me", path, path + "/submit", path,
+        ])
+        cancelBackgroundWork(state)
     }
 
     @MainActor
@@ -819,6 +939,21 @@ final class AppStateTests: XCTestCase {
 
         await state.signIn()
         XCTAssertEqual(state.sessionGeneration, 2, "re-sign-in tells screens to reload")
+    }
+
+    /// Lets queued main-actor work run.
+    @MainActor
+    private func settle() async {
+        for _ in 0..<20 { await Task.yield() }
+    }
+
+    @MainActor
+    private func waitUntil(timeout: Duration = .seconds(2), _ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !condition() {
+            guard ContinuousClock.now < deadline else { return XCTFail("condition not met in time") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     private func notModified(count: Int) -> [(HTTPResponse, HTTPBody?)] {

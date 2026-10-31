@@ -244,7 +244,8 @@ final class AuthServiceTests: XCTestCase {
         let middleware = AuthMiddleware(
             store: store,
             refresh: { _ in throw AuthRefreshError.rejected },
-            onSignedOut: {}
+            onSignedOut: {},
+            onReauthRequired: {}
         )
         let client = Client(serverURL: APIStub.baseURL, transport: transport, middlewares: [middleware])
         guard let callbackScheme else {
