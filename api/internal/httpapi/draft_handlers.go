@@ -51,22 +51,27 @@ func (s *Server) CreateDraft(ctx context.Context, req CreateDraftRequestObject) 
 	if strings.TrimSpace(req.Body.Transcript) == "" {
 		return nil, badRequest("transcript is required")
 	}
+	attachments, err := manifestInput(req.Body.Attachments)
+	if err != nil {
+		return nil, err
+	}
 	userID := claimsFrom(ctx).UserID
 	companyID := req.Params.XCompanyId
 	if err := s.requireVisible(ctx, userID, companyID); err != nil {
 		return nil, err
 	}
 	d, err := s.deps.Drafts.Create(ctx, pipeline.CreateInput{
-		ID:         req.Body.Id,
-		UserID:     userID,
-		CompanyID:  companyID,
-		ProjectID:  req.Body.ProjectId,
-		Feature:    string(req.Body.Feature),
-		Transcript: req.Body.Transcript,
-		CapturedAt: req.Body.CapturedAt,
+		ID:          req.Body.Id,
+		UserID:      userID,
+		CompanyID:   companyID,
+		ProjectID:   req.Body.ProjectId,
+		Feature:     string(req.Body.Feature),
+		Transcript:  req.Body.Transcript,
+		CapturedAt:  req.Body.CapturedAt,
+		Attachments: attachments,
 	})
 	if err != nil {
-		return nil, s.draftFailure("create draft", err)
+		return nil, s.attachmentFailure("create draft", err)
 	}
 	body, err := draftResponse(d)
 	if err != nil {
@@ -165,7 +170,7 @@ func (s *Server) companyDraft(ctx context.Context, companyID int64, id uuid.UUID
 }
 
 // draftResponse converts a pipeline draft to the contract shape. Required
-// arrays and confidence are never null.
+// arrays (attachments among them) and confidence are never null.
 func draftResponse(d pipeline.Draft) (DraftResponse, error) {
 	var payload RFIDraftPayload
 	if raw := d.Payload(); len(raw) > 0 {
@@ -203,17 +208,22 @@ func draftResponse(d pipeline.Draft) (DraftResponse, error) {
 	if confidence == nil {
 		confidence = map[string]float64{}
 	}
+	attachments := make([]Attachment, 0, len(d.Attachments))
+	for _, a := range d.Attachments {
+		attachments = append(attachments, attachmentResponse(a))
+	}
 	out := DraftResponse{
-		Id:         d.ID,
-		Feature:    DraftResponseFeature(d.Feature),
-		ProjectId:  d.ProjectID,
-		Status:     DraftResponseStatus(d.Status),
-		Payload:    payload,
-		Unresolved: unresolved,
-		Confidence: confidence,
-		Transcript: d.Transcript,
-		CreatedAt:  d.CreatedAt,
-		UpdatedAt:  d.UpdatedAt,
+		Id:          d.ID,
+		Feature:     DraftResponseFeature(d.Feature),
+		ProjectId:   d.ProjectID,
+		Status:      DraftResponseStatus(d.Status),
+		Payload:     payload,
+		Unresolved:  unresolved,
+		Confidence:  confidence,
+		Transcript:  d.Transcript,
+		Attachments: attachments,
+		CreatedAt:   d.CreatedAt,
+		UpdatedAt:   d.UpdatedAt,
 	}
 	if d.ModelVersion != "" {
 		mv := d.ModelVersion

@@ -117,6 +117,19 @@ var errInsecureRedirect = errors.New("procore: file redirect is not https")
 // maxFileRedirects matches net/http's default redirect limit.
 const maxFileRedirects = 10
 
+// httpsOnlyRedirect is the CheckRedirect of requests to pre-signed file and
+// storage URLs: it follows a redirect only to https, and at most
+// maxFileRedirects times.
+func httpsOnlyRedirect(next *http.Request, via []*http.Request) error {
+	if next.URL.Scheme != "https" {
+		return errInsecureRedirect
+	}
+	if len(via) >= maxFileRedirects {
+		return errors.New("procore: too many file redirects")
+	}
+	return nil
+}
+
 // FetchURL GETs rawURL with the client's http.Client and none of the Procore
 // headers, for the pre-signed file URLs Procore returns. It follows
 // redirects only to https URLs. A URL that cannot be requested, a refused
@@ -135,15 +148,7 @@ func (c *Client) FetchURL(ctx context.Context, rawURL string) (*http.Response, e
 	}
 	hc := *c.hc
 	hc.Timeout = 0
-	hc.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-		if next.URL.Scheme != "https" {
-			return errInsecureRedirect
-		}
-		if len(via) >= maxFileRedirects {
-			return errors.New("procore: too many file redirects")
-		}
-		return nil
-	}
+	hc.CheckRedirect = httpsOnlyRedirect
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, unavailable(ctx, fmt.Errorf("procore: fetch file: %w", err))

@@ -20,6 +20,12 @@ func validEnv() map[string]string {
 		"PUBLIC_BASE_URL":       "http://localhost:8080",
 		"ANTHROPIC_API_KEY":     "sk-ant-test",
 		"LLM_EXTRACT_MODEL":     "claude-sonnet-5-5",
+
+		"OBJECT_STORE_ENDPOINT":   "http://localhost:9000",
+		"OBJECT_STORE_REGION":     "us-east-1",
+		"OBJECT_STORE_BUCKET":     "fieldassistant-attachments",
+		"OBJECT_STORE_ACCESS_KEY": "fa-minio",
+		"OBJECT_STORE_SECRET_KEY": "fafafafa",
 	}
 }
 
@@ -166,5 +172,64 @@ func TestLoad_LLMTimeoutInvalid(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "LLM_TIMEOUT_SECONDS") {
 			t.Errorf("value %q: want error mentioning LLM_TIMEOUT_SECONDS, got %v", v, err)
 		}
+	}
+}
+
+var objectStoreVars = []string{
+	"OBJECT_STORE_ENDPOINT",
+	"OBJECT_STORE_REGION",
+	"OBJECT_STORE_BUCKET",
+	"OBJECT_STORE_ACCESS_KEY",
+	"OBJECT_STORE_SECRET_KEY",
+}
+
+func TestConfig_MissingObjectStore_Fails(t *testing.T) {
+	for _, name := range objectStoreVars {
+		env := validEnv()
+		delete(env, name)
+		_, err := Load(getter(env))
+		if err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("without %s: want error naming it, got %v", name, err)
+		}
+	}
+}
+
+func TestLoad_ObjectStore(t *testing.T) {
+	cfg, err := Load(getter(validEnv()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ObjectStoreConfig{
+		Endpoint:  "http://localhost:9000",
+		Region:    "us-east-1",
+		Bucket:    "fieldassistant-attachments",
+		AccessKey: "fa-minio",
+		SecretKey: "fafafafa",
+	}
+	if cfg.ObjectStore != want {
+		t.Errorf("ObjectStore = %+v, want %+v", cfg.ObjectStore, want)
+	}
+}
+
+func TestLoad_ObjectStoreCreateBucket(t *testing.T) {
+	for v, want := range map[string]bool{"true": true, "1": true, "false": false, "0": false} {
+		env := validEnv()
+		env["OBJECT_STORE_CREATE_BUCKET"] = v
+		cfg, err := Load(getter(env))
+		if err != nil {
+			t.Fatalf("value %q: %v", v, err)
+		}
+		if cfg.ObjectStore.CreateBucket != want {
+			t.Errorf("value %q: CreateBucket = %v, want %v", v, cfg.ObjectStore.CreateBucket, want)
+		}
+	}
+}
+
+func TestLoad_ObjectStoreCreateBucketInvalid(t *testing.T) {
+	env := validEnv()
+	env["OBJECT_STORE_CREATE_BUCKET"] = "maybe"
+	_, err := Load(getter(env))
+	if err == nil || !strings.Contains(err.Error(), "OBJECT_STORE_CREATE_BUCKET") {
+		t.Fatalf("want error naming OBJECT_STORE_CREATE_BUCKET, got %v", err)
 	}
 }

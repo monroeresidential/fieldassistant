@@ -111,8 +111,11 @@ func flattenErrors(prefix string, errs map[string]json.RawMessage, into map[stri
 type Client struct {
 	apiURL string
 	hc     *http.Client
-	sleep  func(time.Duration)
-	now    func() time.Time
+	// uploadClient sends Direct File Upload bodies to the storage service:
+	// hc's transport, a longer timeout and https-only redirects.
+	uploadClient *http.Client
+	sleep        func(time.Duration)
+	now          func() time.Time
 }
 
 // NewClient builds a REST client. A nil hc uses http.DefaultClient, a nil
@@ -127,7 +130,10 @@ func NewClient(apiURL string, hc *http.Client, sleep func(time.Duration), now fu
 	if now == nil {
 		now = time.Now
 	}
-	return &Client{apiURL: strings.TrimRight(apiURL, "/"), hc: hc, sleep: sleep, now: now}
+	uc := *hc
+	uc.Timeout = uploadTimeout
+	uc.CheckRedirect = httpsOnlyRedirect
+	return &Client{apiURL: strings.TrimRight(apiURL, "/"), hc: hc, uploadClient: &uc, sleep: sleep, now: now}
 }
 
 // Me returns the user behind accessToken.

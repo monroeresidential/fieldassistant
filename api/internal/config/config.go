@@ -36,6 +36,15 @@ type LLMConfig struct {
 	Timeout time.Duration
 }
 
+// ObjectStoreConfig locates the S3-compatible bucket that holds draft
+// attachments (DigitalOcean Spaces in dev and prod, MinIO locally).
+type ObjectStoreConfig struct {
+	Endpoint, Region, Bucket, AccessKey, SecretKey string
+	// CreateBucket makes the server create the bucket at startup when it is
+	// missing (OBJECT_STORE_CREATE_BUCKET; local development only).
+	CreateBucket bool
+}
+
 // Config is the validated service configuration.
 type Config struct {
 	Port          string
@@ -45,6 +54,7 @@ type Config struct {
 	AppRedirectScheme string
 	Procore           ProcoreConfig
 	LLM               LLMConfig
+	ObjectStore       ObjectStoreConfig
 	TokenVaultKey     []byte
 	SessionSecret     []byte
 }
@@ -76,6 +86,13 @@ func Load(getenv func(string) string) (Config, error) {
 			APIKey:       req("ANTHROPIC_API_KEY"),
 			ExtractModel: req("LLM_EXTRACT_MODEL"),
 		},
+		ObjectStore: ObjectStoreConfig{
+			Endpoint:  req("OBJECT_STORE_ENDPOINT"),
+			Region:    req("OBJECT_STORE_REGION"),
+			Bucket:    req("OBJECT_STORE_BUCKET"),
+			AccessKey: req("OBJECT_STORE_ACCESS_KEY"),
+			SecretKey: req("OBJECT_STORE_SECRET_KEY"),
+		},
 	}
 	vaultKey := req("TOKEN_VAULT_KEY")
 	sessionSecret := req("SESSION_SECRET")
@@ -102,6 +119,14 @@ func Load(getenv func(string) string) (Config, error) {
 		timeoutSeconds = n
 	}
 	cfg.LLM.Timeout = time.Duration(timeoutSeconds) * time.Second
+
+	if v := getenv("OBJECT_STORE_CREATE_BUCKET"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("OBJECT_STORE_CREATE_BUCKET %q must be true or false", v)
+		}
+		cfg.ObjectStore.CreateBucket = b
+	}
 
 	var err error
 	if cfg.TokenVaultKey, err = decodeKey("TOKEN_VAULT_KEY", vaultKey); err != nil {

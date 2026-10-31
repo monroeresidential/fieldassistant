@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Field Assistant API
-  version: 1.5.1
+  version: 1.6.0
 servers:
   - url: /v1
 security:
@@ -589,7 +589,8 @@ paths:
         Queues the draft for submission to Procore. `Idempotency-Key` must be
         the draft id. A draft that is already submitted answers 200; a newly
         queued or in-flight submit answers 202 with the job to poll. A 400
-        means the draft still has unresolved fields or the key does not match.
+        means the draft still has unresolved fields, a photo has not finished
+        uploading, or the key does not match.
       parameters:
         - name: draftId
           in: path
@@ -621,6 +622,98 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubmitResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /drafts/{draftId}/attachments/{attachmentId}:
+    put:
+      operationId: putDraftAttachment
+      description: >-
+        Uploads the JPEG bytes of a photo listed in the draft's manifest. The
+        body must be a JPEG of at most 20 MiB. Repeating the call for a photo
+        already stored returns it unchanged. A draft that is submitting or
+        submitted answers 400.
+      parameters:
+        - name: draftId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: attachmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Company-Id
+          in: header
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: The stored photo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteDraftAttachment
+      description: >-
+        Removes a photo from the draft. A draft that is submitting or
+        submitted answers 400.
+      parameters:
+        - name: draftId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: attachmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Company-Id
+          in: header
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: The photo was removed.
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -1098,6 +1191,55 @@ components:
             lng:
               type: number
               format: double
+        attachments:
+          type: array
+          description: >-
+            The photos the client will upload with putDraftAttachment, in
+            order. Each starts pending.
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/AttachmentManifestItem'
+    AttachmentManifestItem:
+      type: object
+      required: [id, filename, content_type, bytes]
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        content_type:
+          type: string
+          enum: [image/jpeg]
+        bytes:
+          type: integer
+          format: int64
+          minimum: 1
+    Attachment:
+      type: object
+      required: [id, filename, bytes, state]
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        bytes:
+          type: integer
+          format: int64
+        state:
+          type: string
+          enum: [pending, stored, uploaded, failed]
+          description: >-
+            pending until the bytes are uploaded, stored once they are,
+            uploaded once sent to Procore, failed when Procore could not take
+            them (see error).
+        procore_upload_id:
+          type: string
+        error:
+          $ref: '#/components/schemas/Error'
     Impact:
       type: object
       required: [status]
@@ -1189,7 +1331,7 @@ components:
           type: string
     DraftResponse:
       type: object
-      required: [id, feature, project_id, status, payload, unresolved, confidence, transcript, created_at, updated_at]
+      required: [id, feature, project_id, status, payload, unresolved, confidence, transcript, attachments, created_at, updated_at]
       properties:
         id:
           type: string
@@ -1216,6 +1358,10 @@ components:
             format: double
         transcript:
           type: string
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
         model_version:
           type: string
         result:

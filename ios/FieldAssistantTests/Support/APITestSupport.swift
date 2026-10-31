@@ -91,7 +91,7 @@ enum APIStub {
         json(.ok, #"""
         {"id":"\#(id.uuidString.lowercased())","feature":"rfi","project_id":99,"status":"\#(status)",\#
         "payload":{"subject":"\#(subject)","assignee_ids":[],"distribution_ids":[],"private":false,"draft":false},\#
-        "unresolved":[],"confidence":{},"transcript":"Need header height","created_at":"\#(createdAt)",\#
+        "unresolved":[],"confidence":{},"transcript":"Need header height","attachments":[],"created_at":"\#(createdAt)",\#
         "updated_at":"\#(updatedAt)"}
         """#)
     }

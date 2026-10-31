@@ -10,6 +10,20 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+  minio:
+    # MinIO's own Docker Hub image is no longer published; Chainguard's is the same server.
+    image: chainguard/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      # MinIO wants a root user of at least 3 characters.
+      MINIO_ROOT_USER: fa-minio
+      MINIO_ROOT_PASSWORD: fafafafa
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
 
 volumes:
   pgdata:
+  miniodata:

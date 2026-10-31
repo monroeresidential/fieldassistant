@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side (`docs/superpowers/plans/2026-10-25-project-sync-ios.md`, contract 1.5.1) is merged to `develop` (PR #12) and passed the device check on Drew's iPhone on 2026-10-26. The design pass (roadmap 2b, `docs/superpowers/plans/2026-10-26-design-pass.md`) is implemented on branch `design-pass` as of 2026-10-29, with the device check pending. Next: milestone 3's remaining items (attachments via Direct File Upload, photo downscale to 2,500 px long edge, offline submit).
+Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side (`docs/superpowers/plans/2026-10-25-project-sync-ios.md`, contract 1.5.1) is merged to `develop` (PR #12) and passed the device check on Drew's iPhone on 2026-10-26. The design pass (roadmap 2b, `docs/superpowers/plans/2026-10-26-design-pass.md`) is implemented on branch `design-pass` as of 2026-10-29, with the device check pending. The attachments backend (contract 1.6.0: draft attachments in the object store, pushed to Procore by the submit job via Direct File Upload) is implemented on branch `m3-attachments-offline` as of 2026-10-30. Next is the iOS plan `docs/superpowers/plans/2026-10-30-milestone-3-attachments-ios.md` (photo pipeline, queued submit, Settings row).
 
 Governing documents:
 
@@ -16,7 +16,7 @@ Implementation plans live in `docs/superpowers/plans/`.
 ## Commands
 
 ```
-make db-up / make db-down      # local Postgres in Docker (api/docker-compose.yml)
+make db-up / make db-down      # local Postgres and MinIO (object store) in Docker (api/docker-compose.yml)
 make run                       # API server; needs api/.env (copy api/.env.example)
 make test                      # go test ./... (DB tests skip without TEST_DATABASE_URL)
 make evals                     # live RFI extraction evals; needs ANTHROPIC_API_KEY, LLM_EXTRACT_MODEL and TEST_DATABASE_URL
@@ -64,6 +64,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 | `api/internal/features/rfi` | RFI feature module: schema, versioned `prompt.md`, extraction tools and eval set. |
 | `api/internal/jobs` | River client, the idempotent submit worker and the records keep-warm job. |
 | `api/internal/records` | Per-user mirror of a project's Procore records (RFIs first): delta pulls by updated_at, six-hourly full sweeps, cursor-paged deltas for the phone, keep-warm job. |
+| `api/internal/blob` | Object store behind an interface: S3/Spaces in dev and prod, MinIO locally, memory in tests. |
 | `api/internal/store` | Postgres access: migrations, sqlc queries and generated code in `db/`. |
 | `api/internal/store/storetest` | Shared test helper: migrates and truncates the test database. |
 | `ios/FieldAssistant/App` | App entry, root view, Home and Settings screens, Home sync header, app state, build-time config. |
@@ -92,6 +93,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 - The iOS `.xcodeproj` is generated and never committed. Swift package pins live in `ios/Package.resolved`.
 - Error bodies are `{code,message}` with a fixed code set: `bad_request`, `unauthorized`, `reauth_required`, `forbidden_scope`, `procore_permission_denied`, `not_found`, `procore_unavailable`, `internal`. `not_found` is emitted by the RFI attachment proxy for an RFI or attachment that is not there.
 - The phone reads RFIs from the local mirror (`getRecords`, `syncProject`); `listRFIs` was removed in contract 1.5.1. `getRFIAttachment` streams the file with Procore's real `Content-Type` (declared `*/*` in the contract).
+- Attachment-level codes `procore_refused`, `expired` and `size_mismatch` (the stored object's size differs from its record) live on `DraftResponse.attachments[].error`; the draft-level failure is an `unresolved[]` entry with field `attachments` and reason `procore_validation`. Neither is an HTTP error-body code.
 - `procore_validation` is a draft-level error code carried in `DraftResponse.error` and `JobStatus.error`, not an HTTP error-body code.
 - On iOS only `AuthRefreshError.rejected` signs the user out; other refresh failures keep the session.
 

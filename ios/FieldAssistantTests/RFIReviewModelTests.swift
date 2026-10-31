@@ -373,6 +373,7 @@ final class RFIReviewModelTests: XCTestCase {
             #""status":"\#(status)""#,
             #""payload":{"subject":"Header height at grid C","assignee_ids":[],"distribution_ids":[],"cost_code_id":401,"private":false,"draft":\#(draft)}"#,
             #""unresolved":\#(unresolved ?? defaultUnresolved)"#,
+            #""attachments":[]"#,
             #""confidence":{}"#,
             #""transcript":"Need header height, ask Mike""#,
             #""created_at":"2026-10-24T17:45:12Z""#,

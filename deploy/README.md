@@ -99,6 +99,8 @@ Do the steps in order. Run them as root on the droplet, except step 8, which is 
    Both API env files also carry the LLM settings used for RFI extraction:
    `ANTHROPIC_API_KEY`, `LLM_EXTRACT_MODEL` and `LLM_TIMEOUT_SECONDS` (seconds,
    defaults to 20). The API refuses to start without the first two.
+   Both also need the five `OBJECT_STORE_*` lines; see "Attachments bucket" below,
+   and add them before `docker compose up`.
 
    Each `PROCORE_REDIRECT_URL` must match the redirect URI registered with the
    matching Procore app exactly. Generate `TOKEN_VAULT_KEY` and `SESSION_SECRET`
@@ -164,6 +166,45 @@ The API applies database migrations itself on startup, in each stack's own datab
 
 Before the first deploy each stack runs its branch tag (`:develop` or `:main`).
 After that it runs the digest pinned in `.env`; see Releases and Rollback below.
+
+### Attachments bucket
+
+Draft photos are held in an object store until the submit job has pushed them
+to Procore. Dev and prod share one Space.
+
+**The API refuses to start without the five `OBJECT_STORE_*` lines below, so
+add them to the droplet's `.env.dev` and `.env.prod` before the branch deploys.**
+
+1. In the DigitalOcean control panel, create a Space named
+   `fieldassistant-attachments` in the same region as the droplet, with file
+   listing restricted (the bucket is never public).
+2. Create a Spaces access key scoped to that bucket only (not the backups
+   bucket) and note the key and secret.
+3. Add to both `/opt/fieldassistant/deploy/.env.dev` and `.env.prod`, using the
+   Space's region (for example `nyc3`). Leave `OBJECT_STORE_CREATE_BUCKET`
+   unset: it is for local MinIO only.
+   ```
+   OBJECT_STORE_ENDPOINT=https://<region>.digitaloceanspaces.com
+   OBJECT_STORE_REGION=<region>
+   OBJECT_STORE_BUCKET=fieldassistant-attachments
+   OBJECT_STORE_ACCESS_KEY=...
+   OBJECT_STORE_SECRET_KEY=...
+   ```
+4. Apply the lifecycle rule, which expires everything under `attachments/`
+   after 30 days. Use a second `s3cmd` config for the attachments key, so the
+   backups config stays as it is. The key must have write permission on the
+   bucket for `setlifecycle` (a bucket-scoped key with full access to that
+   bucket does). Configure it as `deploy-prod` with the attachments key and
+   secret, endpoint `<region>.digitaloceanspaces.com` and host-bucket template
+   `%(bucket)s.<region>.digitaloceanspaces.com`:
+   ```
+   sudo -H -u deploy-prod s3cmd --configure -c /home/deploy-prod/.s3cfg-attachments
+   sudo -H -u deploy-prod s3cmd -c /home/deploy-prod/.s3cfg-attachments setlifecycle /opt/fieldassistant/deploy/lifecycle-attachments.xml s3://fieldassistant-attachments
+   ```
+   Confirm it:
+   ```
+   sudo -H -u deploy-prod s3cmd -c /home/deploy-prod/.s3cfg-attachments getlifecycle s3://fieldassistant-attachments
+   ```
 
 ### Updating the deploy files
 

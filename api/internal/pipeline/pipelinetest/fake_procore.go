@@ -5,6 +5,9 @@ package pipelinetest
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"sort"
 	"sync"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/procore"
@@ -20,6 +23,8 @@ type Call struct {
 	RFI *procore.RFICreate
 	// Kind is the lookup kind of a ProbeKind call.
 	Kind string
+	// Upload is the body of a CreateUpload call.
+	Upload *procore.UploadCreate
 }
 
 // FakeProcore answers the Procore reads and RFI writes the pipeline uses from
@@ -48,9 +53,39 @@ type FakeProcore struct {
 	// OnListRFIs, when set, runs at the start of each ListRFIs call, outside
 	// the lock.
 	OnListRFIs func()
+	// Uploads are handed out in order by CreateUpload, one per call; a call
+	// past the end returns an error.
+	Uploads []procore.Upload
+	// UploadErr, when set, is returned by every CreateUpload call.
+	UploadErr error
+	// PostErr, when set, is returned by every PostUpload call, after the
+	// body has been read and recorded in Posted.
+	PostErr error
+	// Posted records each PostUpload call in order.
+	Posted []PostedUpload
+	// OnPostUpload, when set, runs at the end of each PostUpload call that
+	// returns nil, outside the lock, so a test can act right after a storage
+	// POST succeeded.
+	OnPostUpload func()
 
-	mu    sync.Mutex
-	calls []Call
+	mu         sync.Mutex
+	calls      []Call
+	nextUpload int
+}
+
+// PostedUpload is what one PostUpload call sent to the storage service.
+type PostedUpload struct {
+	URL    string
+	Fields map[string]string
+	// FieldOrder is the order the real client sends the form's parts in:
+	// the fields by key, then "file".
+	FieldOrder []string
+	Filename   string
+	// Bytes is how many bytes the fake read from the body.
+	Bytes int
+	// HasAuthHeader is always false: the fake sends nothing, and the real
+	// client never sends Procore credentials to storage.
+	HasAuthHeader bool
 }
 
 // NewFakeProcore returns an empty fake with a non-nil Err map.
@@ -183,4 +218,62 @@ func (f *FakeProcore) CreateRFI(_ context.Context, token string, companyID, proj
 		return procore.RFICreated{}, err
 	}
 	return f.Created, nil
+}
+
+// CreateUpload records a "CreateUpload" call with its body and hands out the
+// next of Uploads. Its error is the one scripted in Err/ErrForToken, else
+// UploadErr.
+func (f *FakeProcore) CreateUpload(_ context.Context, token string, companyID, projectID int64, in procore.UploadCreate) (procore.Upload, error) {
+	if err := f.record(Call{Method: "CreateUpload", AccessToken: token, CompanyID: companyID, ProjectID: projectID, Upload: &in}); err != nil {
+		return procore.Upload{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.UploadErr != nil {
+		return procore.Upload{}, f.UploadErr
+	}
+	if f.nextUpload >= len(f.Uploads) {
+		return procore.Upload{}, fmt.Errorf("pipelinetest: no scripted upload left (%d handed out)", f.nextUpload)
+	}
+	up := f.Uploads[f.nextUpload]
+	f.nextUpload++
+	return up, nil
+}
+
+// PostUpload records a "PostUpload" call, reads r fully and appends what
+// would have been sent to Posted. It makes no HTTP request. Its error is the
+// one scripted in Err/ErrForToken, else PostErr, else the error reading r,
+// else an error when the bytes read are not size, as the real client fails
+// a body that is short or long. OnPostUpload runs when that is nil.
+func (f *FakeProcore) PostUpload(_ context.Context, up procore.Upload, filename string, size int64, r io.Reader) error {
+	n, readErr := io.Copy(io.Discard, r)
+	if readErr == nil && n != size {
+		readErr = fmt.Errorf("pipelinetest: read %d bytes, size says %d", n, size)
+	}
+	order := make([]string, 0, len(up.Fields)+1)
+	for k := range up.Fields {
+		order = append(order, k)
+	}
+	sort.Strings(order)
+	order = append(order, "file")
+	fields := make(map[string]string, len(up.Fields))
+	for k, v := range up.Fields {
+		fields[k] = v
+	}
+	err := f.record(Call{Method: "PostUpload"})
+	f.mu.Lock()
+	f.Posted = append(f.Posted, PostedUpload{URL: up.URL, Fields: fields, FieldOrder: order, Filename: filename, Bytes: int(n)})
+	switch {
+	case err != nil:
+	case f.PostErr != nil:
+		err = f.PostErr
+	default:
+		err = readErr
+	}
+	hook := f.OnPostUpload
+	f.mu.Unlock()
+	if err == nil && hook != nil {
+		hook()
+	}
+	return err
 }

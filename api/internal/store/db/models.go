@@ -8,6 +8,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Attachment struct {
+	ID              pgtype.UUID
+	CompanyID       int64
+	DraftID         pgtype.UUID
+	Filename        string
+	ContentType     string
+	Bytes           int64
+	ObjectKey       pgtype.Text
+	State           string
+	ProcoreUploadID pgtype.Text
+	UploadedAt      pgtype.Timestamptz
+	ErrorCode       pgtype.Text
+	ErrorMessage    pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type AuditEvent struct {
 	ID              int64
 	CompanyID       int64

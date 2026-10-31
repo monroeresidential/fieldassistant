@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/monroeresidential/fieldassistant/api/internal/auth"
+	"github.com/monroeresidential/fieldassistant/api/internal/blob"
 	"github.com/monroeresidential/fieldassistant/api/internal/config"
 	"github.com/monroeresidential/fieldassistant/api/internal/features/rfi"
 	"github.com/monroeresidential/fieldassistant/api/internal/httpapi"
@@ -134,9 +135,14 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	sessions := auth.NewSessions(st, cfg.SessionSecret, time.Now)
 
 	logger := slog.Default()
+	blobs, err := buildBlobs(ctx, cfg.ObjectStore)
+	if err != nil {
+		st.Close()
+		return httpapi.Deps{}, nil, err
+	}
 	extractor := llm.NewClient(cfg.LLM.APIKey, cfg.LLM.ExtractModel, "", cfg.LLM.Timeout)
 	lookups := pipeline.NewLookups(st, pc, tokens, lookupCacheTTL, time.Now, logger)
-	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens,
+	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens, blobs,
 		map[string]pipeline.Feature{"rfi": rfi.New()}, cfg.LLM.ExtractModel, cfg.LLM.Timeout, time.Now, logger)
 	mirror := records.NewMirror(st, map[records.Kind]records.Fetcher{
 		records.KindRFI: records.RFIFetcher{PC: pc},
@@ -160,4 +166,26 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 		Jobs:      jobsClient,
 		Records:   mirror,
 	}, st.Close, nil
+}
+
+// buildBlobs builds the attachment object store and, when configured (local
+// development), creates its bucket.
+func buildBlobs(ctx context.Context, oc config.ObjectStoreConfig) (*blob.S3, error) {
+	s, err := blob.NewS3(blob.S3Config{
+		Endpoint:  oc.Endpoint,
+		Region:    oc.Region,
+		Bucket:    oc.Bucket,
+		AccessKey: oc.AccessKey,
+		SecretKey: oc.SecretKey,
+		PathStyle: true, // Spaces and MinIO both accept path-style addressing.
+	})
+	if err != nil {
+		return nil, err
+	}
+	if oc.CreateBucket {
+		if err := s.EnsureBucket(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
 }
