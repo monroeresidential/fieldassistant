@@ -544,6 +544,30 @@ final class AppStateTests: XCTestCase {
         XCTAssertNil(state.lastSelectedProjectID)
     }
 
+    /// Procore signs the user out (from a background request) while the camera covers the capture
+    /// screen: the screen already "disappeared" under the cover, so the end of the session stops the mic.
+    @MainActor
+    func testSessionEndWhileCameraIsUpStopsRecording() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me())
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        cancelBackgroundWork(state)
+        let transcriber = FakeTranscriber()
+        let model = CaptureModel(transcriber: transcriber)
+        defer { DraftFiles.removeAll(for: model.draftID) }
+        state.activeCapture = model
+        await model.start()
+        model.screenDisappeared(underCamera: true)
+        XCTAssertEqual(model.state, .recording)
+
+        state.handleReauthRequired()
+
+        XCTAssertEqual(model.state, .stopped)
+        XCTAssertEqual(transcriber.stopCount, 1)
+        XCTAssertNil(state.activeCapture)
+    }
+
     @MainActor
     func testSignOutCancelsRunningPrefetch() async throws {
         let transport = RouteTransport()

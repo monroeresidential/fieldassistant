@@ -128,6 +128,10 @@ final class AppState {
     /// The user's companies and projects, fetched once per session for the picker and Home's title.
     /// Implicitly unwrapped for the same reason as `lookups`.
     @ObservationIgnored private(set) var scope: ScopeCache!
+    /// The capture on screen, if any. The capture screen sets it; the end of the session stops its
+    /// microphone, since a screen hidden under the camera's cover gets no second `onDisappear` when
+    /// the root swaps to sign-in.
+    @ObservationIgnored weak var activeCapture: CaptureModel?
     /// The running lookup prefetch, if any. A new selection or the end of the session cancels it.
     @ObservationIgnored private(set) var prefetchTask: Task<Void, Never>?
     /// The running features fetch started by a selection or a sign-in, if any. A new selection or
@@ -462,6 +466,9 @@ final class AppState {
         draftSync = nil
         // Review may be running a submit too; nothing runs on under the next user.
         submitRunner.cancelAll()
+        // The microphone never records on under the sign-in screen.
+        activeCapture?.stop()
+        activeCapture = nil
         recordSync?.stop()
         recordSync = nil
         lookups.clearAll()
