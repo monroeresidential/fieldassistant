@@ -29,13 +29,16 @@ struct DraftService: Sendable {
             location = .init(lat: lat, lng: lng)
         }
         // The photos the phone will upload, in capture order; a draft without photos sends none.
-        let manifest = draft.photos.inCaptureOrder().filter { $0.uploadState != .removed }.map {
-            Components.Schemas.AttachmentManifestItem(
-                id: Self.apiID($0.id),
-                filename: $0.fileName,
-                content_type: .image_sol_jpeg,
-                bytes: $0.bytes
-            )
+        let draftID = draft.id
+        let manifest = draft.photos.inCaptureOrder().filter { $0.uploadState != .removed }.compactMap { photo in
+            Self.manifestBytes(photo, draftID: draftID).map {
+                Components.Schemas.AttachmentManifestItem(
+                    id: Self.apiID(photo.id),
+                    filename: photo.fileName,
+                    content_type: .image_sol_jpeg,
+                    bytes: $0
+                )
+            }
         }
         let request = Components.Schemas.CreateDraftRequest(
             id: Self.apiID(draft.id),
@@ -199,6 +202,18 @@ struct DraftService: Sendable {
         case .badGateway(let response): throw APIFailure(statusCode: 502, response: response)
         case .default(let status, let response): throw APIFailure(statusCode: status, response: response)
         }
+    }
+
+    /// The size the manifest declares for a photo. Photos captured before the phone recorded sizes
+    /// report 0, which the backend refuses (`bytes` minimum 1): those use the file's size on disk
+    /// (they were not downscaled, which is accepted). A photo whose file is gone is left out (`nil`).
+    private static func manifestBytes(_ photo: LocalPhoto, draftID: UUID) -> Int64? {
+        if photo.bytes > 0 { return photo.bytes }
+        let url = DraftFiles.photoURL(draftID: draftID, fileName: photo.fileName)
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false)),
+              let size = (attributes[.size] as? NSNumber)?.int64Value, size > 0
+        else { return nil }
+        return size
     }
 
     /// The backend's lowercase UUID form, used for path ids and the idempotency key.

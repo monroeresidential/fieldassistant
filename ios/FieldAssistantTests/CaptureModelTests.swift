@@ -301,6 +301,56 @@ final class CaptureModelTests: XCTestCase {
         XCTAssertEqual(model.photos.count, 1)
     }
 
+    func testCanBuildIsFalseWhilePickedPhotosAreLoading() async throws {
+        let model = try await stoppedModelWithText()
+        XCTAssertTrue(model.canBuild)
+
+        // Three photos picked; none has reached the saver yet.
+        model.beginPicking(3)
+        XCTAssertTrue(model.isSavingPhotos)
+        XCTAssertFalse(model.canBuild, "Build waits for the whole selection")
+
+        // One fails to load, one is saved: one is still loading.
+        model.finishPick()
+        try await model.addPhoto(data: Self.jpegData())
+        model.finishPick()
+        XCTAssertEqual(model.photos.count, 1)
+        XCTAssertFalse(model.canBuild, "the last pick still holds Build")
+
+        model.finishPick()
+        XCTAssertFalse(model.isSavingPhotos)
+        XCTAssertTrue(model.canBuild)
+    }
+
+    func testEndPickingRestoresCanBuild() async throws {
+        let model = try await stoppedModelWithText()
+        model.beginPicking(4)
+        model.finishPick()
+        XCTAssertFalse(model.canBuild)
+
+        // The selection loop ended early (a refusal, the limit): the rest stop holding Build.
+        model.endPicking()
+
+        XCTAssertFalse(model.isSavingPhotos)
+        XCTAssertTrue(model.canBuild)
+        model.finishPick()
+        XCTAssertTrue(model.canBuild, "an extra finish never goes below zero")
+    }
+
+    private func stoppedModelWithText() async throws -> CaptureModel {
+        let transcriber = FakeTranscriber()
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        try XCTUnwrap(transcriber.continuation).yield("Slab edge at grid C")
+        await waitUntil { !model.transcript.isEmpty }
+        model.stop()
+        return model
+    }
+
+    private static func jpegData() throws -> Data {
+        try XCTUnwrap(image().jpegData(compressionQuality: 0.8))
+    }
+
     func testDiscardDuringPermissionPromptNeverStartsMic() async {
         let transcriber = FakeTranscriber(holdsAuthorization: true)
         let model = makeModel(transcriber: transcriber)

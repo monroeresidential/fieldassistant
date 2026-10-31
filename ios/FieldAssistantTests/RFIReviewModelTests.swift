@@ -381,9 +381,33 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(model.unresolved(for: .rfiManagerId)?.message, message)
         XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .post, .get])
         XCTAssertEqual(local.status, .failed)
-        XCTAssertEqual(local.errorMessage, message)
+        XCTAssertEqual(local.errorMessage, RFIReviewModel.fixFlaggedMessage, "the rows name the fields; the line says what to do")
         XCTAssertFalse(local.submitPending)
         XCTAssertEqual(local.server?.unresolved.map(\.field), ["rfi_manager_id"], "the server's flags survive on the phone")
+    }
+
+    func testInlineUnresolvedRefusalStoresFixMessageOtherRefusalsKeepServerText() async throws {
+        let unresolvedMessage = "draft has unresolved fields: rfi_manager_id"
+        let unresolved = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.error(.badRequest, code: "bad_request", message: unresolvedMessage),
+            draftJSON(status: "reviewed", unresolved: "[]"),
+        ])
+        let (flagged, flaggedDraft, flaggedContainer) = try makeModel(unresolved)
+        _ = await flagged.submit()
+        XCTAssertEqual(flaggedDraft.errorMessage, "Fix the flagged fields and submit again.")
+
+        let otherMessage = "Idempotency-Key must equal the draft id"
+        let other = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.error(.badRequest, code: "bad_request", message: otherMessage),
+            draftJSON(status: "reviewed", unresolved: "[]"),
+        ])
+        let (model, local, container) = try makeModel(other)
+        let outcome = await model.submit()
+        XCTAssertEqual(outcome, .failed(.validation(otherMessage)))
+        XCTAssertEqual(local.errorMessage, otherMessage, "other refusals keep the server's message")
+        withExtendedLifetime((flaggedContainer, container)) {}
     }
 
     func testSubmitAcceptedPathUnchanged() async throws {

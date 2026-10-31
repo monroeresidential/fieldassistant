@@ -447,6 +447,9 @@ struct CaptureView: View {
         }
     }
 
+    /// Shown when a photo arrives after Build made the draft, which the picking gate should prevent.
+    private static let latePhotoMessage = "A photo was still loading when you built the RFI. Add it again."
+
     private nonisolated static func addTile(systemImage: String) -> some View {
         RoundedRectangle(cornerRadius: 6)
             .strokeBorder(Theme.Color.dashedBorder, style: StrokeStyle(lineWidth: 1.5, dash: [4]))
@@ -459,14 +462,22 @@ struct CaptureView: View {
             .contentShape(Rectangle())
     }
 
+    /// Loads and saves a picker selection. The whole selection holds Build from the start, so no
+    /// photo can still be loading when the draft is made; if one ever is, the user is told.
     private func addPicked(_ items: [PhotosPickerItem]) async {
         pickedPhotos = []
+        model.beginPicking(items.count)
+        defer { model.endPicking() }
         for item in items {
+            defer { model.finishPick() }
             guard let data = try? await item.loadTransferable(type: Data.self) else {
                 photoError = "One of the photos could not be read."
                 continue
             }
-            guard !draftMade else { return }
+            guard !draftMade else {
+                photoError = Self.latePhotoMessage
+                return
+            }
             do {
                 try await model.addPhoto(data: data)
             } catch PhotoSaverError.encodingFailed {
@@ -482,7 +493,10 @@ struct CaptureView: View {
     }
 
     private func addCameraPhoto(_ image: UIImage, metadata: [CFString: Any]?) async {
-        guard !draftMade else { return }
+        guard !draftMade else {
+            photoError = Self.latePhotoMessage
+            return
+        }
         do {
             try await model.addPhoto(image: image, metadata: metadata)
         } catch {

@@ -19,7 +19,8 @@ struct FieldAssistantApp: App {
             store: KeychainSessionStore(),
             presenter: ASWebAuthenticationSessionPresenter(),
             baseURL: AppConfig.apiBaseURL,
-            modelContext: container.mainContext
+            modelContext: container.mainContext,
+            backgroundGrace: SystemBackgroundGrace()
         )
         // BackgroundTasks needs its handlers registered before the app finishes launching.
         appState.background.register()

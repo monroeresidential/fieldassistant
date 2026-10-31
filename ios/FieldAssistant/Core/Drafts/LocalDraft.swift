@@ -64,6 +64,12 @@ final class LocalDraft {
     var submitPending: Bool = false
     /// The reviewed payload still to PATCH (JSON `RFIDraftPayload` via `LocalDraft.encoder`); nil once saved.
     var pendingPayloadData: Data?
+    /// When the last queued run was left pending by the server (a 5xx, no answer), so the row reads
+    /// "retrying". Cleared when a later run makes progress or the queued flag clears. The default
+    /// lets older stores migrate.
+    var lastQueueFailureAt: Date?
+    /// The user-facing reason for `lastQueueFailureAt`.
+    var lastQueueFailureMessage: String?
 
     init(
         id: UUID = UUID(),
@@ -90,6 +96,12 @@ final class LocalDraft {
         self.longitude = longitude
         self.photos = photos
         updatedAt = capturedAt
+    }
+
+    /// Forgets the last queued-run failure: a run made progress, or the draft is no longer queued.
+    func clearQueueFailure() {
+        if lastQueueFailureAt != nil { lastQueueFailureAt = nil }
+        if lastQueueFailureMessage != nil { lastQueueFailureMessage = nil }
     }
 
     var status: LocalDraftStatus {

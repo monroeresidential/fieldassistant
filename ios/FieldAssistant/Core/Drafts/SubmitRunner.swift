@@ -1,6 +1,7 @@
 import FieldAssistantAPI
 import Foundation
 import Observation
+import os
 
 /// The work a tapped Submit owes the server for one draft, in a fixed order: save the reviewed
 /// payload, delete the photos the user removed, upload the pending photos one at a time in capture
@@ -17,6 +18,8 @@ final class SubmitRunner {
         /// failed, the last copy the phone has, marked `submitting` (`nil` if the phone has none).
         case accepted(DraftResponse?)
         /// The draft stays queued (the flag is kept) and a later pass tries again; the reason says why.
+        /// A `.server` reason caused by the server (not a cancelled run or a file read) is recorded
+        /// on the draft (`lastQueueFailureAt`), so its row reads "retrying".
         case stillPending(PendingReason)
         /// The server refused the draft for good: the flag is cleared and the draft persisted `failed`.
         case refused(APIFailure)
@@ -42,6 +45,8 @@ final class SubmitRunner {
     static let missingFileMessage = "Photo file is missing on this phone."
     /// A photo the server refused earlier without saying why.
     static let photoRefusedMessage = "Couldn't send this photo."
+
+    private static let log = Logger(subsystem: "FieldAssistant", category: "SubmitRunner")
 
     @ObservationIgnored private let store: DraftStore
     @ObservationIgnored private let service: @MainActor () -> DraftService
@@ -110,6 +115,7 @@ final class SubmitRunner {
             let response = try await service.save(id: draft.id, companyID: draft.companyID, payload: payload)
             applyKeepingQueued(response, to: draft)
             draft.pendingPayloadData = nil
+            draft.clearQueueFailure()
             save()
             return nil
         } catch {
@@ -132,6 +138,7 @@ final class SubmitRunner {
             try? FileManager.default.removeItem(at: DraftFiles.photoURL(draftID: draft.id, fileName: photo.fileName))
             draft.photos.removeAll { $0.id == photo.id }
             photo.modelContext?.delete(photo)
+            draft.clearQueueFailure()
             save()
         }
         // Best effort: the submit's own answer settles the status if this read fails.
@@ -154,6 +161,7 @@ final class SubmitRunner {
                 photo.uploadState = .stored
                 photo.bytes = attachment.bytes
                 photo.failureMessage = nil
+                draft.clearQueueFailure()
                 save()
             } catch let error as CocoaError where Self.missingFileCodes.contains(error.code) {
                 // The file is gone: no retry can send it.
@@ -185,6 +193,10 @@ final class SubmitRunner {
         do {
             start = try await service.submit(id: draft.id, companyID: draft.companyID)
         } catch {
+            if case .validation(let message) = APIFailure(error), message.contains(Self.photosUnfinishedMarker) {
+                // Never expected: the run uploads every photo before the POST.
+                Self.log.fault("submit refused, photos not uploaded: \(message, privacy: .public)")
+            }
             return await settle(error, draft, service)
         }
         switch start {
@@ -193,6 +205,7 @@ final class SubmitRunner {
         case .running(let jobID):
             // The server has queued the submit and owns the draft from here, whatever the poll says.
             draft.submitPending = false
+            draft.clearQueueFailure()
             save()
             do {
                 let response = try await service.waitForJob(id: jobID, draftID: draft.id, companyID: draft.companyID)
@@ -219,7 +232,7 @@ final class SubmitRunner {
         case .offline:
             return .stillPending(.offline)
         case .server:
-            return .stillPending(.server)
+            return pendingOnServer(draft, message: failure.userMessage)
         case .reauthRequired:
             return .stillPending(.reauthRequired)
         case .validation(Self.lockedMessage):
@@ -232,7 +245,12 @@ final class SubmitRunner {
     /// The server refused a change because the draft is already submitting or submitted (an earlier
     /// POST landed but its answer was lost): takes the server's copy as an accepted submit.
     private func takeServerCopy(_ draft: LocalDraft, _ service: DraftService) async -> Outcome {
-        guard let response = try? await service.get(id: draft.id, companyID: draft.companyID) else { return .stillPending(.server) }
+        let response: DraftResponse
+        do {
+            response = try await service.get(id: draft.id, companyID: draft.companyID)
+        } catch {
+            return settleRead(error, draft)
+        }
         draft.pendingPayloadData = nil
         return accept(response, draft: draft)
     }
@@ -240,6 +258,7 @@ final class SubmitRunner {
     private func accept(_ response: DraftResponse, draft: LocalDraft) -> Outcome {
         draft.apply(response)
         draft.submitPending = false
+        draft.clearQueueFailure()
         save()
         if response.status == .submitted { DraftFiles.removeAll(for: draft.id) }
         return .accepted(response)
@@ -250,6 +269,7 @@ final class SubmitRunner {
     private func refuse(_ draft: LocalDraft, failure: APIFailure, _ service: DraftService) async -> Outcome {
         let message = failure.userMessage
         draft.submitPending = false
+        draft.clearQueueFailure()
         draft.status = .failed
         draft.errorMessage = message
         save()
@@ -269,10 +289,32 @@ final class SubmitRunner {
         photo.uploadState = .failed
         photo.failureMessage = message
         draft.submitPending = false
+        draft.clearQueueFailure()
         draft.status = .failed
         draft.errorMessage = message
         save()
         return .photoFailed(photo)
+    }
+
+    /// The server gave no definitive answer: the draft stays queued, and unless the run was
+    /// cancelled (which is not the server's doing) the failure is recorded for its row.
+    private func pendingOnServer(_ draft: LocalDraft, message: String) -> Outcome {
+        if !Task.isCancelled {
+            draft.lastQueueFailureAt = .now
+            draft.lastQueueFailureMessage = message
+            save()
+        }
+        return .stillPending(.server)
+    }
+
+    /// A failed read of the server's copy after a locked 400: the draft stays queued and the next
+    /// run reads it again. Only a failure of the server's own is recorded for the row.
+    private func settleRead(_ error: Error, _ draft: LocalDraft) -> Outcome {
+        let failure = APIFailure(error)
+        switch failure {
+        case .offline, .reauthRequired: return .stillPending(.server)
+        default: return pendingOnServer(draft, message: failure.userMessage)
+        }
     }
 
     /// Applies a server response mid-run: the server still has the draft `reviewed`, but on the
@@ -285,6 +327,10 @@ final class SubmitRunner {
     private func save() {
         try? store.save()
     }
+
+    /// Part of the backend's 400 for a submit with photos still pending ("1 photo has not finished
+    /// uploading", "3 photos have not finished uploading").
+    private static let photosUnfinishedMarker = "not finished uploading"
 
     /// The read errors that mean the photo file is not on the phone.
     private static let missingFileCodes: Set<CocoaError.Code> = [.fileReadNoSuchFile, .fileNoSuchFile]

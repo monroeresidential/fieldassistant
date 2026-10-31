@@ -102,6 +102,9 @@ final class AppState {
     /// Resends waiting drafts, runs queued submits and reconciles submitting ones while a user is
     /// signed in; `nil` otherwise.
     @ObservationIgnored private(set) var draftSync: DraftSync?
+    /// Holds each draft pass through the app's grace period after it leaves the foreground. The app
+    /// passes the system's; tests and previews pass none.
+    @ObservationIgnored private let backgroundGrace: BackgroundGrace?
     /// Keeps the selected project's records current while a user is signed in, and reports the last
     /// sync (not running until asked) while the session is offline; `nil` otherwise.
     /// Observed, so a screen that read `nil` updates when the driver is created or replaced.
@@ -123,8 +126,10 @@ final class AppState {
         modelContext: ModelContext,
         transport: ClientTransport? = nil,
         defaults: UserDefaults = .standard,
-        reachability: ReachabilityProviding? = nil
+        reachability: ReachabilityProviding? = nil,
+        backgroundGrace: BackgroundGrace? = nil
     ) {
+        self.backgroundGrace = backgroundGrace
         self.store = store
         self.defaults = defaults
         self.reachability = reachability ?? Reachability()
@@ -271,10 +276,11 @@ final class AppState {
     /// One background task's worth of work: a single draft pass. When iOS relaunches the app for a
     /// background task the scene never connects, so `RootView` has not bootstrapped and there is no
     /// `draftSync` yet: bootstrap first (a stored session loads `/me`, which starts the sync). A
-    /// bootstrap already running, from the foreground, is left to finish. If there is still no sync
-    /// (signed out, or offline), there is nothing to run.
+    /// bootstrap already running, from the foreground, is left to finish. A session left `.offline`
+    /// (a cold launch with no signal) bootstraps again too, since the signal may be back by now. If
+    /// there is still no sync (signed out, or still offline), there is nothing to run.
     func runBackgroundPass() async {
-        if draftSync == nil, phase == .loading, !isBootstrapping {
+        if draftSync == nil, phase == .loading || phase == .offline, !isBootstrapping {
             await bootstrap()
         }
         await draftSync?.runOnce()
@@ -433,7 +439,8 @@ final class AppState {
             runner: submitRunner,
             reachability: reachability,
             owner: { [weak self] in self?.draftOwnerID },
-            send: { [weak self] draft in await self?.send(draft) ?? .waiting }
+            send: { [weak self] draft in await self?.send(draft) ?? .waiting },
+            grace: backgroundGrace
         )
         draftSync = sync
         sync.start()

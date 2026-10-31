@@ -329,6 +329,59 @@ final class SubmitRunnerTests: XCTestCase {
         XCTAssertTrue(rows.isEmpty, "the removed photo's row is deleted")
     }
 
+    func testLockedPUTIsTreatedAsAccepted() async throws {
+        // An earlier POST landed but its answer was lost: the server refuses the upload as locked.
+        let transport = ScriptedTransport([
+            .response(APIStub.error(.badRequest, code: "bad_request", message: SubmitRunner.lockedMessage)),
+            .response(draftJSON(status: "submitted", result: #"{"procore_id":501,"number":"214"}"#)),
+        ])
+        let (runner, _, draft) = try makeRunner(transport, photos: [(photoA, "a.jpg", 1)])
+
+        let outcome = await runner.run(draft)
+
+        guard case .accepted(let response?) = outcome else { return XCTFail("expected accepted, got \(outcome)") }
+        XCTAssertEqual(response.status, .submitted)
+        XCTAssertEqual(transport.requests.map(\.method), [.put, .get], "no POST after a locked upload")
+        XCTAssertEqual(transport.requests.map(\.path), [photoPath(photoA), draftPath])
+        XCTAssertFalse(draft.submitPending)
+        XCTAssertEqual(draft.status, .submitted)
+        XCTAssertEqual(draft.resultNumber, "214")
+        XCTAssertNotEqual(photo(photoA, in: draft).uploadState, .failed, "a locked upload is not a failed photo")
+    }
+
+    func testServerFailureRecordsQueueFailureAndProgressClearsIt() async throws {
+        let transport = ScriptedTransport([
+            .response(APIStub.error(.badGateway, code: "procore_unavailable", message: "Procore is unavailable")),
+            .response(APIStub.attachment(id: photoA, filename: "a.jpg", state: "stored", bytes: 11)),
+            .failure(URLError(.notConnectedToInternet)),
+        ])
+        let (runner, _, draft) = try makeRunner(transport, photos: [(photoA, "a.jpg", 1)])
+
+        let first = await runner.run(draft)
+
+        XCTAssertEqual(first, .stillPending(.server))
+        XCTAssertTrue(draft.submitPending)
+        XCTAssertNotNil(draft.lastQueueFailureAt, "a server failure is recorded for the row")
+        XCTAssertNotNil(draft.lastQueueFailureMessage)
+
+        // The next run uploads the photo (progress), then loses the signal before the POST.
+        let second = await runner.run(draft)
+
+        XCTAssertEqual(second, .stillPending(.offline))
+        XCTAssertNil(draft.lastQueueFailureAt, "progress clears the failure")
+        XCTAssertNil(draft.lastQueueFailureMessage)
+        XCTAssertTrue(draft.submitPending)
+    }
+
+    func testOfflineRunRecordsNoQueueFailure() async throws {
+        let transport = ScriptedTransport([.failure(URLError(.notConnectedToInternet))])
+        let (runner, _, draft) = try makeRunner(transport, photos: [(photoA, "a.jpg", 1)])
+
+        _ = await runner.run(draft)
+
+        XCTAssertNil(draft.lastQueueFailureAt, "no signal is not the server's failure")
+    }
+
     // MARK: - Helpers
 
     /// A runner over an in-memory store holding one queued draft (`submitting`, `submitPending`)

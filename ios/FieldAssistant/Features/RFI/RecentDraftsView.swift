@@ -73,18 +73,22 @@ struct RecentDraftsView: View {
     }
 }
 
-/// Where a draft queued on the phone (`submitPending`) stands, for its row.
+/// Where a draft queued on the phone (`submitPending`) stands, for its row. The status tag already
+/// reads "Queued", so the meta line only adds why it has not gone yet.
 enum QueuedState: Equatable {
-    case waitingForSignal, sending, queued
+    case waitingForSignal, sending, retrying, queued
 
     /// `nil` when the draft is not queued. No signal wins over a run in progress (the run is about
-    /// to stop), and a run in progress over plain Queued.
-    init?(submitPending: Bool, reachable: Bool, running: Bool) {
+    /// to stop), a run in progress over a retry after a server failure (`failed`, from
+    /// `LocalDraft.lastQueueFailureAt`), and that over plain Queued.
+    init?(submitPending: Bool, reachable: Bool, running: Bool, failed: Bool = false) {
         guard submitPending else { return nil }
         if !reachable {
             self = .waitingForSignal
         } else if running {
             self = .sending
+        } else if failed {
+            self = .retrying
         } else {
             self = .queued
         }
@@ -92,15 +96,16 @@ enum QueuedState: Equatable {
 
     var segments: [String] {
         switch self {
-        case .waitingForSignal: ["Queued", "waiting for signal"]
-        case .sending: ["Queued", "sending"]
-        case .queued: ["Queued"]
+        case .waitingForSignal: ["waiting for signal"]
+        case .sending: ["sending"]
+        case .retrying: ["retrying"]
+        case .queued: []
         }
     }
 }
 
 /// The meta line under a draft's title: "RFI · 2:14 PM · 3 photos", then where a queued draft
-/// stands: "· Queued · waiting for signal".
+/// stands: "· waiting for signal".
 enum DraftRowMeta {
     /// The feature upper-cased; the capture time today, "Yesterday" the day before, otherwise the
     /// weekday; the photo count only when there are photos; the queued state when there is one.
@@ -145,13 +150,14 @@ struct DraftRow: View {
 
     @Environment(AppState.self) private var appState
 
-    /// Where a queued draft stands. Reachability and the runner are both observed, so the row
-    /// moves between waiting, sending and Queued on its own.
+    /// Where a queued draft stands. Reachability, the runner and the draft are all observed, so the
+    /// row moves between waiting, sending, retrying and plain Queued on its own.
     private var queued: QueuedState? {
         QueuedState(
             submitPending: draft.submitPending,
             reachable: appState.reachability.isReachable,
-            running: appState.submitRunner.isRunning(draft.id)
+            running: appState.submitRunner.isRunning(draft.id),
+            failed: draft.lastQueueFailureAt != nil
         )
     }
 

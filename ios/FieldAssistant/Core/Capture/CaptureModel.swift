@@ -38,6 +38,9 @@ final class CaptureModel {
     /// Photos handed to the saver and not yet back. They count against `PhotoLimits.maxPerDraft`
     /// and hold Build, so the draft's photos always match the files on disk.
     private var savingPhotos = 0
+    /// Library picks still loading from the picker, before their bytes reach the saver. Counted from
+    /// the moment the selection arrives, so Build waits for the whole selection.
+    private var pendingPicks = 0
     /// Set by `discard()`; a photo whose save finishes afterwards is deleted instead of added.
     @ObservationIgnored private var discarded = false
 
@@ -59,8 +62,24 @@ final class CaptureModel {
         state == .stopped && !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSavingPhotos
     }
 
-    /// Whether a photo is still being written; Build waits for it.
-    var isSavingPhotos: Bool { savingPhotos > 0 }
+    /// Whether a photo is still loading from the picker or being written; Build waits for it.
+    var isSavingPhotos: Bool { savingPhotos > 0 || pendingPicks > 0 }
+
+    /// A picker selection of `count` photos arrived: they hold Build until each one is saved or
+    /// fails to load (`finishPick()`), or the selection is abandoned (`endPicking()`).
+    func beginPicking(_ count: Int) {
+        pendingPicks += max(0, count)
+    }
+
+    /// One picked photo is done: saved, refused, or unreadable.
+    func finishPick() {
+        pendingPicks = max(0, pendingPicks - 1)
+    }
+
+    /// The selection is over; any picks not yet accounted for stop holding Build.
+    func endPicking() {
+        pendingPicks = 0
+    }
 
     /// Asks for permission, then records until `stop()`. Returns once recording has begun (or failed
     /// to); the transcript keeps updating in the background.

@@ -204,6 +204,29 @@ final class DraftServiceTests: XCTestCase {
         XCTAssertEqual(attachments.map { $0["filename"] as? String }, ["kept.jpg"])
     }
 
+    func testCreateManifestUsesFileSizeWhenBytesUnknown() async throws {
+        // Photos captured before the phone recorded sizes report 0 bytes, which the backend refuses.
+        let transport = StubTransport([APIStub.draft(id: draftID)])
+        let service = DraftService(client: makeClient(transport))
+        let draft = localDraft()
+        let start = Date(timeIntervalSince1970: 1_793_000_100)
+        let legacy = LocalPhoto(fileName: "legacy.jpg", bytes: 0, createdAt: start)
+        let missing = LocalPhoto(fileName: "missing.jpg", bytes: 0, createdAt: start.addingTimeInterval(10))
+        let known = LocalPhoto(fileName: "known.jpg", bytes: 3_400, createdAt: start.addingTimeInterval(20))
+        draft.photos = [legacy, missing, known]
+        _ = try DraftFiles.directory(for: draftID)
+        defer { DraftFiles.removeAll(for: draftID) }
+        try Data(repeating: 0xFF, count: 777).write(to: DraftFiles.photoURL(draftID: draftID, fileName: "legacy.jpg"))
+
+        _ = try await service.create(draft)
+
+        let body = try APIStub.jsonObject(try XCTUnwrap(transport.requests.first).body)
+        let attachments = try XCTUnwrap(body["attachments"] as? [[String: Any]])
+        XCTAssertEqual(attachments.map { $0["filename"] as? String }, ["legacy.jpg", "known.jpg"],
+                       "a 0-byte photo with no file on disk is left out")
+        XCTAssertEqual(attachments.map { $0["bytes"] as? Int }, [777, 3_400])
+    }
+
     func testCreateWithoutPhotosOmitsAttachments() async throws {
         let transport = StubTransport([APIStub.draft(id: draftID)])
         let service = DraftService(client: makeClient(transport))

@@ -53,17 +53,24 @@ final class RecentDraftsViewTests: XCTestCase {
             DraftRowMeta.line(feature: "rfi", capturedAt: yesterday, photos: 2, queued: queued, now: now, calendar: calendar)
         }
 
-        XCTAssertEqual(line(.waitingForSignal), "RFI · Yesterday · 2 photos · Queued · waiting for signal")
-        XCTAssertEqual(line(.sending), "RFI · Yesterday · 2 photos · Queued · sending")
-        XCTAssertEqual(line(.queued), "RFI · Yesterday · 2 photos · Queued")
+        // The status tag says Queued; the meta line does not repeat it.
+        XCTAssertEqual(line(.waitingForSignal), "RFI · Yesterday · 2 photos · waiting for signal")
+        XCTAssertEqual(line(.sending), "RFI · Yesterday · 2 photos · sending")
+        XCTAssertEqual(line(.retrying), "RFI · Yesterday · 2 photos · retrying")
+        XCTAssertEqual(line(.queued), "RFI · Yesterday · 2 photos")
         XCTAssertEqual(line(nil), "RFI · Yesterday · 2 photos")
     }
 
-    /// Which queued state a row shows: no signal wins, then a run in progress, else plain Queued.
+    /// Which queued state a row shows: no signal wins, then a run in progress, then a retry after a
+    /// server failure, else plain Queued.
     func testQueuedStateForRow() {
         XCTAssertNil(QueuedState(submitPending: false, reachable: false, running: true))
+        XCTAssertNil(QueuedState(submitPending: false, reachable: true, running: false, failed: true))
         XCTAssertEqual(QueuedState(submitPending: true, reachable: false, running: true), .waitingForSignal)
+        XCTAssertEqual(QueuedState(submitPending: true, reachable: false, running: false, failed: true), .waitingForSignal)
         XCTAssertEqual(QueuedState(submitPending: true, reachable: true, running: true), .sending)
+        XCTAssertEqual(QueuedState(submitPending: true, reachable: true, running: true, failed: true), .sending)
+        XCTAssertEqual(QueuedState(submitPending: true, reachable: true, running: false, failed: true), .retrying)
         XCTAssertEqual(QueuedState(submitPending: true, reachable: true, running: false), .queued)
     }
 

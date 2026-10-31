@@ -1,4 +1,27 @@
 import Foundation
+import UIKit
+
+/// Asks iOS for the grace period it gives an app that leaves the foreground, so a pass already
+/// running (a Submit tapped just before the phone is pocketed) keeps uploading. `DraftSync` holds
+/// one for each pass. Injected, so tests and previews run without the system's.
+@MainActor
+protocol BackgroundGrace {
+    /// Begins a grace period. `expired` runs if the system ends it first; it must end the period.
+    func begin(name: String, expired: @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier
+    func end(_ identifier: UIBackgroundTaskIdentifier)
+}
+
+/// `UIApplication`'s background task: the app's grace period.
+struct SystemBackgroundGrace: BackgroundGrace {
+    func begin(name: String, expired: @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier {
+        UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expired)
+    }
+
+    func end(_ identifier: UIBackgroundTaskIdentifier) {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+    }
+}
 
 /// Keeps the signed-in user's drafts moving without a screen open: sends `waiting` drafts for
 /// extraction once there is a connection, runs the queued submits (`submitPending`) through the
@@ -15,6 +38,11 @@ final class DraftSync {
     private let owner: @MainActor () -> Int64?
     /// Sends one waiting draft. `AppState.send`, so Build, Recent, Retry and sync share one path.
     private let send: @MainActor (LocalDraft) async -> AppState.SendOutcome
+    /// Holds each pass through the app's grace period after it leaves the foreground; `nil` runs
+    /// passes without one (tests).
+    private let grace: BackgroundGrace?
+    /// The grace period each running pass holds, by pass id.
+    private var graceIDs: [Int: UIBackgroundTaskIdentifier] = [:]
 
     private var listener: Task<Void, Never>?
     /// The running pass, if any. Overlapping triggers wait for it instead of starting a second one.
@@ -34,7 +62,8 @@ final class DraftSync {
         runner: SubmitRunner,
         reachability: ReachabilityProviding,
         owner: @escaping @MainActor () -> Int64?,
-        send: @escaping @MainActor (LocalDraft) async -> AppState.SendOutcome
+        send: @escaping @MainActor (LocalDraft) async -> AppState.SendOutcome,
+        grace: BackgroundGrace? = nil
     ) {
         self.store = store
         self.service = service
@@ -42,6 +71,7 @@ final class DraftSync {
         self.reachability = reachability
         self.owner = owner
         self.send = send
+        self.grace = grace
     }
 
     /// Runs a pass now and again each time the network path comes back. The app also calls
@@ -74,7 +104,9 @@ final class DraftSync {
         passAgain = false
     }
 
-    /// Runs one pass, or, if one is running, makes it run once more and waits for it.
+    /// Runs one pass, or, if one is running, makes it run once more and waits for it. The pass holds
+    /// the app's grace period, so leaving the app does not suspend it at once; if the system ends
+    /// the grace period first, the pass is cancelled (and records nothing).
     func runOnce() async {
         if let pass {
             passAgain = true
@@ -83,6 +115,7 @@ final class DraftSync {
         }
         passID += 1
         let id = passID
+        beginGrace(for: id)
         let task = Task { [weak self] in
             guard let self else { return }
             repeat {
@@ -90,6 +123,7 @@ final class DraftSync {
                 await performPass()
             } while passAgain && !Task.isCancelled
             if passID == id { pass = nil }
+            endGrace(for: id)
         }
         pass = task
         await task.value
@@ -101,6 +135,22 @@ final class DraftSync {
     }
 
     // MARK: - Private
+
+    private func beginGrace(for id: Int) {
+        guard let grace else { return }
+        let identifier = grace.begin(name: "DraftSync pass") { [weak self] in
+            guard let self else { return }
+            if passID == id { cancelPass() }
+            endGrace(for: id)
+        }
+        guard identifier != .invalid else { return }
+        graceIDs[id] = identifier
+    }
+
+    private func endGrace(for id: Int) {
+        guard let identifier = graceIDs.removeValue(forKey: id) else { return }
+        grace?.end(identifier)
+    }
 
     private func performPass() async {
         guard reachability.isReachable, let owner = owner() else { return }

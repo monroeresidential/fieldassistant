@@ -3,6 +3,7 @@ import Foundation
 import HTTPTypes
 import OpenAPIRuntime
 import SwiftData
+import UIKit
 import XCTest
 @testable import FieldAssistant
 
@@ -243,6 +244,39 @@ final class DraftSyncTests: XCTestCase {
     }
 
     @MainActor
+    func testPassHoldsBackgroundGraceUntilItEnds() async throws {
+        let draft = waitingDraft(transcript: "first", minutesAgo: 2)
+        let transport = ScriptedTransport([.response(APIStub.draft(id: draft.id))])
+        let grace = FakeGrace()
+        let (_, sync) = makeSync(transport: transport, drafts: [draft], grace: grace)
+
+        await sync.runOnce()
+
+        XCTAssertEqual(grace.begun.count, 1, "the pass asks for the grace period")
+        XCTAssertEqual(grace.ended, grace.begun, "and gives it back when it ends")
+        XCTAssertEqual(draft.status, .draft)
+    }
+
+    @MainActor
+    func testGraceExpiryCancelsThePass() async throws {
+        let first = waitingDraft(transcript: "first", minutesAgo: 2)
+        let second = waitingDraft(transcript: "second", minutesAgo: 1)
+        let transport = ScriptedTransport([.hang])
+        let grace = FakeGrace()
+        let (_, sync) = makeSync(transport: transport, drafts: [first, second], grace: grace)
+
+        let run = Task { await sync.runOnce() }
+        try await waitUntil { transport.requests.count == 1 }
+        grace.expire()
+        await run.value
+
+        XCTAssertEqual(transport.requests.count, 1, "an expired grace period ends the pass")
+        XCTAssertEqual(first.status, .waiting)
+        XCTAssertNil(first.errorMessage, "a cancelled pass records nothing")
+        XCTAssertEqual(grace.ended, grace.begun, "the grace period is ended exactly once")
+    }
+
+    @MainActor
     func testSignInStartsSyncAndSignOutStopsIt() async throws {
         let transport = ScriptedTransport([.response(APIStub.me(procoreUserID: 42)), .response((HTTPResponse(status: .noContent), nil))])
         let state = makeState(transport: transport, reachability: FakeReachability(isReachable: true))
@@ -420,7 +454,8 @@ final class DraftSyncTests: XCTestCase {
         transport: ClientTransport,
         reachability: FakeReachability = FakeReachability(isReachable: true),
         drafts: [LocalDraft],
-        owner: Int64? = 42
+        owner: Int64? = 42,
+        grace: BackgroundGrace? = nil
     ) -> (AppState, DraftSync) {
         let state = makeState(transport: transport, reachability: reachability)
         self.state = state
@@ -432,7 +467,8 @@ final class DraftSyncTests: XCTestCase {
             runner: state.submitRunner,
             reachability: reachability,
             owner: { owner },
-            send: { [weak state] draft in await state?.send(draft) ?? .waiting }
+            send: { [weak state] draft in await state?.send(draft) ?? .waiting },
+            grace: grace
         )
         return (state, sync)
     }
@@ -465,6 +501,33 @@ final class DraftSyncTests: XCTestCase {
             guard ContinuousClock.now < deadline else { return XCTFail("condition not met in time") }
             try await Task.sleep(for: .milliseconds(10))
         }
+    }
+}
+
+/// A `BackgroundGrace` that records each grace period and can expire the open ones.
+@MainActor
+final class FakeGrace: BackgroundGrace {
+    private(set) var begun: [UIBackgroundTaskIdentifier] = []
+    private(set) var ended: [UIBackgroundTaskIdentifier] = []
+    private var handlers: [UIBackgroundTaskIdentifier: @MainActor @Sendable () -> Void] = [:]
+    private var next = 1
+
+    func begin(name: String, expired: @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier {
+        let identifier = UIBackgroundTaskIdentifier(rawValue: next)
+        next += 1
+        begun.append(identifier)
+        handlers[identifier] = expired
+        return identifier
+    }
+
+    func end(_ identifier: UIBackgroundTaskIdentifier) {
+        ended.append(identifier)
+        handlers[identifier] = nil
+    }
+
+    /// The system ends every open grace period.
+    func expire() {
+        for handler in Array(handlers.values) { handler() }
     }
 }
 

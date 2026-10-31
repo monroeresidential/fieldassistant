@@ -65,6 +65,8 @@ final class RFIReviewModel {
     private static let formField = "_form"
     /// The prefix of the backend's 400 when submit finds unresolved fields.
     private static let unresolvedPrefix = "draft has unresolved fields:"
+    /// The draft's error line after Submit was refused for unresolved fields, which the rows flag.
+    static let fixFlaggedMessage = "Fix the flagged fields and submit again."
     private static let pendingMessage = "Procore has not confirmed the RFI yet; it will update automatically."
     /// The submit is on the phone, waiting for the runner to reach the server.
     static let queuedMessage = "Queued. It sends on its own when you have signal."
@@ -237,6 +239,11 @@ final class RFIReviewModel {
         case .stillPending:
             return .pending(message: Self.queuedMessage)
         case .refused(let failure):
+            if case .validation(let message) = failure, message.hasPrefix(Self.unresolvedPrefix) {
+                // The rows show which fields; the draft's line says what to do rather than the server's list.
+                draft.errorMessage = Self.fixFlaggedMessage
+                try? store.save()
+            }
             if case .validation(let message) = failure, flagFields(from: message) { return .needsFixes }
             return .failed(failure)
         case .photoFailed:
@@ -261,6 +268,7 @@ final class RFIReviewModel {
                 // The server no longer takes edits, so nothing is left to save.
                 draft.pendingPayloadData = nil
                 draft.submitPending = false
+                draft.clearQueueFailure()
                 take(response)
                 if response.status == .submitted { DraftFiles.removeAll(for: draft.id) }
                 return .alreadySent
@@ -272,6 +280,7 @@ final class RFIReviewModel {
         guard !runner.isRunning(draft.id) else { return .sending }
         guard draft.submitPending else { return .stopped }
         draft.submitPending = false
+        draft.clearQueueFailure()
         draft.status = .draft
         try? store.save()
         return .stopped

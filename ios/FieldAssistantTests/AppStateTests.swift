@@ -600,6 +600,36 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testBackgroundPassBootstrapsFromOffline() async throws {
+        // A cold launch in the basement left the session offline with no draft sync; by the time
+        // the background task runs, the signal is back.
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "t",
+                               capturedAt: .now.addingTimeInterval(-600))
+        draft.updatedAt = .now.addingTimeInterval(-600)
+        let transport = ScriptedTransport([
+            .failure(URLError(.notConnectedToInternet)),
+            .response(APIStub.me(procoreUserID: 42)),
+        ])
+        let state = makeState(
+            store: InMemorySessionStore(validSession()), transport: transport,
+            reachability: FakeReachability(isReachable: true)
+        )
+        try state.drafts.insert(draft)
+        await state.bootstrap()
+        XCTAssertEqual(state.phase, .offline)
+        XCTAssertNil(state.draftSync)
+
+        await state.runBackgroundPass()
+
+        XCTAssertNotNil(state.draftSync, "the sync starts once /me succeeds")
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+        let paths = transport.requests.map(\.path)
+        XCTAssertEqual(Array(paths.prefix(2)), ["/me", "/me"])
+        XCTAssertTrue(paths.contains("/drafts/\(draft.id.uuidString.lowercased())"), "one pass ran: \(paths)")
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
     func testBackgroundPassWithoutSessionDoesNothing() async throws {
         let transport = ScriptedTransport([])
         let state = makeState(
