@@ -66,6 +66,15 @@ final class HomeViewTests: XCTestCase {
         XCTAssertEqual(HomeView.openedFromDrafts(.rfi(7)), .rfi(7))
     }
 
+    @MainActor
+    func testRecordHintFollowsAvailability() {
+        XCTAssertEqual(HomeView.recordHint(FeatureAvailability(available: true, reason: nil)), "Under a minute, start to Procore")
+        XCTAssertEqual(
+            HomeView.recordHint(FeatureAvailability(available: false, reason: "Read only on RFIs.")),
+            "RFIs are not available on this project"
+        )
+    }
+
     private func draftWaitingReview(_ id: UUID) -> LocalDraft {
         LocalDraft(id: id, companyID: 1, projectID: 7, status: .draft, transcript: "Beam at C-4")
     }

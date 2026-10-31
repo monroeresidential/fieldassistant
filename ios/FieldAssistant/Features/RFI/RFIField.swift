@@ -55,7 +55,8 @@ enum RFIField: String, CaseIterable, Sendable {
     /// The lookup list a picker for this field draws from, or `nil` for typed fields.
     var lookupKind: LookupKind? {
         switch self {
-        case .assigneeIds, .rfiManagerId, .distributionIds: .users
+        case .assigneeIds, .distributionIds: .users
+        case .rfiManagerId: .rfiManagers
         case .locationId: .locations
         case .specificationSectionId: .specSections
         case .drawingNumber: .drawings

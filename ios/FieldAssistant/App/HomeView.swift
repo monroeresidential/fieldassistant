@@ -181,33 +181,37 @@ struct HomeView: View {
 
     // MARK: - Features
 
-    /// RFI is the one feature v1 ships; the others show as coming. One column at accessibility sizes.
+    /// RFI is the one feature v1 ships, shown as not available (with Procore's reason) when the
+    /// backend says the user cannot create RFIs on the project; the others show as coming. One
+    /// column at accessibility sizes.
     private var featureGrid: some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 10),
                             count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
+        let rfi = appState.rfiAvailability
         return LazyVGrid(columns: columns, spacing: 10) {
-            FeatureCard(title: "RFI", isSelected: true)
-            FeatureCard(title: "Observation", isSelected: false)
-            FeatureCard(title: "Punch item", isSelected: false)
-            FeatureCard(title: "Daily log", isSelected: false)
+            FeatureCard(title: "RFI", state: rfi.available ? .selected : .unavailable(reason: rfi.reason))
+            FeatureCard(title: "Observation", state: .coming)
+            FeatureCard(title: "Punch item", state: .coming)
+            FeatureCard(title: "Daily log", state: .coming)
         }
     }
 
     // MARK: - Record
 
     private var recordBlock: some View {
-        VStack(spacing: 0) {
-            RecordButton(glyph: .mic, size: 116, halo: 10, isEnabled: true) {
+        let availability = appState.rfiAvailability
+        return VStack(spacing: 0) {
+            RecordButton(glyph: .mic, size: 116, halo: 10, isEnabled: availability.available) {
                 path.append(.capture(UUID()))
             }
             .accessibilityLabel("Record an RFI")
-            .accessibilityHint("Starts recording. Tap, talk, review, send.")
+            .accessibilityHint(availability.available ? "Starts recording. Tap, talk, review, send." : Self.recordHint(availability))
             Text("Record an RFI")
                 .textStyle(Theme.Text.label17)
                 .foregroundStyle(Theme.Color.textPrimary)
                 .padding(.top, 8)
                 .accessibilityHidden(true)
-            Text("Under a minute, start to Procore")
+            Text(Self.recordHint(availability))
                 .textStyle(Theme.Text.meta13)
                 .foregroundStyle(Theme.Color.muted)
                 .padding(.top, 10)
@@ -216,6 +220,11 @@ struct HomeView: View {
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
+    }
+
+    /// The line under the record button: how fast it is, or that RFIs cannot be created here.
+    static func recordHint(_ availability: FeatureAvailability) -> String {
+        availability.available ? "Under a minute, start to Procore" : "RFIs are not available on this project"
     }
 
     // MARK: - Recent
@@ -360,22 +369,68 @@ struct HomeView: View {
     }
 }
 
-/// A feature card: the shipped feature selected (2 pt orange border, accent kicker), the rest
-/// coming (dashed hairline, tertiary text, not tappable).
+/// A feature card: the shipped feature selected (2 pt orange border, accent kicker), or not
+/// available on the project (dashed hairline, muted text, Procore's reason beneath the title); the
+/// rest coming (dashed hairline, tertiary text). None is tappable.
 private struct FeatureCard: View {
+    enum State {
+        case selected
+        case unavailable(reason: String?)
+        case coming
+    }
+
     let title: String
-    let isSelected: Bool
+    let state: State
+
+    private var isSelected: Bool {
+        if case .selected = state { return true }
+        return false
+    }
+
+    private var kicker: String {
+        switch state {
+        case .selected: "Selected"
+        case .unavailable: "Not available"
+        case .coming: "Coming"
+        }
+    }
+
+    private var ink: Color {
+        switch state {
+        case .selected: Theme.Color.textPrimary
+        case .unavailable: Theme.Color.muted
+        case .coming: Theme.Color.tertiary
+        }
+    }
+
+    private var reason: String? {
+        guard case .unavailable(let reason) = state, let reason, !reason.isEmpty else { return nil }
+        return reason
+    }
+
+    private var accessibilityLabel: String {
+        switch state {
+        case .selected: title
+        case .unavailable: "\(title), not available"
+        case .coming: "\(title), coming"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Kicker(isSelected ? "Selected" : "Coming", style: .card,
-                   color: isSelected ? nil : Theme.Color.tertiary)
+            Kicker(kicker, style: .card, color: isSelected ? nil : ink)
             Spacer(minLength: 0)
             Text(title)
                 .textStyle(Theme.Text.cardTitle)
-                .foregroundStyle(isSelected ? Theme.Color.textPrimary : Theme.Color.tertiary)
+                .foregroundStyle(ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+            if let reason {
+                Text(reason)
+                    .textStyle(Theme.Text.meta12)
+                    .foregroundStyle(Theme.Color.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
@@ -387,7 +442,8 @@ private struct FeatureCard: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isSelected ? title : "\(title), coming")
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(reason ?? "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

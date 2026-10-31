@@ -10,6 +10,8 @@ enum LookupKind: String, CaseIterable, Codable, Sendable {
     case costCodes = "cost_codes"
     case vendors
     case drawings
+    /// The people Procore lets manage RFIs on the project; backs the RFI manager picker.
+    case rfiManagers = "rfi_managers"
 
     var apiValue: Operations.getLookup.Input.Path.kindPayload {
         switch self {
@@ -19,6 +21,7 @@ enum LookupKind: String, CaseIterable, Codable, Sendable {
         case .costCodes: .cost_codes
         case .vendors: .vendors
         case .drawings: .drawings
+        case .rfiManagers: .rfi_managers
         }
     }
 
@@ -30,6 +33,7 @@ enum LookupKind: String, CaseIterable, Codable, Sendable {
         case .costCodes: "Cost codes"
         case .vendors: "Companies"
         case .drawings: "Drawings"
+        case .rfiManagers: "RFI managers"
         }
     }
 }

@@ -666,6 +666,7 @@ struct RFIReviewView: View {
     private static func placeholder(_ field: RFIField) -> String {
         switch field.lookupKind {
         case .users: field.isMulti ? "Choose people" : "Choose a person"
+        case .rfiManagers: "Choose a person"
         case .locations: "Choose a location"
         case .specSections: "Choose a spec section"
         case .drawings: "Choose a drawing"

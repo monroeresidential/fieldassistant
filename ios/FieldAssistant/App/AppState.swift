@@ -67,6 +67,7 @@ final class AppState {
             case .signedIn:
                 prefetchLookups()
                 startRecordSync()
+                refreshFeatures()
             case .offline:
                 // No `/me` yet: a driver for the new project, not run until a tap or reconnect.
                 startRecordSync(run: false)
@@ -74,6 +75,17 @@ final class AppState {
                 break
             }
         }
+    }
+
+    /// The RFI availability the backend last reported for each project the user selected. A failed
+    /// fetch (offline, Procore down, the project refused) keeps the last answer; the end of the
+    /// session clears it.
+    private(set) var features: [Int64: FeatureAvailability] = [:]
+
+    /// Whether the user may create RFIs on the selected project. Available until a fetch says
+    /// otherwise, so a phone that has never reached the server can still record.
+    var rfiAvailability: FeatureAvailability {
+        selectedProjectID.flatMap { features[$0] } ?? FeatureAvailability(available: true, reason: nil)
     }
 
     @ObservationIgnored private let store: SessionStore
@@ -86,6 +98,9 @@ final class AppState {
     @ObservationIgnored private(set) var lookups: LookupStore!
     /// The running lookup prefetch, if any. A new selection or the end of the session cancels it.
     @ObservationIgnored private(set) var prefetchTask: Task<Void, Never>?
+    /// The running features fetch started by a selection or a sign-in, if any. A new selection or
+    /// the end of the session cancels it.
+    @ObservationIgnored private(set) var featuresTask: Task<Void, Never>?
     /// The drafts captured on this phone.
     @ObservationIgnored let drafts: DraftStore
     /// The on-device mirror of project records, filled by `recordSync`.
@@ -251,13 +266,15 @@ final class AppState {
     }
 
     /// The app came to the foreground: retry the session if it is offline (a successful `/me`
-    /// starts the sync), otherwise run a sync pass.
+    /// starts the sync and fetches the features), otherwise run a sync pass and refetch the
+    /// selected project's features.
     func becameActive() async {
         if phase == .offline {
             await bootstrap()
         } else {
             await draftSync?.runOnce()
             await recordSync?.runOnce()
+            await loadFeatures()
         }
     }
 
@@ -286,10 +303,29 @@ final class AppState {
         await draftSync?.runOnce()
     }
 
-    /// Syncs the selected project's records now. `force` has the backend pull from Procore first;
-    /// `full` makes that pull a full sweep. Does nothing while no project sync is running.
+    /// Syncs the selected project's records now, then refetches its features. `force` has the
+    /// backend pull from Procore first (and ask Procore again for the features); `full` makes that
+    /// pull a full sweep. The records part does nothing while no project sync is running; the
+    /// features part runs only while signed in with a project selected.
     func syncRecords(force: Bool, full: Bool) async {
         await recordSync?.runOnce(force: force, full: full)
+        await loadFeatures(force: force)
+    }
+
+    /// Fetches which features the user may use on the selected project and keeps the RFI answer.
+    /// `force` asks Procore again instead of taking the backend's ten-minute answer. Any failure
+    /// keeps the last value: offline, Procore down, or a `procore_permission_denied` on this call
+    /// itself (the project is not visible), which the record sync's No access path reports.
+    /// Does nothing unless signed in with a project selected.
+    func loadFeatures(force: Bool = false) async {
+        guard case .signedIn = phase, let companyID = selectedCompanyID, let projectID = selectedProjectID else { return }
+        let epoch = sessionEpoch
+        let service = FeaturesService(client: client)
+        guard let answer = try? await service.features(projectID: projectID, companyID: companyID, noCache: force),
+              epoch == sessionEpoch,
+              let rfi = answer["rfi"]
+        else { return }
+        features[projectID] = rfi
     }
 
     // MARK: - Private
@@ -341,6 +377,7 @@ final class AppState {
             prefetchLookups()
             startDraftSync()
             startRecordSync()
+            refreshFeatures()
         case .unauthorized:
             try? store.clear()
             endSession()
@@ -363,6 +400,9 @@ final class AppState {
     private func endSession() {
         sessionEpoch += 1
         cancelPrefetch()
+        featuresTask?.cancel()
+        featuresTask = nil
+        features = [:]
         offlineRetry?.cancel()
         offlineRetry = nil
         draftSync?.stop()
@@ -463,6 +503,14 @@ final class AppState {
         )
         recordSync = sync
         if run { Task { await sync.runOnce() } }
+    }
+
+    /// Fetches the selected project's features in the background, replacing any running fetch.
+    private func refreshFeatures() {
+        featuresTask?.cancel()
+        featuresTask = nil
+        guard selectedProjectID != nil else { return }
+        featuresTask = Task { [weak self] in await self?.loadFeatures() }
     }
 
     private func cancelPrefetch() {

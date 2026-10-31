@@ -70,6 +70,21 @@ final class LookupServiceTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.request.headerFields[.ifNoneMatch], "%22v1%22")
     }
 
+    /// The backend sources RFI manager candidates from Procore's potential RFI managers, so the
+    /// manager picker reads that list; assignees and distribution stay on the people list.
+    func testRFIManagerPickerRequestsRFIManagers() async throws {
+        XCTAssertEqual(RFIField.rfiManagerId.lookupKind, .rfiManagers)
+        XCTAssertEqual(RFIField.assigneeIds.lookupKind, .users)
+        XCTAssertEqual(RFIField.distributionIds.lookupKind, .users)
+        let transport = StubTransport([APIStub.lookup(kind: "rfi_managers")])
+        let service = LookupService(client: makeClient(transport))
+
+        let kind = try XCTUnwrap(RFIField.rfiManagerId.lookupKind)
+        _ = try await service.fetch(companyID: 7, projectID: 99, kind: kind, etag: nil)
+
+        XCTAssertEqual(try XCTUnwrap(transport.requests.first).request.path, "/projects/99/lookups/rfi_managers")
+    }
+
     func testSubtitleJoinsRoleAndCompany() {
         let row = LookupRow(id: 1, label: "Ben West", extra: .init(additionalProperties: ["role": "Architect", "company": "West Design"]))
         XCTAssertEqual(row.subtitle, "Architect · West Design")

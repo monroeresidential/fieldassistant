@@ -253,8 +253,10 @@ final class AppStateTests: XCTestCase {
         await state.bootstrap()
         await state.prefetchTask?.value
 
-        // Record sync runs alongside the prefetch; this test is about lookups.
-        let requests = transport.requests.filter { !($0.path ?? "").contains("/records/") }
+        // Record sync and the features fetch run alongside the prefetch; this test is about lookups.
+        let requests = transport.requests.filter {
+            !($0.path ?? "").contains("/records/") && !($0.path ?? "").hasSuffix("/features")
+        }
         let paths = requests.map { $0.path ?? "" }
         XCTAssertEqual(paths.first, "/me")
         XCTAssertEqual(Set(paths.dropFirst()), Set(LookupKind.allCases.map { "/projects/99/lookups/\($0.rawValue)" }))
@@ -299,7 +301,7 @@ final class AppStateTests: XCTestCase {
         await state.prefetchTask?.value
 
         let revalidations = transport.requests.filter { ($0.path ?? "").contains("/lookups/") }.suffix(LookupKind.allCases.count)
-        XCTAssertEqual(revalidations.map { $0.headerFields[.ifNoneMatch] }, Array(repeating: #""u1""#, count: 6))
+        XCTAssertEqual(revalidations.map { $0.headerFields[.ifNoneMatch] }, Array(repeating: #""u1""#, count: LookupKind.allCases.count))
         XCTAssertEqual(state.lookups.set(projectID: 99, kind: .users)?.etag, #""u1""#)
     }
 
@@ -705,6 +707,93 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
 
+    @MainActor
+    func testSelectingProjectLoadsFeatures() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me())
+        transport.route("/projects/42/features", APIStub.features(rfiAvailable: false, reason: "RFIs are turned off."))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        XCTAssertEqual(state.rfiAvailability, FeatureAvailability(available: true, reason: nil), "available until a fetch says otherwise")
+
+        state.selectedCompanyID = 7
+        state.selectedProjectID = 42
+        await state.featuresTask?.value
+
+        XCTAssertEqual(state.rfiAvailability, FeatureAvailability(available: false, reason: "RFIs are turned off."))
+        XCTAssertEqual(state.features[42], FeatureAvailability(available: false, reason: "RFIs are turned off."))
+        let request = try XCTUnwrap(transport.requests.first { $0.path == "/projects/42/features" })
+        XCTAssertEqual(request.headerFields[HTTPField.Name("X-Company-Id")!], "7")
+        XCTAssertNil(request.headerFields[.cacheControl])
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testFeaturesOfflineKeepsLastValue() async throws {
+        let routes = RouteTransport()
+        routes.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        routes.route(
+            "/projects/99/features",
+            APIStub.features(rfiAvailable: false, reason: "Read only on RFIs."),
+            APIStub.error(.forbidden, code: "procore_permission_denied", message: "No access to this project.")
+        )
+        let transport = OfflineSwitchTransport(routes)
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        await state.featuresTask?.value
+        let unavailable = FeatureAvailability(available: false, reason: "Read only on RFIs.")
+        XCTAssertEqual(state.rfiAvailability, unavailable)
+
+        transport.isOffline = true
+        await state.loadFeatures()
+        XCTAssertEqual(state.rfiAvailability, unavailable, "no connection keeps the last answer")
+
+        transport.isOffline = false
+        await state.loadFeatures()
+        XCTAssertEqual(state.rfiAvailability, unavailable, "a refusal of the features call itself leaves availability as is")
+        XCTAssertEqual(routes.paths.filter { $0 == "/projects/99/features" }.count, 2)
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testSyncRefetchesFeatures() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route(
+            "/projects/99/features",
+            APIStub.features(),
+            APIStub.features(rfiAvailable: false, reason: "RFIs are turned off.")
+        )
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        await state.featuresTask?.value
+        XCTAssertEqual(state.rfiAvailability, FeatureAvailability(available: true, reason: nil))
+
+        await state.syncRecords(force: true, full: false)
+
+        XCTAssertEqual(state.rfiAvailability, FeatureAvailability(available: false, reason: "RFIs are turned off."))
+        let fetches = transport.requests.filter { $0.path == "/projects/99/features" }
+        XCTAssertEqual(fetches.map { $0.headerFields[.cacheControl] }, [nil, "no-cache"], "Sync asks Procore again")
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testSignOutForgetsFeatures() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route("/projects/99/features", APIStub.features(rfiAvailable: false, reason: "RFIs are turned off."))
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        await state.featuresTask?.value
+        XCTAssertFalse(state.rfiAvailability.available)
+
+        await state.signOut()
+
+        XCTAssertTrue(state.features.isEmpty)
+        XCTAssertNil(state.featuresTask)
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -755,6 +844,7 @@ final class AppStateTests: XCTestCase {
         state.recordSync?.stop()
         state.draftSync?.stop()
         state.prefetchTask?.cancel()
+        state.featuresTask?.cancel()
     }
 
     @MainActor
@@ -775,5 +865,32 @@ final class AppStateTests: XCTestCase {
             defaults: UserDefaults(suiteName: suiteName)!,
             reachability: reachability
         )
+    }
+}
+
+/// Answers through `inner` until `isOffline` is set, then fails every request as URLSession does
+/// with no connection.
+private final class OfflineSwitchTransport: ClientTransport, @unchecked Sendable {
+    private let inner: ClientTransport
+    private let lock = NSLock()
+    private var offline = false
+
+    init(_ inner: ClientTransport) {
+        self.inner = inner
+    }
+
+    var isOffline: Bool {
+        get { lock.withLock { offline } }
+        set { lock.withLock { offline = newValue } }
+    }
+
+    func send(
+        _ request: HTTPRequest,
+        body: HTTPBody?,
+        baseURL: URL,
+        operationID: String
+    ) async throws -> (HTTPResponse, HTTPBody?) {
+        if isOffline { throw URLError(.notConnectedToInternet) }
+        return try await inner.send(request, body: body, baseURL: baseURL, operationID: operationID)
     }
 }
