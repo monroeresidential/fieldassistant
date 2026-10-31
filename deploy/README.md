@@ -300,7 +300,7 @@ that container's environment (`.env.prod`). It is read-only: its connections
 run with `default_transaction_read_only` on, and it adds no tables or
 migrations.
 
-Before the promotion PR to `main`, run the live RFI evals once on the branch head (`gh workflow run api.yml --ref <branch>`; the `api-evals` job), because milestone 4 changed the lookup set the RFI feature warms.
+Before opening a backend PR to `develop` that touches extraction, prompts, lookups or the model config, run the live RFI evals once on the branch head (`gh workflow run api.yml --ref <branch>`; the `api-evals` job). The `develop` push runs them again when those files changed, and the promotion PR to `main` inherits that result.
 
 ## Connecting the app to a Procore company
 
