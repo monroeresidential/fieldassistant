@@ -85,7 +85,8 @@ func (s *Server) GetRecords(ctx context.Context, req GetRecordsRequestObject) (G
 }
 
 // SyncProject pulls each requested kind now, forced, and fully when the body
-// asks, and reports each pull's outcome.
+// asks, and reports each pull's outcome. It also drops the user's cached
+// features answer for the project, so the next features call asks Procore.
 func (s *Server) SyncProject(ctx context.Context, req SyncProjectRequestObject) (SyncProjectResponseObject, error) {
 	if req.Body == nil {
 		return nil, badRequest("sync body is required")
@@ -106,6 +107,7 @@ func (s *Server) SyncProject(ctx context.Context, req SyncProjectRequestObject) 
 		}
 		kinds = append(kinds, kind)
 	}
+	s.deps.Features.Invalidate(userID, companyID, req.ProjectId)
 	opts := records.SyncOpts{Force: true, Full: req.Body.Full != nil && *req.Body.Full}
 	pulls := make([]PullStatus, 0, len(kinds))
 	for _, kind := range kinds {

@@ -91,6 +91,7 @@ type ProcoreLookups interface {
 	ListCostCodes(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.CostCode, error)
 	ListVendors(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.Vendor, error)
 	ListDrawings(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.Drawing, error)
+	ListPotentialRFIManagers(ctx context.Context, accessToken string, companyID, projectID int64) ([]procore.RFIManager, error)
 	GetProject(ctx context.Context, accessToken string, companyID, projectID int64) (procore.ProjectDetail, error)
 	// ProbeKind checks the token may read kind's list (one page-1 request,
 	// body discarded); kind is a LookupKind's string.

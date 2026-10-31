@@ -142,6 +142,7 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	}
 	extractor := llm.NewClient(cfg.LLM.APIKey, cfg.LLM.ExtractModel, "", cfg.LLM.Timeout)
 	lookups := pipeline.NewLookups(st, pc, tokens, lookupCacheTTL, time.Now, logger)
+	features := pipeline.NewFeatures(lookups, pc, tokens, pipeline.FeatureProbe(cfg.FeaturesProbe), lookupCacheTTL, time.Now, logger)
 	drafts := pipeline.NewDrafts(st, lookups, extractor, pc, tokens, blobs,
 		map[string]pipeline.Feature{"rfi": rfi.New()}, cfg.LLM.ExtractModel, cfg.LLM.Timeout, time.Now, logger)
 	mirror := records.NewMirror(st, map[records.Kind]records.Fetcher{
@@ -162,6 +163,7 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 		Procore:   pc,
 		Companies: auth.NewCompanyCache(pc, tokens, companyCacheTTL, time.Now),
 		Lookups:   lookups,
+		Features:  features,
 		Drafts:    drafts,
 		Jobs:      jobsClient,
 		Records:   mirror,

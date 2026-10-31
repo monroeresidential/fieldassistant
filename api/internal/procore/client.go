@@ -205,6 +205,13 @@ func (c *Client) ListProjectUsers(ctx context.Context, accessToken string, compa
 	return listKind[ProjectUser](ctx, c, accessToken, companyID, projectID, KindUsers)
 }
 
+// ListPotentialRFIManagers returns the users who may manage an RFI in
+// projectID, following pagination. A 403 is ErrPermissionDenied; a project
+// without the RFI tool answers 404.
+func (c *Client) ListPotentialRFIManagers(ctx context.Context, accessToken string, companyID, projectID int64) ([]RFIManager, error) {
+	return listAll[RFIManager](ctx, c, accessToken, &companyID, projectPath(projectID, "/rfis/potential_rfi_managers"), url.Values{})
+}
+
 // ListLocations returns every location in projectID, following pagination.
 func (c *Client) ListLocations(ctx context.Context, accessToken string, companyID, projectID int64) ([]Location, error) {
 	return listKind[Location](ctx, c, accessToken, companyID, projectID, KindLocations)

@@ -724,3 +724,26 @@ func TestClient_CreateRFI_403_IsErrPermissionDenied(t *testing.T) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
 }
+
+func TestClient_ListPotentialRFIManagers_PathAndDecode(t *testing.T) {
+	f := newFakeProcore(t, map[string]http.HandlerFunc{
+		"/rest/v1.0/projects/9/rfis/potential_rfi_managers": func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, `[{"id":3,"name":"Pat Manager","login":"pat@x.com","locale":"en"},{"id":4,"name":"Sam","login":"sam@x.com"}]`)
+		},
+	})
+	got, err := newTestClient(f, &sleepRecorder{}).ListPotentialRFIManagers(context.Background(), "tok", 7, 9)
+	if err != nil {
+		t.Fatalf("ListPotentialRFIManagers: %v", err)
+	}
+	want := []RFIManager{{ID: 3, Name: "Pat Manager", Login: "pat@x.com"}, {ID: 4, Name: "Sam", Login: "sam@x.com"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("managers = %+v, want %+v", got, want)
+	}
+	reqs := f.recorded()
+	if len(reqs) != 1 || reqs[0].Header.Get("Procore-Company-Id") != "7" || reqs[0].Header.Get("Authorization") != "Bearer tok" {
+		t.Fatalf("requests = %+v", reqs)
+	}
+	if reqs[0].Query["per_page"] != "100" || reqs[0].Query["page"] != "1" {
+		t.Errorf("query = %v, want paginated (per_page 100, page 1)", reqs[0].Query)
+	}
+}

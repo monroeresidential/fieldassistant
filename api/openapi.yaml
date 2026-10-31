@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Field Assistant API
-  version: 1.6.0
+  version: 1.7.0
 servers:
   - url: /v1
 security:
@@ -262,6 +262,50 @@ paths:
           description: The list matches If-None-Match.
         '400':
           $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+  /projects/{projectId}/features:
+    get:
+      operationId: getProjectFeatures
+      description: >-
+        Which features the signed-in user may use on the project, so the app
+        can say so before anything is recorded. A feature Procore will refuse
+        (a Read-only user on the RFI tool, or the tool turned off) is listed
+        with `available: false` and Procore's reason. Answers are cached per
+        user and project for ten minutes; `Cache-Control: no-cache` asks
+        Procore again, and a sync of the project drops the cached answer.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: X-Company-Id
+          in: header
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: Cache-Control
+          in: header
+          required: false
+          description: '`no-cache` asks Procore again.'
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The user's features on the project.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeaturesResponse'
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -909,6 +953,29 @@ components:
           type: boolean
         reason:
           type: string
+        fetched_at:
+          type: string
+          format: date-time
+    FeatureState:
+      type: object
+      required: [feature, available]
+      properties:
+        feature:
+          type: string
+          enum: [rfi]
+        available:
+          type: boolean
+        reason:
+          type: string
+          description: Why the feature is unavailable, in Procore's words when Procore gave any. Absent when available.
+    FeaturesResponse:
+      type: object
+      required: [features, fetched_at]
+      properties:
+        features:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeatureState'
         fetched_at:
           type: string
           format: date-time

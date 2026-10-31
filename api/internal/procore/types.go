@@ -108,6 +108,15 @@ type ProjectUser struct {
 	} `json:"vendor"`
 }
 
+// RFIManager is a user who may be an RFI's manager on a project, from the
+// RFI tool's potential_rfi_managers list. Procore may also send locale,
+// which is ignored.
+type RFIManager struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Login string `json:"login"`
+}
+
 // Location is a node in a project's location tree.
 type Location struct {
 	ID       int64  `json:"id"`
