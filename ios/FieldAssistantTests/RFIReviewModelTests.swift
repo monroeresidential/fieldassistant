@@ -519,6 +519,39 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.uploadState, .removed, "the removal is saved")
     }
 
+    func testRemovePhotoWithoutMessageClearsFix() async throws {
+        let (model, local, container) = try makeModel(StubTransport())
+        let photo = LocalPhoto(fileName: "odd.jpg", bytes: 4)
+        local.photos.append(photo)
+        // The server refused the photo without saying why, so the runner wrote its own line.
+        photo.uploadState = .failed
+        photo.failureMessage = nil
+        local.status = .failed
+        local.errorMessage = SubmitRunner.photoRefusedMessage
+        try container.mainContext.save()
+
+        model.removePhoto(photo)
+
+        XCTAssertEqual(local.status, .draft, "the fallback message still counts as the photo's failure")
+        XCTAssertNil(local.errorMessage)
+    }
+
+    func testRemovePhotoLeavesAnUnrelatedFailureAlone() async throws {
+        let (model, local, container) = try makeModel(StubTransport())
+        let photo = LocalPhoto(fileName: "odd.jpg", bytes: 4)
+        local.photos.append(photo)
+        photo.uploadState = .failed
+        photo.failureMessage = nil
+        local.status = .failed
+        local.errorMessage = "Procore did not accept this RFI."
+        try container.mainContext.save()
+
+        model.removePhoto(photo)
+
+        XCTAssertEqual(local.status, .failed)
+        XCTAssertEqual(local.errorMessage, "Procore did not accept this RFI.")
+    }
+
     // MARK: - Fixtures
 
     private let defaultUnresolved = #"""

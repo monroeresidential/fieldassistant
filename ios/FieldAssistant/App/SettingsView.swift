@@ -47,6 +47,13 @@ struct SettingsView: View {
                 .accessibilityLabel("Submit as Procore draft")
                 .accessibilityHint("RFIs land as drafts until you open them in Procore.")
             }
+            SettingsRow {
+                RowText(title: "Photo size", subtitle: "Long edge, before upload")
+                Text(Self.photoSizeValue(PhotoLimits.longEdge))
+                    .textStyle(Theme.Text.metaTabular)
+                    .foregroundStyle(Theme.Color.muted)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -148,6 +155,17 @@ struct SettingsView: View {
             }
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// "2,500 px": the long edge photos are cut to before they upload, grouped for the phone's locale.
+    static func photoSizeValue(_ longEdge: CGFloat, locale: Locale = .current) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = true
+        formatter.maximumFractionDigits = 0
+        let number = formatter.string(from: NSNumber(value: Double(longEdge.rounded()))) ?? "\(Int(longEdge))"
+        return "\(number) px"
     }
 
     /// "Field Assistant 1.0 (12) · local · localhost:8080"

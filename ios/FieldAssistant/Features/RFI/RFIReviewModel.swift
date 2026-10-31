@@ -282,12 +282,13 @@ final class RFIReviewModel {
     /// all that stopped the draft, the draft is a plain draft again and Submit is open.
     func removePhoto(_ photo: LocalPhoto) {
         guard !isQueued, !isSubmitting, photo.uploadState != .removed else { return }
-        let message = photo.failureMessage
+        // A photo can fail with no server message; the runner then wrote its own line on the draft.
+        let message = photo.failureMessage ?? SubmitRunner.photoRefusedMessage
         try? FileManager.default.removeItem(at: DraftFiles.photoURL(draftID: draft.id, fileName: photo.fileName))
         photo.uploadState = .removed
         photo.failureMessage = nil
         let otherFailed = draft.photos.contains { $0.uploadState == .failed }
-        if draft.status == .failed, !otherFailed, message != nil, draft.errorMessage == message {
+        if draft.status == .failed, !otherFailed, draft.errorMessage == message {
             draft.status = .draft
             draft.errorMessage = nil
         }

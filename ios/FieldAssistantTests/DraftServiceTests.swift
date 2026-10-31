@@ -187,6 +187,23 @@ final class DraftServiceTests: XCTestCase {
         XCTAssertEqual(attachments.map { $0["bytes"] as? Int }, [1_200, 3_400])
     }
 
+    func testCreateManifestExcludesRemovedPhotos() async throws {
+        let transport = StubTransport([APIStub.draft(id: draftID)])
+        let service = DraftService(client: makeClient(transport))
+        let draft = localDraft()
+        let start = Date(timeIntervalSince1970: 1_793_000_100)
+        let kept = LocalPhoto(fileName: "kept.jpg", bytes: 1_200, createdAt: start)
+        let removed = LocalPhoto(fileName: "removed.jpg", bytes: 3_400, createdAt: start.addingTimeInterval(30))
+        removed.uploadState = .removed
+        draft.photos = [kept, removed]
+
+        _ = try await service.create(draft)
+
+        let body = try APIStub.jsonObject(try XCTUnwrap(transport.requests.first).body)
+        let attachments = try XCTUnwrap(body["attachments"] as? [[String: Any]])
+        XCTAssertEqual(attachments.map { $0["filename"] as? String }, ["kept.jpg"])
+    }
+
     func testCreateWithoutPhotosOmitsAttachments() async throws {
         let transport = StubTransport([APIStub.draft(id: draftID)])
         let service = DraftService(client: makeClient(transport))

@@ -230,6 +230,7 @@ struct RFIReviewView: View {
             } else {
                 ReviewFooter(
                     blockingCount: model.unresolvedCount + failedPhotos.count,
+                    failedPhotoCount: failedPhotos.count,
                     isSubmitting: model.isSubmitting,
                     onSave: { Task { await save() } },
                     onSubmit: { Task { await submit() } }
