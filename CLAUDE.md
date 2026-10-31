@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side (`docs/superpowers/plans/2026-10-25-project-sync-ios.md`, contract 1.5.1) is merged to `develop` (PR #12) and passed the device check on Drew's iPhone on 2026-10-26. The design pass (roadmap 2b, `docs/superpowers/plans/2026-10-26-design-pass.md`) is implemented on branch `design-pass` as of 2026-10-29, with the device check pending. Milestone 3's attachments and queued submit are implemented: the backend (contract 1.6.0: draft attachments in the object store, pushed to Procore by the submit job via Direct File Upload; PR #15) is merged to `develop` and deployed to dev, and the phone side (`docs/superpowers/plans/2026-10-30-milestone-3-attachments-ios.md`: photo pipeline, queued submit, background tasks, Settings photo size) is implemented on branch `m3-attachments-ios` as of 2026-10-31, with the device check pending (list in the roadmap). Next: that device check, then milestone 4.
+Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side (`docs/superpowers/plans/2026-10-25-project-sync-ios.md`, contract 1.5.1) is merged to `develop` (PR #12) and passed the device check on Drew's iPhone on 2026-10-26. The design pass (roadmap 2b, `docs/superpowers/plans/2026-10-26-design-pass.md`) is implemented on branch `design-pass` as of 2026-10-29, with the device check pending. Milestone 3's attachments and queued submit are implemented: the backend (contract 1.6.0: draft attachments in the object store, pushed to Procore by the submit job via Direct File Upload; PR #15) is merged to `develop` and deployed to dev, and the phone side (`docs/superpowers/plans/2026-10-30-milestone-3-attachments-ios.md`: photo pipeline, queued submit, background tasks, Settings photo size) is merged to `develop` (PR #16) and deployed to dev as of 2026-10-31, with the device check pending (list in the roadmap). Milestone 4's backend (spec `docs/superpowers/specs/2026-10-31-milestone-4-hardening-testflight-design.md`, plan `docs/superpowers/plans/2026-10-31-milestone-4-backend.md`, contract 1.7.0: features endpoint, 400 and 422 field errors, `rfi_managers` lookup, 120 s refresh grace window, `pilotreport`) is implemented on branch `m4-hardening-testflight` as of 2026-10-31. Next: the milestone 4 iOS plan (`docs/superpowers/plans/2026-10-31-milestone-4-ios.md`) and the pilot runbook (`docs/superpowers/plans/2026-10-31-milestone-4-pilot-runbook.md`).
 
 Governing documents:
 
@@ -23,6 +23,7 @@ make evals                     # live RFI extraction evals; needs ANTHROPIC_API_
 make generate                  # oapi-codegen + sqlc; commit the output
 make sync-contract             # copy api/openapi.yaml into the iOS package
 make check-contract            # fail if the iOS copy is stale (CI runs this)
+make pilot-report ARGS=...     # weekly pilot summary from the prod database over SSH, as Markdown (deploy/README.md)
 make ios-project               # xcodegen + install ios/Package.resolved
 ```
 
@@ -60,13 +61,15 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 | `api/internal/auth` | Procore OAuth broker, session JWTs, refresh-token vault, company cache. |
 | `api/internal/procore` | Procore HTTP client (rate limits, pagination, company header) and OAuth calls. |
 | `api/internal/llm` | Anthropic client behind an `Extractor` interface, with a scripted fake in `llmtest`. |
-| `api/internal/pipeline` | Draft pipeline: lookup cache, extraction, ID validation, draft save and revalidate, submit, audit. |
+| `api/internal/pipeline` | Draft pipeline: lookup cache, extraction, ID validation, draft save and revalidate, submit, audit, features probe. |
 | `api/internal/features/rfi` | RFI feature module: schema, versioned `prompt.md`, extraction tools and eval set. |
 | `api/internal/jobs` | River client, the idempotent submit worker and the records keep-warm job. |
 | `api/internal/records` | Per-user mirror of a project's Procore records (RFIs first): delta pulls by updated_at, six-hourly full sweeps, cursor-paged deltas for the phone, keep-warm job. |
 | `api/internal/blob` | Object store behind an interface: S3/Spaces in dev and prod, MinIO locally, memory in tests. |
 | `api/internal/store` | Postgres access: migrations, sqlc queries and generated code in `db/`. |
 | `api/internal/store/storetest` | Shared test helper: migrates and truncates the test database. |
+| `api/internal/report` | Weekly pilot summary built from drafts, audit events, attachments and the mirror; read-only. |
+| `api/cmd/pilotreport` | The command that prints the summary as Markdown; `/pilotreport` in the API image. |
 | `ios/FieldAssistant/App` | App entry, root view, Home and Settings screens, Home sync header, app state, build-time config. |
 | `ios/FieldAssistant/Core/Design` | Design tokens, Public Sans type scale, logo assets and the shared components every screen is built from. |
 | `ios/FieldAssistant/Core/Auth` | Sign-in flow, Keychain session store, token refresh. |
@@ -95,6 +98,11 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 - The phone reads RFIs from the local mirror (`getRecords`, `syncProject`); `listRFIs` was removed in contract 1.5.1. `getRFIAttachment` streams the file with Procore's real `Content-Type` (declared `*/*` in the contract).
 - Attachment-level codes `procore_refused`, `expired` and `size_mismatch` (the stored object's size differs from its record) live on `DraftResponse.attachments[].error`; the draft-level failure is an `unresolved[]` entry with field `attachments` and reason `procore_validation`. Neither is an HTTP error-body code.
 - `procore_validation` is a draft-level error code carried in `DraftResponse.error` and `JobStatus.error`, not an HTTP error-body code.
+- `GET /projects/{projectId}/features` returns a `FeatureState` per feature (`available`, optional `reason`), probed by Procore reads or the last create outcome as `FEATURES_PROBE` selects (`rfi_managers`, the default, or `create_outcome`). `SyncProject` invalidates the cached answer.
+- Lookup kind `rfi_managers` (Procore's `potential_rfi_managers`) backs `rfi_manager_id` defaults and validation; it is not an extractor tool, so the prompt and tool set stay as they were.
+- Procore error bodies are parsed on HTTP 400 as well as 422, so field errors such as `rfi_manager_id invalid` land on draft fields. A `*ValidationError` on a read is `procore_unavailable` (502), not a draft failure.
+- Refresh grace window: presenting the immediately previous refresh token within `RefreshGrace` (120 s) of rotation returns the current pair without rotating again (the server keeps it encrypted in `sessions.refresh_enc`). Past the window, with any older token, or after a lost rotation race, the session is revoked.
+- `procore_permission_denied` responses carry Procore's reason in `message`, so the phone can show why access was refused.
 - On iOS only `AuthRefreshError.rejected` signs the user out; other refresh failures keep the session.
 - `submitting` plus `submitPending` is the queued intent on the phone; reconcile skips queued drafts; the flag clears when the server owns the draft (200, 202 or a locked 400), on a definitive refusal, on a local photo failure, or when the user taps Stop sending.
 

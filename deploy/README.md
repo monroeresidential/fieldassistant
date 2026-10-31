@@ -300,6 +300,8 @@ that container's environment (`.env.prod`). It is read-only: its connections
 run with `default_transaction_read_only` on, and it adds no tables or
 migrations.
 
+Before the promotion PR to `main`, run the live RFI evals once on the branch head (`gh workflow run api.yml --ref <branch>`; the `api-evals` job), because milestone 4 changed the lookup set the RFI feature warms.
+
 ## Connecting the app to a Procore company
 
 Procore returns `403 {"errors":["App is not connected to this company."]}` until a
