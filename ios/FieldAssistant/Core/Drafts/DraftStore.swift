@@ -7,18 +7,25 @@ final class DraftStore {
     private let context: ModelContext
     /// A context references its container weakly and traps once it is gone, so the store keeps it alive.
     private let container: ModelContainer
+    /// Saves an insert. Tests pass one that throws to exercise the rollback.
+    private let saveInsert: @MainActor (ModelContext) throws -> Void
 
-    init(context: ModelContext) {
+    init(context: ModelContext, saveInsert: @escaping @MainActor (ModelContext) throws -> Void = { try $0.save() }) {
         self.context = context
         container = context.container
+        self.saveInsert = saveInsert
     }
 
     func insert(_ draft: LocalDraft) throws {
         context.insert(draft)
         do {
-            try context.save()
+            try saveInsert(context)
         } catch {
-            // Leave nothing half-inserted behind, so Build can try the same draft id again.
+            // Leave nothing half-inserted behind, so Build can try the same draft id again. The
+            // photos are detached first: they stay with the capture (and their files on disk), so
+            // the next Build can hand them to a new draft.
+            let photos = draft.photos
+            for photo in photos { photo.draft = nil }
             context.rollback()
             throw error
         }

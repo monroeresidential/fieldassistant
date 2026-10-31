@@ -504,6 +504,47 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testSignOutClearsScopeCache() async throws {
+        let companies = APIStub.json(.ok, #"[{"id":7,"name":"Monroe Residential"}]"#)
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(), APIStub.me())
+        transport.route("/companies", companies, companies, companies)
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+
+        _ = try await state.scope.companies()
+        _ = try await state.scope.companies()
+        XCTAssertEqual(transport.paths.filter { $0 == "/companies" }.count, 1, "fetched once per session")
+
+        await state.signOut()
+        _ = try await state.scope.companies()
+
+        XCTAssertEqual(transport.paths.filter { $0 == "/companies" }.count, 2, "the next session fetches again")
+        cancelBackgroundWork(state)
+    }
+
+    /// "Change project" clears the selection; the picker still knows which project the user just left.
+    @MainActor
+    func testLastSelectedProjectSurvivesChangeProjectAndEndsWithSession() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        cancelBackgroundWork(state)
+        XCTAssertEqual(state.lastSelectedProjectID, 99)
+
+        state.selectedProjectID = 100
+        state.selectedProjectID = nil
+        cancelBackgroundWork(state)
+
+        XCTAssertEqual(state.lastSelectedProjectID, 100)
+        await state.signOut()
+        XCTAssertNil(state.lastSelectedProjectID)
+    }
+
+    @MainActor
     func testSignOutCancelsRunningPrefetch() async throws {
         let transport = RouteTransport()
         transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))

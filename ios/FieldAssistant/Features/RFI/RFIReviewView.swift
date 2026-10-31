@@ -731,6 +731,9 @@ struct RFIReviewView: View {
                 // Only a form-level message: show the header callout.
                 scrollToTopRequest += 1
             }
+        case .pending(RFIReviewModel.lockedStopMessage):
+            // Nothing was sent: the screen stays open for review with the server's flags.
+            saveNote = RFIReviewModel.lockedStopMessage
         case .pending(let message):
             pendingMessage = message
         case .failed(let failure):

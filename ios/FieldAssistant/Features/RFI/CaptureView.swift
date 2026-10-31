@@ -127,8 +127,9 @@ struct CaptureView: View {
         .navigationBarBackButtonHidden(true)
         .task(id: ObjectIdentifier(model)) { await model.start() }
         // Leaving by any route (sign-out swaps the root, a path change) must not leave the mic on.
-        // Stop, not discard: a successful Build also leaves this screen and owns the files now.
-        .onDisappear { if model.state == .recording { model.stop() } }
+        // The camera's cover hides this screen too; the recording runs on under it, and nothing
+        // touches the mic when the cover is dismissed (`start()` on reappearing does nothing).
+        .onDisappear { model.screenDisappeared(underCamera: showsCamera) }
         .onChange(of: pickedPhotos) { _, items in
             guard !items.isEmpty else { return }
             Task { await addPicked(items) }

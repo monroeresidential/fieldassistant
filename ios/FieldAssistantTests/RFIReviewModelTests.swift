@@ -331,6 +331,35 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .get], "no second POST")
     }
 
+    /// The save is refused as locked, but by the time the phone asks, the server's submit has
+    /// failed: the draft takes the server's state and flags, the user's edit stays, and nothing is
+    /// queued or posted until the user has looked at it.
+    func testLockedSaveWithFailedServerDraftStopsAndKeepsEdits() async throws {
+        let transport = StubTransport([
+            APIStub.error(.badRequest, code: "bad_request", message: "draft is submitted or being submitted"),
+            draftJSON(
+                status: "failed",
+                unresolved: #"[{"field":"rfi_manager_id","reason":"procore_validation","message":"rfi_manager_id invalid","candidates":[],"blocking":true}]"#
+            ),
+        ])
+        let (model, local, _) = try makeModel(transport)
+        model.setText("Header height at grid D", for: .subject)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .pending(message: RFIReviewModel.lockedStopMessage))
+        XCTAssertEqual(RFIReviewModel.lockedStopMessage, "This draft changed on the server. Review it, then submit again.")
+        XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .get], "no POST")
+        XCTAssertEqual(model.payload.subject, "Header height at grid D", "the unsaved edit is kept")
+        XCTAssertEqual(local.server?.payload.subject, "Header height at grid D")
+        XCTAssertEqual(local.status, .failed)
+        XCTAssertFalse(local.submitPending, "nothing is queued")
+        let owed = try LocalDraft.decoder.decode(RFIDraftPayload.self, from: try XCTUnwrap(local.pendingPayloadData))
+        XCTAssertEqual(owed.subject, "Header height at grid D", "the edit is still owed to the server")
+        XCTAssertEqual(model.unresolved.map(\.field), ["rfi_manager_id"], "the server's flags show")
+        XCTAssertFalse(model.isSubmitting)
+    }
+
     func testPollErrorAfterQueuedIsPending() async throws {
         let transport = StubTransport([
             draftJSON(status: "reviewed", unresolved: "[]"),

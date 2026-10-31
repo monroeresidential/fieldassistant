@@ -121,6 +121,14 @@ final class CaptureModel {
         state = .stopped
     }
 
+    /// The capture screen went away. The camera's full-screen cover hides it too, and the user comes
+    /// back to the same recording, so the microphone keeps running under the cover; leaving by any
+    /// other route stops it. Stop, not discard: a successful Build also leaves and owns the files now.
+    func screenDisappeared(underCamera: Bool) {
+        guard !underCamera else { return }
+        stop()
+    }
+
     /// Waits for the recognizer's final result after `stop()`, which can land a moment later and
     /// carries the punctuated text. Returns at once when no stream is running, and after `timeout`
     /// if the recognizer never finishes.
@@ -190,6 +198,8 @@ final class CaptureModel {
     }
 
     /// The draft to store, owned by the signed-in Procore user so other accounts on the phone never see it.
+    /// It takes this capture's photos, which the model keeps: when storing the draft fails,
+    /// `DraftStore.insert` detaches them again and the next Build hands them to a new draft.
     func makeDraft(companyID: Int64, projectID: Int64, owner: Int64) -> LocalDraft {
         LocalDraft(
             id: draftID,

@@ -166,6 +166,38 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertEqual(try freshDraft.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
     }
 
+    /// A Build whose save fails rolls the insert back; the capture keeps its photos, and the next
+    /// Build hands the same photos to a new draft with the same id.
+    @MainActor
+    func testRolledBackInsertDetachesPhotos() throws {
+        struct SaveFailed: Error {}
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
+        var failsSave = true
+        let store = DraftStore(context: container.mainContext) { context in
+            if failsSave { throw SaveFailed() }
+            try context.save()
+        }
+        let id = UUID()
+        let photos = [LocalPhoto(fileName: "one.jpg", bytes: 10), LocalPhoto(fileName: "two.jpg", bytes: 20)]
+
+        XCTAssertThrowsError(try store.insert(
+            LocalDraft(id: id, companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "first try", photos: photos)
+        ))
+        XCTAssertTrue(photos.allSatisfy { $0.draft == nil }, "the photos are no longer tied to the rolled-back draft")
+        XCTAssertNil(store.draft(id: id))
+
+        failsSave = false
+        try store.insert(
+            LocalDraft(id: id, companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "second try", photos: photos)
+        )
+
+        let fresh = ModelContext(container)
+        let stored = try fresh.fetch(FetchDescriptor<LocalDraft>())
+        XCTAssertEqual(stored.map(\.transcript), ["second try"])
+        XCTAssertEqual(Set(stored.first?.photos.map(\.fileName) ?? []), ["one.jpg", "two.jpg"])
+        XCTAssertEqual(try fresh.fetchCount(FetchDescriptor<LocalPhoto>()), 2)
+    }
+
     @MainActor
     private func makeStore() throws -> (DraftStore, ModelContainer) {
         let container = try AppContainer.makeModelContainer(inMemory: true).get()

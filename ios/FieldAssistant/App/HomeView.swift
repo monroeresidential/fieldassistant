@@ -349,10 +349,10 @@ struct HomeView: View {
 
     // MARK: - Title
 
-    /// Fetches the project and company names for the header, as the picker does; the screen still
-    /// works with a generic title and no company kicker if this fails (offline).
+    /// Reads the project and company names for the header from the session's cache the picker
+    /// filled; the screen still works with a generic title and no company kicker if this fails (offline).
     private func loadTitles() async {
-        let scope = ScopeService(client: appState.client)
+        let scope: ScopeCache = appState.scope
         async let projects = scope.projects(companyID: companyID)
         async let companies = scope.companies()
         if let list = try? await projects { project = list.first { $0.id == projectID } }

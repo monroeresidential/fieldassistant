@@ -71,6 +71,17 @@ final class RFIReviewModel {
     /// The submit is on the phone, waiting for the runner to reach the server.
     static let queuedMessage = "Queued. It sends on its own when you have signal."
     private static let alreadySendingMessage = "This RFI is already being saved or sent."
+    /// A save was refused as locked, but the server's submit had failed by the time the phone asked:
+    /// the screen shows the server's state and flags with the user's edits kept, and nothing is sent.
+    static let lockedStopMessage = "This draft changed on the server. Review it, then submit again."
+
+    /// How `persist()` went.
+    private enum SaveResult {
+        case saved
+        case failed(APIFailure)
+        /// The server refused the save as locked; its copy, now taken, has this status.
+        case locked(status: DraftResponse.statusPayload)
+    }
 
     init(
         draft: LocalDraft,
@@ -195,7 +206,10 @@ final class RFIReviewModel {
         guard !isSaving, !isSubmitting else { return nil }
         isSaving = true
         defer { isSaving = false }
-        return await persist()
+        switch await persist() {
+        case .saved, .locked: return nil
+        case .failed(let failure): return failure
+        }
     }
 
     /// Saves (the server validates again), then queues the submit on the phone and runs it: the
@@ -205,7 +219,10 @@ final class RFIReviewModel {
         guard !isSubmitting, !isSaving else { return .pending(message: Self.alreadySendingMessage) }
         isSubmitting = true
         defer { isSubmitting = false }
-        if let failure = await persist() {
+        switch await persist() {
+        case .saved:
+            break
+        case .failed(let failure):
             switch failure {
             case .offline, .server:
                 // No answer: the payload waits on the phone and the runner saves it first.
@@ -213,6 +230,12 @@ final class RFIReviewModel {
             case .validation, .permissionDenied, .reauthRequired, .notFound:
                 return .failed(failure)
             }
+        case .locked(status: .extracted), .locked(status: .reviewed), .locked(status: .failed):
+            // The server takes edits again; the user looks at its state before anything is sent.
+            return .pending(message: Self.lockedStopMessage)
+        case .locked(status: .submitting), .locked(status: .submitted):
+            // Reported below from the draft, which now has the server's status.
+            break
         }
         // The save found the draft already sent (a submit whose answer was lost); report where it stands.
         switch draft.status {
@@ -327,7 +350,7 @@ final class RFIReviewModel {
     /// Writes the payload to the phone, then PATCHes it. The local copy goes first so a failed
     /// request (offline is the normal jobsite case) still keeps the edits on the phone, and
     /// `pendingPayloadData` holds it until a PATCH lands, so a queued submit saves it first.
-    private func persist() async -> APIFailure? {
+    private func persist() async -> SaveResult {
         if let submitAsDraftOverride { payload.draft = submitAsDraftOverride }
         storeLocally()
         let sent = payload
@@ -339,28 +362,38 @@ final class RFIReviewModel {
             // Edits made while the PATCH was out are still owed to the server.
             draft.pendingPayloadData = payload == sent ? nil : try? LocalDraft.encoder.encode(payload)
             try? store.save()
-            return nil
+            return .saved
         } catch {
             let failure = APIFailure(error)
-            guard failure == .validation(SubmitRunner.lockedMessage) else { return failure }
+            guard failure == .validation(SubmitRunner.lockedMessage) else { return .failed(failure) }
             return await refreshLocked()
         }
     }
 
     /// The server refused a save because the draft is already submitting or submitted (an earlier
     /// submit got through but its answer was lost). Takes the server's copy, which moves the local
-    /// status on, instead of failing every save from now on.
-    private func refreshLocked() async -> APIFailure? {
+    /// status on, instead of failing every save from now on. When that copy takes edits again (the
+    /// submit failed in the meantime), the edits the refused save carried stay: every field that
+    /// differs from the server's copy keeps the user's value and is still owed to the server.
+    private func refreshLocked() async -> SaveResult {
+        let response: DraftResponse
         do {
-            let response = try await service.get(id: draft.id, companyID: draft.companyID)
+            response = try await service.get(id: draft.id, companyID: draft.companyID)
+        } catch {
+            return .failed(APIFailure(error))
+        }
+        switch response.status {
+        case .submitting, .submitted:
             // The server no longer takes edits, so nothing is left to save.
             draft.pendingPayloadData = nil
             take(response)
             if draft.status == .submitted { DraftFiles.removeAll(for: draft.id) }
-            return nil
-        } catch {
-            return APIFailure(error)
+        case .extracted, .reviewed, .failed:
+            take(response, sent: response.payload)
+            draft.pendingPayloadData = payload == response.payload ? nil : try? LocalDraft.encoder.encode(payload)
+            try? store.save()
         }
+        return .locked(status: response.status)
     }
 
     /// Applies a server response here and to the local draft, and saves the local draft. With

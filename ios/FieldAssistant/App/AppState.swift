@@ -84,6 +84,7 @@ final class AppState {
     var selectedProjectID: Int64? {
         didSet {
             Self.persist(selectedProjectID, forKey: Keys.selectedProjectID, in: defaults)
+            if let selectedProjectID { lastSelectedProjectID = selectedProjectID }
             // While `loadMe` fills the selection the phase is not signed in yet; it prefetches itself.
             guard selectedProjectID != oldValue else { return }
             switch phase {
@@ -99,6 +100,11 @@ final class AppState {
             }
         }
     }
+
+    /// The project selected most recently in this session. "Change project" clears the selection
+    /// but not this, so the picker tags the project the user just left "Last used" rather than the
+    /// one `/me` reported at sign-in. The end of the session clears it.
+    private(set) var lastSelectedProjectID: Int64?
 
     /// The RFI availability the backend last reported for each project the user selected. A failed
     /// fetch (offline, Procore down, the project refused) keeps the last answer; the end of the
@@ -119,6 +125,9 @@ final class AppState {
     /// The cached project lookup lists. Set once in `init`; implicitly unwrapped because it needs the
     /// client, which is built after the middleware closures that capture `self`.
     @ObservationIgnored private(set) var lookups: LookupStore!
+    /// The user's companies and projects, fetched once per session for the picker and Home's title.
+    /// Implicitly unwrapped for the same reason as `lookups`.
+    @ObservationIgnored private(set) var scope: ScopeCache!
     /// The running lookup prefetch, if any. A new selection or the end of the session cancels it.
     @ObservationIgnored private(set) var prefetchTask: Task<Void, Never>?
     /// The running features fetch started by a selection or a sign-in, if any. A new selection or
@@ -176,6 +185,7 @@ final class AppState {
         settings = Settings(defaults: defaults)
         selectedCompanyID = Self.storedID(forKey: Keys.selectedCompanyID, in: defaults)
         selectedProjectID = Self.storedID(forKey: Keys.selectedProjectID, in: defaults)
+        lastSelectedProjectID = selectedProjectID
         draftOwnerID = Self.storedID(forKey: Keys.draftOwnerID, in: defaults)
 
         let middleware = AuthMiddleware(
@@ -199,6 +209,7 @@ final class AppState {
         )
         self.client = client
         lookups = LookupStore(context: modelContext, service: LookupService(client: client))
+        scope = ScopeCache(service: ScopeService(client: client))
         submitRunner = SubmitRunner(store: drafts, service: { DraftService(client: client) })
         authService = AuthService(
             client: client,
@@ -423,8 +434,11 @@ final class AppState {
         }
     }
 
+    /// A (re)established session fetches its companies and projects again.
     private func advanceSessionGeneration() {
-        if phase != .signedOut { sessionGeneration += 1 }
+        guard phase != .signedOut else { return }
+        scope.clear()
+        sessionGeneration += 1
     }
 
     private func handleSignedOut() {
@@ -433,7 +447,8 @@ final class AppState {
 
     /// The selection belongs to the signed-in user, so it is dropped whenever the session ends.
     /// Setting the IDs to nil also removes their `UserDefaults` keys.
-    /// The cached lookups and mirrored records belong to the signed-in user too, so they are deleted here as well.
+    /// The cached lookups, companies and projects and the mirrored records belong to the signed-in
+    /// user too, so they are dropped here as well.
     /// `reason` is kept for the sign-in screen.
     private func endSession(reason: SignOutReason) {
         sessionEpoch += 1
@@ -450,9 +465,11 @@ final class AppState {
         recordSync?.stop()
         recordSync = nil
         lookups.clearAll()
+        scope.clear()
         clearUserFiles()
         selectedCompanyID = nil
         selectedProjectID = nil
+        lastSelectedProjectID = nil
         // Drafts stay on the phone (a forced re-sign-in must not lose field work); they are hidden
         // until their owner signs in again.
         draftOwnerID = nil
