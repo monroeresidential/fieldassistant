@@ -30,10 +30,27 @@ final class HomeViewTests: XCTestCase {
         XCTAssertTrue(line.contains("2"), line)
     }
 
+    /// Spec section 3: a project the user cannot see shows Procore's reason, not the generic line.
     @MainActor
-    func testPermissionDenied() {
-        let status = RecordSync.Status.failed(code: "procore_permission_denied", message: "No access")
+    func testPermissionDeniedShowsProcoreReason() {
+        let status = RecordSync.Status.failed(code: "procore_permission_denied", message: "You do not have access to RFIs on this project")
+        XCTAssertEqual(HomeView.syncLine(status, now: now), "You do not have access to RFIs on this project")
+    }
+
+    @MainActor
+    func testPermissionDeniedWithoutReasonKeepsGenericLine() {
+        let status = RecordSync.Status.failed(code: "procore_permission_denied", message: "  ")
         XCTAssertEqual(HomeView.syncLine(status, now: now), "No RFI access on this project")
+    }
+
+    @MainActor
+    func testNoAccessMessagesFallBackWhenReasonIsMissing() {
+        XCTAssertEqual(HomeView.noAccessMessage("Permission denied"), "Permission denied")
+        XCTAssertEqual(HomeView.noAccessMessage(nil), "No RFI access on this project")
+        XCTAssertEqual(HomeView.noAccessMessage(""), "No RFI access on this project")
+        XCTAssertEqual(RFIRecordListView.noAccessMessage(" Permission denied "), "Permission denied")
+        XCTAssertEqual(RFIRecordListView.noAccessMessage(nil), "Your Procore account cannot see RFIs on this project.")
+        XCTAssertEqual(RFIRecordListView.noAccessMessage("\n"), "Your Procore account cannot see RFIs on this project.")
     }
 
     @MainActor
@@ -64,6 +81,25 @@ final class HomeViewTests: XCTestCase {
         let id = UUID()
         XCTAssertEqual(HomeView.openedFromDrafts(.result(id)), .result(id))
         XCTAssertEqual(HomeView.openedFromDrafts(.rfi(7)), .rfi(7))
+    }
+
+    @MainActor
+    func testRecordHintFollowsAvailability() {
+        XCTAssertEqual(HomeView.recordHint(FeatureAvailability(available: true, reason: nil)), "Under a minute, start to Procore")
+        XCTAssertEqual(
+            HomeView.recordHint(FeatureAvailability(available: false, reason: "Read only on RFIs.")),
+            "RFIs are not available on this project"
+        )
+    }
+
+    /// Result's New RFI follows the same availability as Home's record button.
+    @MainActor
+    func testNewRFIHintFollowsAvailability() {
+        XCTAssertNil(HomeView.newRFIBlockedHint(FeatureAvailability(available: true, reason: nil)))
+        XCTAssertEqual(
+            HomeView.newRFIBlockedHint(FeatureAvailability(available: false, reason: "Read only on RFIs.")),
+            "RFIs are not available on this project"
+        )
     }
 
     private func draftWaitingReview(_ id: UUID) -> LocalDraft {

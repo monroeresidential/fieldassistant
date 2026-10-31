@@ -27,7 +27,8 @@ enum DraftFiles {
         try? FileManager.default.removeItem(at: folder(for: draftID))
     }
 
-    private static var root: URL {
+    /// Application Support `drafts/`, the folder that holds every draft's folder.
+    static var root: URL {
         URL.applicationSupportDirectory.appending(path: "drafts", directoryHint: .isDirectory)
     }
 

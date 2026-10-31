@@ -1,10 +1,12 @@
 import SwiftUI
 
 /// The signed-out screen (handoff 1a): charcoal ground in both modes, the hero and one
-/// "Sign in with Procore" button.
+/// "Sign in with Procore" button, with an optional note above it saying why the user is here.
 struct SignInView: View {
     let isSigningIn: Bool
     let error: AuthError?
+    /// Why the session ended, shown above the button in accent (`AppState.signInNote`).
+    var note: String? = nil
     let onSignIn: () -> Void
 
     /// The hero's line-height .98 as a gap between its two lines, scaled with Dynamic Type.
@@ -96,6 +98,15 @@ struct SignInView: View {
 
     private var footer: some View {
         VStack(spacing: 12) {
+            if let note {
+                Text(note)
+                    .textStyle(Theme.Text.body)
+                    .foregroundStyle(Theme.Color.accent)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 4)
+            }
             Button(action: onSignIn) {
                 if isSigningIn {
                     ProgressView()
@@ -141,6 +152,10 @@ extension AuthError {
 
 #Preview("Signing in") {
     SignInView(isSigningIn: true, error: nil, onSignIn: {})
+}
+
+#Preview("Procore signed out") {
+    SignInView(isSigningIn: false, error: nil, note: AppState.signedOutNote, onSignIn: {})
 }
 
 #Preview("Error") {

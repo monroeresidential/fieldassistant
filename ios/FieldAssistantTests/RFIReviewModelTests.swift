@@ -28,7 +28,7 @@ final class RFIReviewModelTests: XCTestCase {
     }
 
     func testMoreStaysClosedWhenOnlyTheDraftToggleIsOn() throws {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let store = DraftStore(context: container.mainContext)
         let client = makeClient(StubTransport())
         let body = draftBody(status: "extracted", unresolved: "[]", draft: true)
@@ -149,6 +149,116 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(outcome, .needsFixes)
         XCTAssertEqual(model.formMessage, message)
         XCTAssertTrue(model.unresolved.isEmpty)
+        XCTAssertTrue(model.procoreNotes.isEmpty, "the 400's own text has no field key, so it is not a note")
+    }
+
+    func testSubmitFailedWithPrefixedFormEntryShowsNoteNotFormMessage() async throws {
+        let transport = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.submit(.ok, draftID: draftID),
+            draftJSON(
+                status: "failed",
+                unresolved: #"[{"field":"_form","reason":"procore_validation","message":"custom_field_123: can't be blank","candidates":[],"blocking":true}]"#
+            ),
+        ])
+        let (model, _, _) = try makeModel(transport)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .needsFixes)
+        XCTAssertEqual(model.procoreNotes, [ProcoreNote(field: "custom_field_123", message: "can't be blank")])
+        XCTAssertNil(model.formMessage, "a prefixed entry is a note, not the form message")
+        XCTAssertTrue(model.unresolved.isEmpty)
+    }
+
+    func testProcoreNotesFromPrefixedFormEntries() {
+        let entries = [
+            form("custom_field_123: can't be blank"),
+            form("rfi_manager_id: is invalid"),
+            row("due_date", "custom_field_9: ignored, not a _form entry"),
+        ]
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: entries), [
+            ProcoreNote(field: "custom_field_123", message: "can't be blank"),
+            ProcoreNote(field: "rfi_manager_id", message: "is invalid"),
+        ])
+    }
+
+    func testOneFormEntryWithSeveralKeyedMessagesGivesOneNoteEach() {
+        let entries = [form("custom_field_1: can't be blank; custom_field_2: is invalid")]
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: entries), [
+            ProcoreNote(field: "custom_field_1", message: "can't be blank"),
+            ProcoreNote(field: "custom_field_2", message: "is invalid"),
+        ])
+        XCTAssertNil(RFIReviewModel.formMessage(from: entries))
+    }
+
+    func testUnkeyedSegmentBeforeKeyedOneStaysFormMessage() {
+        let entries = [form("Something else; custom_field_1: can't be blank; Another thing")]
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: entries), [
+            ProcoreNote(field: "custom_field_1", message: "can't be blank"),
+        ])
+        XCTAssertEqual(RFIReviewModel.formMessage(from: entries), "Something else; Another thing")
+    }
+
+    func testUnprefixedFormEntryStaysFormMessage() throws {
+        let plain = "Procore did not accept this RFI."
+        let spaced = "draft has unresolved fields: _form"
+        let (model, _, _) = try makeModel(
+            StubTransport(),
+            unresolved: #"[{"field":"_form","reason":"procore_validation","message":"\#(plain)","candidates":[],"blocking":true}]"#
+        )
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: [form(plain), form(spaced), form("Subject: x")]), [])
+        XCTAssertEqual(model.formMessage, plain)
+        XCTAssertTrue(model.procoreNotes.isEmpty)
+    }
+
+    /// Spec section 5 names `question.attachments`; the backend passes such keys through verbatim.
+    func testDottedKeyBecomesNote() {
+        let entries = [form("question.attachments: can't be blank; custom_field_1: is invalid")]
+
+        let notes = RFIReviewModel.procoreNotes(from: entries)
+        XCTAssertEqual(notes, [
+            ProcoreNote(field: "question.attachments", message: "can't be blank"),
+            ProcoreNote(field: "custom_field_1", message: "is invalid"),
+        ])
+        XCTAssertNil(RFIReviewModel.formMessage(from: entries))
+        XCTAssertEqual(notes.first.map { RFIReviewModel.fieldLabel($0.field) }, "Attachments")
+    }
+
+    func testSentenceWithPeriodBeforeColonIsNotNote() {
+        let sentences = [
+            "Procore refused it. reason: unknown",
+            "see.docs. now: later",
+            "attachments.: can't be blank",
+            "question..attachments: can't be blank",
+            ".attachments: can't be blank",
+        ]
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: sentences.map(form)), [])
+        XCTAssertEqual(RFIReviewModel.formMessage(from: sentences.map(form)), sentences.joined(separator: "; "))
+    }
+
+    func testFieldLabelForDottedKeysUsesLastComponent() {
+        XCTAssertEqual(RFIReviewModel.fieldLabel("question.attachments"), "Attachments")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("custom_fields.custom_field_12"), "Custom field 12")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("rfi.due_date"), "Due")
+    }
+
+    func testFieldLabelForCustomAndKnownKeys() {
+        XCTAssertEqual(RFIReviewModel.fieldLabel("custom_field_123"), "Custom field 123")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("rfi_manager_id"), "RFI manager")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("due_date"), "Due")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("mystery"), "Mystery")
+    }
+
+    private func form(_ message: String) -> UnresolvedField { row("_form", message) }
+
+    private func row(_ field: String, _ message: String) -> UnresolvedField {
+        UnresolvedField(field: field, reason: .procore_validation, message: message, candidates: [], blocking: true)
     }
 
     func testSubmitIgnoredWhileSubmitting() async throws {
@@ -329,6 +439,35 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(local.status, .submitted)
         XCTAssertFalse(FileManager.default.fileExists(atPath: leftover.path(percentEncoded: false)))
         XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .get], "no second POST")
+    }
+
+    /// The save is refused as locked, but by the time the phone asks, the server's submit has
+    /// failed: the draft takes the server's state and flags, the user's edit stays, and nothing is
+    /// queued or posted until the user has looked at it.
+    func testLockedSaveWithFailedServerDraftStopsAndKeepsEdits() async throws {
+        let transport = StubTransport([
+            APIStub.error(.badRequest, code: "bad_request", message: "draft is submitted or being submitted"),
+            draftJSON(
+                status: "failed",
+                unresolved: #"[{"field":"rfi_manager_id","reason":"procore_validation","message":"rfi_manager_id invalid","candidates":[],"blocking":true}]"#
+            ),
+        ])
+        let (model, local, _) = try makeModel(transport)
+        model.setText("Header height at grid D", for: .subject)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .pending(message: RFIReviewModel.lockedStopMessage))
+        XCTAssertEqual(RFIReviewModel.lockedStopMessage, "This draft changed on the server. Review it, then submit again.")
+        XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .get], "no POST")
+        XCTAssertEqual(model.payload.subject, "Header height at grid D", "the unsaved edit is kept")
+        XCTAssertEqual(local.server?.payload.subject, "Header height at grid D")
+        XCTAssertEqual(local.status, .failed)
+        XCTAssertFalse(local.submitPending, "nothing is queued")
+        let owed = try LocalDraft.decoder.decode(RFIDraftPayload.self, from: try XCTUnwrap(local.pendingPayloadData))
+        XCTAssertEqual(owed.subject, "Header height at grid D", "the edit is still owed to the server")
+        XCTAssertEqual(model.unresolved.map(\.field), ["rfi_manager_id"], "the server's flags show")
+        XCTAssertFalse(model.isSubmitting)
     }
 
     func testPollErrorAfterQueuedIsPending() async throws {
@@ -618,7 +757,7 @@ final class RFIReviewModelTests: XCTestCase {
         submitAsDraftOverride: Bool? = nil,
         isReachable: @escaping @MainActor () -> Bool = { true }
     ) throws -> (RFIReviewModel, LocalDraft, ModelContainer) {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let store = DraftStore(context: container.mainContext)
         let client = makeClient(transport)
         let lookups = LookupStore(context: container.mainContext, service: LookupService(client: client))

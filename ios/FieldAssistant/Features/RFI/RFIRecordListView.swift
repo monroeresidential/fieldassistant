@@ -135,8 +135,8 @@ struct RFIRecordListView: View {
                            message: "Check the spelling or try a new search.")
         } else if choice != .all {
             FailureMessage(title: "No matching RFIs", message: "No RFIs match \u{201C}\(choice.rawValue)\u{201D}.")
-        } else if case .failed(code: "procore_permission_denied", _) = status {
-            FailureMessage(title: "No RFI access", message: "Your Procore account cannot see RFIs on this project.")
+        } else if case .failed(code: "procore_permission_denied", let reason) = status {
+            FailureMessage(title: "No RFI access", message: Self.noAccessMessage(reason))
         } else if neverSynced, status == .syncing {
             ProgressView {
                 Text("Syncing RFIs")
@@ -155,6 +155,12 @@ struct RFIRecordListView: View {
         } else {
             FailureMessage(title: "No RFIs yet", message: "This project has no RFIs in Procore.")
         }
+    }
+
+    /// Procore's reason the user cannot see the project's RFIs, or the generic sentence without one.
+    static func noAccessMessage(_ reason: String?) -> String {
+        let trimmed = reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Your Procore account cannot see RFIs on this project." : trimmed
     }
 
     private func sync() async {

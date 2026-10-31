@@ -80,6 +80,13 @@ enum APIStub {
         return (response, HTTPBody("{" + fields.joined(separator: ",") + "}"))
     }
 
+    /// A 200 `FeaturesResponse` with one RFI entry; `reason` only when given.
+    static func features(rfiAvailable: Bool = true, reason: String? = nil) -> (HTTPResponse, HTTPBody?) {
+        var rfi = [#""feature":"rfi""#, #""available":\#(rfiAvailable)"#]
+        if let reason { rfi.append(#""reason":"\#(reason)""#) }
+        return json(.ok, #"{"features":[{\#(rfi.joined(separator: ","))}],"fetched_at":"2026-10-31T10:00:00Z"}"#)
+    }
+
     /// A 200 RFI `DraftResponse`. Dates are passed verbatim so tests can use either RFC 3339 form.
     static func draft(
         id: UUID,

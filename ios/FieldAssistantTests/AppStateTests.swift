@@ -184,6 +184,8 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.phase, .signedOut)
         XCTAssertNil(store.current)
         XCTAssertEqual(transport.requests.map(\.request.path), ["/me", "/auth/logout"])
+        XCTAssertEqual(state.signOutReason, .user)
+        XCTAssertNil(AppState.signInNote(for: state.signOutReason), "a chosen sign-out needs no note")
     }
 
     @MainActor
@@ -241,6 +243,178 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.phase, .signedOut)
         XCTAssertNil(store.current)
         XCTAssertEqual(transport.requests.map(\.request.path), ["/auth/refresh"])
+        XCTAssertEqual(state.signOutReason, .refreshRejected)
+    }
+
+    @MainActor
+    func testSignInNoteByReason() {
+        let sentence = "Procore signed you out. Sign in again and your drafts will send."
+        XCTAssertEqual(AppState.signInNote(for: .procoreSignedOut), sentence)
+        XCTAssertEqual(AppState.signInNote(for: .refreshRejected), sentence)
+        XCTAssertNil(AppState.signInNote(for: .user))
+        XCTAssertNil(AppState.signInNote(for: nil))
+    }
+
+    @MainActor
+    func testReauthRequiredEndsSessionWithNote() async throws {
+        let store = InMemorySessionStore(validSession())
+        let state = makeState(store: store, transport: StubTransport([APIStub.me(procoreUserID: 42)]))
+        await state.bootstrap()
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+
+        state.handleReauthRequired()
+        state.handleReauthRequired()
+
+        XCTAssertEqual(state.phase, .signedOut)
+        XCTAssertEqual(state.signOutReason, .procoreSignedOut)
+        XCTAssertEqual(
+            AppState.signInNote(for: state.signOutReason),
+            "Procore signed you out. Sign in again and your drafts will send."
+        )
+        XCTAssertNil(store.current)
+        XCTAssertEqual(store.clearCount, 1, "the second call finds the session already ended")
+        XCTAssertNil(state.draftOwnerID)
+    }
+
+    @MainActor
+    func testSignInClearsSignOutReason() async throws {
+        let store = InMemorySessionStore(validSession())
+        let transport = StubTransport([
+            APIStub.me(procoreUserID: 42),
+            APIStub.authStartOK(),
+            APIStub.tokenPair(access: "acc2", refresh: "ref2"),
+            APIStub.me(procoreUserID: 42),
+        ])
+        let presenter = FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth?code=abc")!)
+        let state = makeState(store: store, transport: transport, presenter: presenter)
+        await state.bootstrap()
+        state.handleReauthRequired()
+        XCTAssertEqual(state.signOutReason, .procoreSignedOut)
+
+        await state.signIn()
+
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+        XCTAssertNil(state.signOutReason)
+        XCTAssertNil(AppState.signInNote(for: state.signOutReason))
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testReauthFromBackgroundPassKeepsDraftAndShowsNote() async throws {
+        // A Submit queued with no signal: the reviewed payload still has to be saved (PATCH).
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "t",
+                               capturedAt: .now.addingTimeInterval(-600))
+        let payload = try LocalDraft.decoder.decode(RFIDraftPayload.self, from: Data(
+            #"{"subject":"Header height at grid C","assignee_ids":[],"distribution_ids":[],"private":false,"draft":false}"#.utf8
+        ))
+        draft.pendingPayloadData = try LocalDraft.encoder.encode(payload)
+        draft.submitPending = true
+        let path = "/drafts/\(draft.id.uuidString.lowercased())"
+        let reauth = APIStub.error(.unauthorized, code: "reauth_required", message: "sign in to Procore again")
+        let transport = ScriptedTransport([
+            .response(APIStub.me(procoreUserID: 42)),
+            .response(reauth),
+            .response(APIStub.tokenPair(access: "acc2", refresh: "ref2")),
+            .response(reauth),
+        ])
+        let store = InMemorySessionStore(validSession())
+        let state = makeState(
+            store: store, transport: transport,
+            presenter: FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth?code=abc")!),
+            reachability: FakeReachability(isReachable: true)
+        )
+        try state.drafts.insert(draft)
+
+        // A cold background launch: bootstrap, then one pass, whose PATCH finds Procore signed out.
+        await state.runBackgroundPass()
+        try await waitUntil { state.phase == .signedOut }
+        await settle()
+
+        XCTAssertEqual(state.signOutReason, .procoreSignedOut)
+        XCTAssertEqual(
+            AppState.signInNote(for: state.signOutReason),
+            "Procore signed you out. Sign in again and your drafts will send."
+        )
+        XCTAssertNil(store.current)
+        XCTAssertNil(state.draftSync)
+        XCTAssertEqual(transport.requests.map(\.path), ["/me", path, "/auth/refresh", path],
+                       "the session ended once: no second refresh, nothing sent after it")
+        XCTAssertTrue(draft.submitPending, "the draft stays queued")
+        XCTAssertEqual(draft.status, .submitting)
+        XCTAssertNotNil(draft.pendingPayloadData, "the reviewed payload still waits to be saved")
+
+        // Signing in again runs a pass that saves, submits and polls the draft.
+        transport.append(.response(APIStub.authStartOK()))
+        transport.append(.response(APIStub.tokenPair(access: "acc3", refresh: "ref3")))
+        transport.append(.response(APIStub.me(procoreUserID: 42)))
+        transport.append(.response(APIStub.draft(id: draft.id, status: "reviewed")))
+        transport.append(.response(APIStub.submit(.ok, draftID: draft.id)))
+        transport.append(.response(APIStub.draft(id: draft.id, status: "submitted")))
+
+        await state.signIn()
+        try await waitUntil { draft.status == .submitted }
+
+        XCTAssertNil(state.signOutReason)
+        XCTAssertFalse(draft.submitPending)
+        XCTAssertNil(draft.pendingPayloadData)
+        XCTAssertEqual(Array(transport.requests.map(\.path).suffix(6)), [
+            "/auth/start", "/auth/exchange", "/me", path, path + "/submit", path,
+        ])
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testReauthDuringWaitingResendKeepsDraftAndShowsNote() async throws {
+        // A capture saved with no signal: the transcript still has to be sent for extraction (POST).
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "Need header height",
+                               capturedAt: .now.addingTimeInterval(-600))
+        XCTAssertEqual(draft.status, .waiting)
+        let reauth = APIStub.error(.unauthorized, code: "reauth_required", message: "sign in to Procore again")
+        let transport = ScriptedTransport([
+            .response(APIStub.me(procoreUserID: 42)),
+            .response(reauth),
+            .response(APIStub.tokenPair(access: "acc2", refresh: "ref2")),
+            .response(reauth),
+        ])
+        let store = InMemorySessionStore(validSession())
+        let state = makeState(
+            store: store, transport: transport,
+            presenter: FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth?code=abc")!),
+            reachability: FakeReachability(isReachable: true)
+        )
+        try state.drafts.insert(draft)
+
+        // A cold background launch: bootstrap, then one pass, whose resend finds Procore signed out.
+        await state.runBackgroundPass()
+        try await waitUntil { state.phase == .signedOut }
+        await settle()
+
+        XCTAssertEqual(state.signOutReason, .procoreSignedOut)
+        XCTAssertEqual(
+            AppState.signInNote(for: state.signOutReason),
+            "Procore signed you out. Sign in again and your drafts will send."
+        )
+        XCTAssertNil(store.current)
+        XCTAssertNil(state.draftSync)
+        XCTAssertEqual(transport.requests.map(\.path), ["/me", "/drafts", "/auth/refresh", "/drafts"],
+                       "the session ended once: no second refresh, nothing sent after it")
+        XCTAssertEqual(draft.status, .waiting, "the draft still waits to be sent")
+        XCTAssertNil(draft.errorMessage, "the ended session cancels the pass, which records nothing on the row")
+
+        // Signing in again runs a pass that sends the waiting draft.
+        transport.append(.response(APIStub.authStartOK()))
+        transport.append(.response(APIStub.tokenPair(access: "acc3", refresh: "ref3")))
+        transport.append(.response(APIStub.me(procoreUserID: 42)))
+        transport.append(.response(APIStub.draft(id: draft.id)))
+
+        await state.signIn()
+        try await waitUntil { draft.status == .draft }
+
+        XCTAssertNil(state.signOutReason)
+        XCTAssertNil(draft.errorMessage)
+        XCTAssertEqual(draft.subject, "Header height at grid C")
+        XCTAssertEqual(Array(transport.requests.map(\.path).suffix(4)), ["/auth/start", "/auth/exchange", "/me", "/drafts"])
+        cancelBackgroundWork(state)
     }
 
     @MainActor
@@ -253,8 +427,10 @@ final class AppStateTests: XCTestCase {
         await state.bootstrap()
         await state.prefetchTask?.value
 
-        // Record sync runs alongside the prefetch; this test is about lookups.
-        let requests = transport.requests.filter { !($0.path ?? "").contains("/records/") }
+        // Record sync and the features fetch run alongside the prefetch; this test is about lookups.
+        let requests = transport.requests.filter {
+            !($0.path ?? "").contains("/records/") && !($0.path ?? "").hasSuffix("/features")
+        }
         let paths = requests.map { $0.path ?? "" }
         XCTAssertEqual(paths.first, "/me")
         XCTAssertEqual(Set(paths.dropFirst()), Set(LookupKind.allCases.map { "/projects/99/lookups/\($0.rawValue)" }))
@@ -299,7 +475,7 @@ final class AppStateTests: XCTestCase {
         await state.prefetchTask?.value
 
         let revalidations = transport.requests.filter { ($0.path ?? "").contains("/lookups/") }.suffix(LookupKind.allCases.count)
-        XCTAssertEqual(revalidations.map { $0.headerFields[.ifNoneMatch] }, Array(repeating: #""u1""#, count: 6))
+        XCTAssertEqual(revalidations.map { $0.headerFields[.ifNoneMatch] }, Array(repeating: #""u1""#, count: LookupKind.allCases.count))
         XCTAssertEqual(state.lookups.set(projectID: 99, kind: .users)?.etag, #""u1""#)
     }
 
@@ -325,6 +501,71 @@ final class AppStateTests: XCTestCase {
         let count = try XCTUnwrap(container).mainContext.fetchCount(FetchDescriptor<CachedLookup>())
         XCTAssertEqual(count, 0)
         XCTAssertEqual(transport.paths.filter { !$0.contains("/records/") }.last, "/auth/logout")
+    }
+
+    @MainActor
+    func testSignOutClearsScopeCache() async throws {
+        let companies = APIStub.json(.ok, #"[{"id":7,"name":"Monroe Residential"}]"#)
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(), APIStub.me())
+        transport.route("/companies", companies, companies, companies)
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+
+        _ = try await state.scope.companies()
+        _ = try await state.scope.companies()
+        XCTAssertEqual(transport.paths.filter { $0 == "/companies" }.count, 1, "fetched once per session")
+
+        await state.signOut()
+        _ = try await state.scope.companies()
+
+        XCTAssertEqual(transport.paths.filter { $0 == "/companies" }.count, 2, "the next session fetches again")
+        cancelBackgroundWork(state)
+    }
+
+    /// "Change project" clears the selection; the picker still knows which project the user just left.
+    @MainActor
+    func testLastSelectedProjectSurvivesChangeProjectAndEndsWithSession() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        cancelBackgroundWork(state)
+        XCTAssertEqual(state.lastSelectedProjectID, 99)
+
+        state.selectedProjectID = 100
+        state.selectedProjectID = nil
+        cancelBackgroundWork(state)
+
+        XCTAssertEqual(state.lastSelectedProjectID, 100)
+        await state.signOut()
+        XCTAssertNil(state.lastSelectedProjectID)
+    }
+
+    /// Procore signs the user out (from a background request) while the camera covers the capture
+    /// screen: the screen already "disappeared" under the cover, so the end of the session stops the mic.
+    @MainActor
+    func testSessionEndWhileCameraIsUpStopsRecording() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me())
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        cancelBackgroundWork(state)
+        let transcriber = FakeTranscriber()
+        let model = CaptureModel(transcriber: transcriber)
+        defer { DraftFiles.removeAll(for: model.draftID) }
+        state.activeCapture = model
+        await model.start()
+        model.screenDisappeared(underCamera: true)
+        XCTAssertEqual(model.state, .recording)
+
+        state.handleReauthRequired()
+
+        XCTAssertEqual(model.state, .stopped)
+        XCTAssertEqual(transcriber.stopCount, 1)
+        XCTAssertNil(state.activeCapture)
     }
 
     @MainActor
@@ -705,6 +946,93 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
 
+    @MainActor
+    func testSelectingProjectLoadsFeatures() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me())
+        transport.route("/projects/42/features", APIStub.features(rfiAvailable: false, reason: "RFIs are turned off."))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        XCTAssertEqual(state.rfiAvailability, FeatureAvailability(available: true, reason: nil), "available until a fetch says otherwise")
+
+        state.selectedCompanyID = 7
+        state.selectedProjectID = 42
+        await state.featuresTask?.value
+
+        XCTAssertEqual(state.rfiAvailability, FeatureAvailability(available: false, reason: "RFIs are turned off."))
+        XCTAssertEqual(state.features[42], FeatureAvailability(available: false, reason: "RFIs are turned off."))
+        let request = try XCTUnwrap(transport.requests.first { $0.path == "/projects/42/features" })
+        XCTAssertEqual(request.headerFields[HTTPField.Name("X-Company-Id")!], "7")
+        XCTAssertNil(request.headerFields[.cacheControl])
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testFeaturesOfflineKeepsLastValue() async throws {
+        let routes = RouteTransport()
+        routes.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        routes.route(
+            "/projects/99/features",
+            APIStub.features(rfiAvailable: false, reason: "Read only on RFIs."),
+            APIStub.error(.forbidden, code: "procore_permission_denied", message: "No access to this project.")
+        )
+        let transport = OfflineSwitchTransport(routes)
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        await state.featuresTask?.value
+        let unavailable = FeatureAvailability(available: false, reason: "Read only on RFIs.")
+        XCTAssertEqual(state.rfiAvailability, unavailable)
+
+        transport.isOffline = true
+        await state.loadFeatures()
+        XCTAssertEqual(state.rfiAvailability, unavailable, "no connection keeps the last answer")
+
+        transport.isOffline = false
+        await state.loadFeatures()
+        XCTAssertEqual(state.rfiAvailability, unavailable, "a refusal of the features call itself leaves availability as is")
+        XCTAssertEqual(routes.paths.filter { $0 == "/projects/99/features" }.count, 2)
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testSyncRefetchesFeatures() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route(
+            "/projects/99/features",
+            APIStub.features(),
+            APIStub.features(rfiAvailable: false, reason: "RFIs are turned off.")
+        )
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        await state.featuresTask?.value
+        XCTAssertEqual(state.rfiAvailability, FeatureAvailability(available: true, reason: nil))
+
+        await state.syncRecords(force: true, full: false)
+
+        XCTAssertEqual(state.rfiAvailability, FeatureAvailability(available: false, reason: "RFIs are turned off."))
+        let fetches = transport.requests.filter { $0.path == "/projects/99/features" }
+        XCTAssertEqual(fetches.map { $0.headerFields[.cacheControl] }, [nil, "no-cache"], "Sync asks Procore again")
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testSignOutForgetsFeatures() async throws {
+        let transport = RouteTransport()
+        transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
+        transport.route("/projects/99/features", APIStub.features(rfiAvailable: false, reason: "RFIs are turned off."))
+        transport.route("/auth/logout", (HTTPResponse(status: .noContent), nil))
+        let state = makeState(store: InMemorySessionStore(validSession()), transport: transport)
+        await state.bootstrap()
+        await state.featuresTask?.value
+        XCTAssertFalse(state.rfiAvailability.available)
+
+        await state.signOut()
+
+        XCTAssertTrue(state.features.isEmpty)
+        XCTAssertNil(state.featuresTask)
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -732,6 +1060,21 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.sessionGeneration, 2, "re-sign-in tells screens to reload")
     }
 
+    /// Lets queued main-actor work run.
+    @MainActor
+    private func settle() async {
+        for _ in 0..<20 { await Task.yield() }
+    }
+
+    @MainActor
+    private func waitUntil(timeout: Duration = .seconds(2), _ condition: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !condition() {
+            guard ContinuousClock.now < deadline else { return XCTFail("condition not met in time") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     private func notModified(count: Int) -> [(HTTPResponse, HTTPBody?)] {
         Array(repeating: (HTTPResponse(status: .notModified), nil), count: count)
     }
@@ -755,6 +1098,7 @@ final class AppStateTests: XCTestCase {
         state.recordSync?.stop()
         state.draftSync?.stop()
         state.prefetchTask?.cancel()
+        state.featuresTask?.cancel()
     }
 
     @MainActor
@@ -764,7 +1108,7 @@ final class AppStateTests: XCTestCase {
         presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError()),
         reachability: ReachabilityProviding? = nil
     ) -> AppState {
-        let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true))
+        let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true).get())
         self.container = container
         return AppState(
             store: store,
@@ -775,5 +1119,32 @@ final class AppStateTests: XCTestCase {
             defaults: UserDefaults(suiteName: suiteName)!,
             reachability: reachability
         )
+    }
+}
+
+/// Answers through `inner` until `isOffline` is set, then fails every request as URLSession does
+/// with no connection.
+private final class OfflineSwitchTransport: ClientTransport, @unchecked Sendable {
+    private let inner: ClientTransport
+    private let lock = NSLock()
+    private var offline = false
+
+    init(_ inner: ClientTransport) {
+        self.inner = inner
+    }
+
+    var isOffline: Bool {
+        get { lock.withLock { offline } }
+        set { lock.withLock { offline = newValue } }
+    }
+
+    func send(
+        _ request: HTTPRequest,
+        body: HTTPBody?,
+        baseURL: URL,
+        operationID: String
+    ) async throws -> (HTTPResponse, HTTPBody?) {
+        if isOffline { throw URLError(.notConnectedToInternet) }
+        return try await inner.send(request, body: body, baseURL: baseURL, operationID: operationID)
     }
 }

@@ -2,6 +2,13 @@ import FieldAssistantAPI
 import Foundation
 import Observation
 
+/// A Procore error for a field the review screen has no row for (a custom field, or one the schema
+/// does not model), read from a `_form` entry whose message starts with the Procore key.
+struct ProcoreNote: Equatable {
+    let field: String
+    let message: String
+}
+
 /// The state behind the review screen: the editable payload, the flagged fields, saving, and the
 /// submit flow through the job poll. The server recomputes flags on every save, so its list
 /// replaces the local one after each response.
@@ -35,8 +42,10 @@ final class RFIReviewModel {
     private(set) var payload: RFIDraftPayload
     /// Flags tied to a field. A `_form` flag is kept out of this list and shown as `formMessage`.
     private(set) var unresolved: [UnresolvedField]
-    /// Procore's message for an error not tied to one field.
+    /// Procore's message for an error not tied to one field, when it names no field.
     private(set) var formMessage: String?
+    /// Procore's errors for fields with no review row, one per `_form` entry that names its field.
+    private(set) var procoreNotes: [ProcoreNote] = []
     var moreExpanded: Bool
     private(set) var isSaving = false
     private(set) var isSubmitting = false
@@ -71,6 +80,17 @@ final class RFIReviewModel {
     /// The submit is on the phone, waiting for the runner to reach the server.
     static let queuedMessage = "Queued. It sends on its own when you have signal."
     private static let alreadySendingMessage = "This RFI is already being saved or sent."
+    /// A save was refused as locked, but the server's submit had failed by the time the phone asked:
+    /// the screen shows the server's state and flags with the user's edits kept, and nothing is sent.
+    static let lockedStopMessage = "This draft changed on the server. Review it, then submit again."
+
+    /// How `persist()` went.
+    private enum SaveResult {
+        case saved
+        case failed(APIFailure)
+        /// The server refused the save as locked; its copy, now taken, has this status.
+        case locked(status: DraftResponse.statusPayload)
+    }
 
     init(
         draft: LocalDraft,
@@ -91,10 +111,60 @@ final class RFIReviewModel {
         self.submitAsDraftOverride = submitAsDraftOverride
         payload = response.payload
         unresolved = response.unresolved.filter { $0.field != Self.formField }
-        formMessage = response.unresolved.first { $0.field == Self.formField }?.message
+        formMessage = Self.formMessage(from: response.unresolved)
+        procoreNotes = Self.procoreNotes(from: response.unresolved)
         moreExpanded = false
         rememberCandidates(response.unresolved)
         moreExpanded = RFIField.more.contains { isSet($0) || unresolved(for: $0) != nil }
+    }
+
+    /// The backend joins every Procore error without a review row into one `_form` message,
+    /// "key: message; key: message". Each keyed segment ("custom_field_123: can't be blank")
+    /// becomes a note.
+    static func procoreNotes(from unresolved: [UnresolvedField]) -> [ProcoreNote] {
+        formSegments(unresolved).compactMap(note(from:))
+    }
+
+    /// The `_form` segments that name no field, rejoined with "; ", or `nil` when there are none.
+    static func formMessage(from unresolved: [UnresolvedField]) -> String? {
+        let plain = formSegments(unresolved).filter { note(from: $0) == nil }
+        return plain.isEmpty ? nil : plain.joined(separator: "; ")
+    }
+
+    /// Every "; "-separated segment of every `_form` message, trimmed, empties dropped.
+    private static func formSegments(_ unresolved: [UnresolvedField]) -> [String] {
+        unresolved.filter { $0.field == formField }
+            .compactMap(\.message)
+            .flatMap { $0.components(separatedBy: "; ") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Splits "key: message" when `key` looks like a Procore field key: dot-separated parts of
+    /// lowercase letters, digits and underscores, starting with a letter ("custom_field_123",
+    /// "question.attachments"). Sentences such as "draft has unresolved fields: _form" are not notes.
+    private static func note(from message: String) -> ProcoreNote? {
+        guard let split = message.range(of: ": ") else { return nil }
+        let key = message[..<split.lowerBound]
+        let rest = message[split.upperBound...].trimmingCharacters(in: .whitespaces)
+        guard let first = key.first, first.isASCII, first.isLowercase, !rest.isEmpty,
+              key.split(separator: ".", omittingEmptySubsequences: false).allSatisfy({ part in
+                  !part.isEmpty && part.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "_") }
+              })
+        else { return nil }
+        return ProcoreNote(field: String(key), message: rest)
+    }
+
+    /// A reader's name for a Procore key: the review row's label when the phone has one, else the
+    /// key with spaces for underscores ("custom_field_123" is "Custom field 123"). A dotted key is
+    /// named by its last part ("question.attachments" is "Attachments").
+    static func fieldLabel(_ key: String) -> String {
+        if let field = RFIField(serverField: key) { return field.label }
+        if let last = key.split(separator: ".").last, last.count < key.count {
+            return fieldLabel(String(last))
+        }
+        let spaced = key.replacingOccurrences(of: "_", with: " ")
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
     }
 
     func unresolved(for field: RFIField) -> UnresolvedField? {
@@ -195,7 +265,10 @@ final class RFIReviewModel {
         guard !isSaving, !isSubmitting else { return nil }
         isSaving = true
         defer { isSaving = false }
-        return await persist()
+        switch await persist() {
+        case .saved, .locked: return nil
+        case .failed(let failure): return failure
+        }
     }
 
     /// Saves (the server validates again), then queues the submit on the phone and runs it: the
@@ -205,7 +278,10 @@ final class RFIReviewModel {
         guard !isSubmitting, !isSaving else { return .pending(message: Self.alreadySendingMessage) }
         isSubmitting = true
         defer { isSubmitting = false }
-        if let failure = await persist() {
+        switch await persist() {
+        case .saved:
+            break
+        case .failed(let failure):
             switch failure {
             case .offline, .server:
                 // No answer: the payload waits on the phone and the runner saves it first.
@@ -213,6 +289,12 @@ final class RFIReviewModel {
             case .validation, .permissionDenied, .reauthRequired, .notFound:
                 return .failed(failure)
             }
+        case .locked(status: .extracted), .locked(status: .reviewed), .locked(status: .failed):
+            // The server takes edits again; the user looks at its state before anything is sent.
+            return .pending(message: Self.lockedStopMessage)
+        case .locked(status: .submitting), .locked(status: .submitted):
+            // Reported below from the draft, which now has the server's status.
+            break
         }
         // The save found the draft already sent (a submit whose answer was lost); report where it stands.
         switch draft.status {
@@ -311,7 +393,7 @@ final class RFIReviewModel {
         case .submitted:
             DraftFiles.removeAll(for: draft.id)
             return .submitted(number: response.result?.number, url: response.result?.url)
-        case .failed where unresolvedCount > 0 || formMessage != nil:
+        case .failed where unresolvedCount > 0 || formMessage != nil || !procoreNotes.isEmpty:
             return .needsFixes
         case .failed:
             return .failed(.server(response.error?.message ?? "Procore did not accept this RFI."))
@@ -327,7 +409,7 @@ final class RFIReviewModel {
     /// Writes the payload to the phone, then PATCHes it. The local copy goes first so a failed
     /// request (offline is the normal jobsite case) still keeps the edits on the phone, and
     /// `pendingPayloadData` holds it until a PATCH lands, so a queued submit saves it first.
-    private func persist() async -> APIFailure? {
+    private func persist() async -> SaveResult {
         if let submitAsDraftOverride { payload.draft = submitAsDraftOverride }
         storeLocally()
         let sent = payload
@@ -339,28 +421,38 @@ final class RFIReviewModel {
             // Edits made while the PATCH was out are still owed to the server.
             draft.pendingPayloadData = payload == sent ? nil : try? LocalDraft.encoder.encode(payload)
             try? store.save()
-            return nil
+            return .saved
         } catch {
             let failure = APIFailure(error)
-            guard failure == .validation(SubmitRunner.lockedMessage) else { return failure }
+            guard failure == .validation(SubmitRunner.lockedMessage) else { return .failed(failure) }
             return await refreshLocked()
         }
     }
 
     /// The server refused a save because the draft is already submitting or submitted (an earlier
     /// submit got through but its answer was lost). Takes the server's copy, which moves the local
-    /// status on, instead of failing every save from now on.
-    private func refreshLocked() async -> APIFailure? {
+    /// status on, instead of failing every save from now on. When that copy takes edits again (the
+    /// submit failed in the meantime), the edits the refused save carried stay: every field that
+    /// differs from the server's copy keeps the user's value and is still owed to the server.
+    private func refreshLocked() async -> SaveResult {
+        let response: DraftResponse
         do {
-            let response = try await service.get(id: draft.id, companyID: draft.companyID)
+            response = try await service.get(id: draft.id, companyID: draft.companyID)
+        } catch {
+            return .failed(APIFailure(error))
+        }
+        switch response.status {
+        case .submitting, .submitted:
             // The server no longer takes edits, so nothing is left to save.
             draft.pendingPayloadData = nil
             take(response)
             if draft.status == .submitted { DraftFiles.removeAll(for: draft.id) }
-            return nil
-        } catch {
-            return APIFailure(error)
+        case .extracted, .reviewed, .failed:
+            take(response, sent: response.payload)
+            draft.pendingPayloadData = payload == response.payload ? nil : try? LocalDraft.encoder.encode(payload)
+            try? store.save()
         }
+        return .locked(status: response.status)
     }
 
     /// Applies a server response here and to the local draft, and saves the local draft. With
@@ -377,7 +469,8 @@ final class RFIReviewModel {
         }
         payload = merged
         unresolved = response.unresolved.filter { $0.field != Self.formField && !edited.contains($0.field) }
-        formMessage = response.unresolved.first { $0.field == Self.formField }?.message
+        formMessage = Self.formMessage(from: response.unresolved)
+        procoreNotes = Self.procoreNotes(from: response.unresolved)
         rememberCandidates(response.unresolved)
         draft.apply(response)
         if !edited.isEmpty { storeLocally() }

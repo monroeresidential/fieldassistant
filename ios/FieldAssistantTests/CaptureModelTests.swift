@@ -233,6 +233,25 @@ final class CaptureModelTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: DraftFiles.audioURL(for: model.draftID).deletingLastPathComponent().path))
     }
 
+    /// The camera's full-screen cover hides the capture screen; the recording goes on under it.
+    /// Leaving by any other route stops the microphone.
+    func testCameraCoverDoesNotStopRecording() async throws {
+        let transcriber = FakeTranscriber()
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        XCTAssertEqual(model.state, .recording)
+
+        model.screenDisappeared(underCamera: true)
+
+        XCTAssertEqual(model.state, .recording)
+        XCTAssertEqual(transcriber.stopCount, 0)
+
+        model.screenDisappeared(underCamera: false)
+
+        XCTAssertEqual(model.state, .stopped)
+        XCTAssertEqual(transcriber.stopCount, 1)
+    }
+
     func testEleventhPhotoIsRefused() async throws {
         let model = makeModel(transcriber: FakeTranscriber())
         for _ in 0..<PhotoLimits.maxPerDraft {

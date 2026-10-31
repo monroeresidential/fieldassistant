@@ -81,7 +81,7 @@ struct ProjectPickerView: View {
         }
     }
 
-    private var scope: ScopeService { ScopeService(client: appState.client) }
+    private var scope: ScopeCache { appState.scope }
 
     // MARK: - Companies
 
@@ -94,7 +94,7 @@ struct ProjectPickerView: View {
                 PickerLoading(title: "Loading companies")
             case .failed(let failure):
                 header
-                APIFailureView(failure: failure, subject: "companies") { Task { await loadCompanies() } }
+                APIFailureView(failure: failure, subject: "companies") { Task { await loadCompanies(force: true) } }
             case .loaded(let list):
                 if !scrollsHeader { header }
                 List {
@@ -115,15 +115,16 @@ struct ProjectPickerView: View {
                     }
                 }
                 .pickerList()
-                .refreshable { await loadCompanies() }
+                .refreshable { await loadCompanies(force: true) }
             }
         }
         .task(id: appState.sessionGeneration) { await loadCompanies() }
     }
 
-    private func loadCompanies() async {
+    /// Reads the companies from the session's cache; `force` (pull-to-refresh, Retry) fetches them again.
+    private func loadCompanies(force: Bool = false) async {
         do {
-            companies = .loaded(try await scope.companies())
+            companies = .loaded(try await scope.companies(force: force))
         } catch {
             if Task.isCancelled { return }
             companies = .failed(APIFailure(error))
@@ -147,7 +148,7 @@ struct ProjectPickerView: View {
             case .failed(let failure):
                 header
                 APIFailureView(failure: failure, subject: "this company's projects") {
-                    Task { await loadProjects(companyID: companyID) }
+                    Task { await loadProjects(companyID: companyID, force: true) }
                 }
             case .loaded(let list):
                 let shown = filtered(list)
@@ -179,7 +180,7 @@ struct ProjectPickerView: View {
                 }
                 .pickerList()
                 .scrollDismissesKeyboard(.interactively)
-                .refreshable { await loadProjects(companyID: companyID) }
+                .refreshable { await loadProjects(companyID: companyID, force: true) }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -252,10 +253,12 @@ struct ProjectPickerView: View {
         }
     }
 
-    private func loadProjects(companyID: Int64) async {
+    /// Reads the company's projects from the session's cache, so a company or project change costs
+    /// no request; `force` (pull-to-refresh, Retry) fetches them again.
+    private func loadProjects(companyID: Int64, force: Bool = false) async {
         projects = .loading
         do {
-            projects = .loaded(try await scope.projects(companyID: companyID))
+            projects = .loaded(try await scope.projects(companyID: companyID, force: force))
         } catch {
             if Task.isCancelled { return }
             projects = .failed(APIFailure(error))
@@ -271,6 +274,11 @@ struct ProjectPickerView: View {
             try await scope.saveSelection(companyID: companyID, projectID: project.id)
         } catch {
             let failure = APIFailure(error)
+            if failure == .reauthRequired {
+                // The session ends; the sign-in screen says why.
+                appState.handleReauthRequired()
+                return
+            }
             guard failure == .offline else {
                 saveError = failure
                 return
@@ -282,10 +290,17 @@ struct ProjectPickerView: View {
 
     // MARK: - Helpers
 
-    /// The project the signed-in user last chose, from `/me`; tagged "Last used".
+    /// The project tagged "Last used".
     private var lastUsedProjectID: Int64? {
-        if case .signedIn(let user) = appState.phase { return user.last_project_id }
-        return nil
+        var meLast: Int64?
+        if case .signedIn(let user) = appState.phase { meLast = user.last_project_id }
+        return Self.lastUsedProjectID(selected: appState.lastSelectedProjectID, meLast: meLast)
+    }
+
+    /// The project chosen most recently in this session (`/me` goes stale after a change), else the
+    /// one `/me` reported at sign-in.
+    static func lastUsedProjectID(selected: Int64?, meLast: Int64?) -> Int64? {
+        selected ?? meLast
     }
 
     private static let toolbarFont = Theme.Text.toolbarButton.font
@@ -294,8 +309,9 @@ struct ProjectPickerView: View {
         switch failure {
         case .permissionDenied(let message), .validation(let message), .notFound(let message), .server(let message):
             message
-        case .reauthRequired: "Your session expired. Sign in again."
         case .offline: "You're offline."
+        // Never presented: `choose` ends the session instead.
+        case .reauthRequired: failure.userMessage
         }
     }
 }

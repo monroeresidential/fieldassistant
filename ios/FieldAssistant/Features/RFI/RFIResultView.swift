@@ -6,6 +6,8 @@ struct ResultScreen: View {
     let draftID: UUID
     /// The project's name as Home shows it; `nil` when Home could not load it (offline).
     var projectName: String?
+    /// Why New RFI is disabled (RFIs are not available on the project), or `nil` to enable it.
+    var newRFIBlockedHint: String?
     let onNewRFI: () -> Void
     let onDone: () -> Void
 
@@ -14,7 +16,7 @@ struct ResultScreen: View {
     var body: some View {
         if let draft = appState.ownedDraft(id: draftID) {
             RFIResultView(draft: draft, projectName: projectName, assigneeName: assigneeName(draft),
-                          onNewRFI: onNewRFI, onDone: onDone)
+                          newRFIBlockedHint: newRFIBlockedHint, onNewRFI: onNewRFI, onDone: onDone)
         } else {
             FailureMessage(title: "Draft not found", message: "This draft is no longer on the phone.")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -37,6 +39,8 @@ struct RFIResultView: View {
     let draft: LocalDraft
     var projectName: String?
     var assigneeName: String?
+    /// Why New RFI is disabled, shown under it and read as its hint; `nil` enables it.
+    var newRFIBlockedHint: String?
     var onNewRFI: () -> Void = {}
     var onDone: () -> Void = {}
 
@@ -140,7 +144,17 @@ struct RFIResultView: View {
             }
             Button("New RFI", action: onNewRFI)
                 .buttonStyle(SecondaryButtonStyle(onDark: true))
+                .disabled(newRFIBlockedHint != nil)
                 .accessibilityLabel("Record a new RFI")
+                .accessibilityHint(newRFIBlockedHint ?? "")
+            if let newRFIBlockedHint {
+                Text(newRFIBlockedHint)
+                    .textStyle(Theme.Text.meta13)
+                    .foregroundStyle(Theme.Color.textOnDarkSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityHidden(true)
+            }
             Button(action: onDone) {
                 Text("Done").frame(maxWidth: .infinity)
             }
@@ -151,7 +165,7 @@ struct RFIResultView: View {
 }
 
 #Preview("Created") {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     let draft = LocalDraft(companyID: 1, projectID: 7, status: .submitted, transcript: "Twisted column",
                            capturedAt: .now.addingTimeInterval(-48))
     container.mainContext.insert(draft)

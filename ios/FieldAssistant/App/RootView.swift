@@ -11,7 +11,11 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.Color.ground.ignoresSafeArea())
         case .signedOut:
-            SignInView(isSigningIn: appState.isSigningIn, error: appState.signInError) {
+            SignInView(
+                isSigningIn: appState.isSigningIn,
+                error: appState.signInError,
+                note: AppState.signInNote(for: appState.signOutReason)
+            ) {
                 Task { await appState.signIn() }
             }
         case .signedIn, .offline:
@@ -26,7 +30,7 @@ struct RootView: View {
 }
 
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     RootView()
         .environment(
             AppState(

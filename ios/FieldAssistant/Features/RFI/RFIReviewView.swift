@@ -284,6 +284,10 @@ struct RFIReviewView: View {
                     .padding(.top, 8)
                     .accessibilityLabel("Procore says: \(formMessage)")
             }
+            ForEach(Array(model.procoreNotes.enumerated()), id: \.offset) { index, note in
+                procoreNoteLabel(note, font: Theme.Text.meta13Medium)
+                    .padding(.top, index == 0 && model.formMessage == nil ? 8 : 4)
+            }
             if let pendingMessage, !model.isQueued {
                 HStack(spacing: 12) {
                     ProgressView()
@@ -349,6 +353,15 @@ struct RFIReviewView: View {
         }
     }
 
+    /// "Procore requires <field>: <message>" for a field the screen has no row for.
+    private func procoreNoteLabel(_ note: ProcoreNote, font: Theme.TextStyle) -> some View {
+        let text = "Procore requires \(RFIReviewModel.fieldLabel(note.field)): \(note.message)"
+        return Label(text, systemImage: "exclamationmark.triangle.fill")
+            .textStyle(font)
+            .foregroundStyle(Theme.Color.accent)
+            .accessibilityLabel(text)
+    }
+
     /// The Procore message (repeated here so it stays in view while the rows scroll) and the save note.
     @ViewBuilder
     private var footerNotes: some View {
@@ -359,6 +372,11 @@ struct RFIReviewView: View {
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel("Procore says: \(formMessage)")
+        }
+        ForEach(Array(model.procoreNotes.enumerated()), id: \.offset) { _, note in
+            procoreNoteLabel(note, font: Theme.Text.meta13)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         if let saveNote {
             Text(saveNote)
@@ -522,7 +540,7 @@ struct RFIReviewView: View {
                 Text(Self.placeholder(field)).foregroundStyle(Theme.Color.tertiary)
             }
         }
-        .accessibilityHint("Opens the \(field.lookupKind?.title.lowercased() ?? "list") to choose from")
+        .accessibilityHint("Opens the \(field.lookupKind?.accessibilityNoun ?? "list") to choose from")
     }
 
     private func toggleRow(_ field: RFIField) -> some View {
@@ -591,7 +609,7 @@ struct RFIReviewView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(field.label), \(displayValue(field) ?? "not set")")
-            .accessibilityHint("Opens the \(field.lookupKind?.title.lowercased() ?? "list") to choose from")
+            .accessibilityHint("Opens the \(field.lookupKind?.accessibilityNoun ?? "list") to choose from")
         } else {
             fullControl(field)
         }
@@ -666,6 +684,7 @@ struct RFIReviewView: View {
     private static func placeholder(_ field: RFIField) -> String {
         switch field.lookupKind {
         case .users: field.isMulti ? "Choose people" : "Choose a person"
+        case .rfiManagers: "Choose a person"
         case .locations: "Choose a location"
         case .specSections: "Choose a spec section"
         case .drawings: "Choose a drawing"
@@ -726,10 +745,13 @@ struct RFIReviewView: View {
             if let flagged, RFIField.more.contains(flagged) { model.moreExpanded = true }
             if let flagged {
                 scrollTarget = flagged
-            } else if model.formMessage != nil {
+            } else if model.formMessage != nil || !model.procoreNotes.isEmpty {
                 // Only a form-level message: show the header callout.
                 scrollToTopRequest += 1
             }
+        case .pending(RFIReviewModel.lockedStopMessage):
+            // Nothing was sent: the screen stays open for review with the server's flags.
+            saveNote = RFIReviewModel.lockedStopMessage
         case .pending(let message):
             pendingMessage = message
         case .failed(let failure):
@@ -938,7 +960,7 @@ private struct ImpactControl: View {
 }
 
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     let appState = AppState.preview(container: container)
     let json = """
     {"id":"7f0c2d4e-1b2a-4c3d-9e8f-001122334455","feature":"rfi","project_id":7,"status":"extracted",

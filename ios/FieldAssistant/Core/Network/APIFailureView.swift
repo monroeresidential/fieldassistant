@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Explains an `APIFailure` and offers the one action that can fix it: a kicker title, body text
 /// and an outline button, centred in the space it is given and scrolling at large text sizes.
+/// `.reauthRequired` is not shown in place: it ends the session, and the sign-in screen says why.
 struct APIFailureView: View {
     let failure: APIFailure
     /// What failed to load, for example "companies".
@@ -24,21 +25,8 @@ struct APIFailureView: View {
     private var message: some View {
         switch failure {
         case .reauthRequired:
-            FailureMessage(title: "Session expired", message: "Sign in again to keep working.",
-                           error: appState.signInError?.userMessage) {
-                Button {
-                    Task { await appState.signIn() }
-                } label: {
-                    if appState.isSigningIn {
-                        ProgressView().tint(Theme.Color.tertiary)
-                    } else {
-                        Text("Sign in again")
-                    }
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .disabled(appState.isSigningIn)
-                .accessibilityLabel("Sign in again")
-            }
+            Color.clear
+                .task { appState.handleReauthRequired() }
         case .offline:
             FailureMessage(title: "You're offline", message: "Check your connection and try again.") {
                 actionButton("Retry", action: retry)

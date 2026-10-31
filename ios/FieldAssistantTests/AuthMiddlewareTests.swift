@@ -112,6 +112,62 @@ final class AuthMiddlewareTests: XCTestCase {
         XCTAssertEqual(signOutCount, 1)
     }
 
+    func testReauthRequired401SignalsOnce() async throws {
+        let store = InMemorySessionStore(session(access: "a1", refresh: "r1", expiresIn: 3600))
+        let refreshes = Counter()
+        let signOuts = Counter()
+        let reauths = Counter()
+        let fresh = session(access: "a2", refresh: "r2", expiresIn: 3600)
+        let middleware = makeMiddleware(store: store, refreshes: refreshes, signOuts: signOuts, reauths: reauths) { _ in
+            fresh
+        }
+        let reauthBody = #"{"code":"reauth_required","message":"sign in to Procore again"}"#
+        let transport = StubTransport([APIStub.json(.unauthorized, reauthBody), APIStub.json(.unauthorized, reauthBody)])
+
+        let (response, body) = try await Self.send(through: middleware, transport: transport)
+
+        XCTAssertEqual(response.status, .unauthorized)
+        let bytes = try await [UInt8](collecting: try XCTUnwrap(body), upTo: .max)
+        XCTAssertEqual(String(decoding: bytes, as: UTF8.self), reauthBody, "the caller still reads the error body")
+        XCTAssertEqual(transport.requests.map { $0.request.headerFields[.authorization] }, ["Bearer a1", "Bearer a2"])
+        var reauthCount = await reauths.value
+        XCTAssertEqual(reauthCount, 1)
+        XCTAssertNil(store.current, "Procore's sign-out ends the session")
+        let signOutCount = await signOuts.value
+        XCTAssertEqual(signOutCount, 0, "a reauth_required response is not a rejected refresh")
+
+        // The session is gone: a later 401 goes out without a bearer and does not signal again.
+        transport.enqueue(.unauthorized)
+        let (late, _) = try await Self.send(through: middleware, transport: transport)
+
+        XCTAssertEqual(late.status, .unauthorized)
+        XCTAssertNil(transport.requests.last?.request.headerFields[.authorization])
+        reauthCount = await reauths.value
+        XCTAssertEqual(reauthCount, 1)
+        let refreshCount = await refreshes.value
+        XCTAssertEqual(refreshCount, 1)
+    }
+
+    func testRetried401WithOtherCodeDoesNotSignalReauth() async throws {
+        let store = InMemorySessionStore(session(access: "a1", refresh: "r1", expiresIn: 3600))
+        let refreshes = Counter()
+        let signOuts = Counter()
+        let reauths = Counter()
+        let fresh = session(access: "a2", refresh: "r2", expiresIn: 3600)
+        let middleware = makeMiddleware(store: store, refreshes: refreshes, signOuts: signOuts, reauths: reauths) { _ in
+            fresh
+        }
+        let body = #"{"code":"unauthorized","message":"invalid bearer token"}"#
+        let transport = StubTransport([APIStub.json(.unauthorized, body), APIStub.json(.unauthorized, body)])
+
+        let (response, _) = try await Self.send(through: middleware, transport: transport)
+
+        XCTAssertEqual(response.status, .unauthorized)
+        let reauthCount = await reauths.value
+        XCTAssertEqual(reauthCount, 0)
+        XCTAssertEqual(store.current?.accessToken, "a2", "the session is kept")
+    }
+
     func testRefreshNetworkErrorKeepsSession() async throws {
         let store = InMemorySessionStore(session(access: "a1", refresh: "r1", expiresIn: 3600))
         let refreshes = Counter()
@@ -257,6 +313,7 @@ final class AuthMiddlewareTests: XCTestCase {
         store: InMemorySessionStore,
         refreshes: Counter,
         signOuts: Counter,
+        reauths: Counter = Counter(),
         refresh: @escaping @Sendable (String) async throws -> Session = { _ in
             XCTFail("refresh should not be called")
             throw CancellationError()
@@ -270,6 +327,7 @@ final class AuthMiddlewareTests: XCTestCase {
                 return try await refresh(token)
             },
             onSignedOut: { await signOuts.increment() },
+            onReauthRequired: { await reauths.increment() },
             now: { now }
         )
     }

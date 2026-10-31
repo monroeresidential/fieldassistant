@@ -172,42 +172,52 @@ struct HomeView: View {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .short
             return "Synced \(formatter.localizedString(for: date, relativeTo: now))"
-        case .failed(code: "procore_permission_denied", _):
-            return "No RFI access on this project"
+        case .failed(code: "procore_permission_denied", let message):
+            return noAccessMessage(message)
         case .failed:
             return "Sync failed, showing what you have"
         }
     }
 
+    /// Procore's reason the user cannot see the project's RFIs, or the generic line without one.
+    static func noAccessMessage(_ reason: String?) -> String {
+        let trimmed = reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "No RFI access on this project" : trimmed
+    }
+
     // MARK: - Features
 
-    /// RFI is the one feature v1 ships; the others show as coming. One column at accessibility sizes.
+    /// RFI is the one feature v1 ships, shown as not available (with Procore's reason) when the
+    /// backend says the user cannot create RFIs on the project; the others show as coming. One
+    /// column at accessibility sizes.
     private var featureGrid: some View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 10),
                             count: dynamicTypeSize.isAccessibilitySize ? 1 : 2)
+        let rfi = appState.rfiAvailability
         return LazyVGrid(columns: columns, spacing: 10) {
-            FeatureCard(title: "RFI", isSelected: true)
-            FeatureCard(title: "Observation", isSelected: false)
-            FeatureCard(title: "Punch item", isSelected: false)
-            FeatureCard(title: "Daily log", isSelected: false)
+            FeatureCard(title: "RFI", state: rfi.available ? .selected : .unavailable(reason: rfi.reason))
+            FeatureCard(title: "Observation", state: .coming)
+            FeatureCard(title: "Punch item", state: .coming)
+            FeatureCard(title: "Daily log", state: .coming)
         }
     }
 
     // MARK: - Record
 
     private var recordBlock: some View {
-        VStack(spacing: 0) {
-            RecordButton(glyph: .mic, size: 116, halo: 10, isEnabled: true) {
+        let availability = appState.rfiAvailability
+        return VStack(spacing: 0) {
+            RecordButton(glyph: .mic, size: 116, halo: 10, isEnabled: availability.available) {
                 path.append(.capture(UUID()))
             }
             .accessibilityLabel("Record an RFI")
-            .accessibilityHint("Starts recording. Tap, talk, review, send.")
+            .accessibilityHint(availability.available ? "Starts recording. Tap, talk, review, send." : Self.recordHint(availability))
             Text("Record an RFI")
                 .textStyle(Theme.Text.label17)
                 .foregroundStyle(Theme.Color.textPrimary)
                 .padding(.top, 8)
                 .accessibilityHidden(true)
-            Text("Under a minute, start to Procore")
+            Text(Self.recordHint(availability))
                 .textStyle(Theme.Text.meta13)
                 .foregroundStyle(Theme.Color.muted)
                 .padding(.top, 10)
@@ -216,6 +226,16 @@ struct HomeView: View {
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
+    }
+
+    /// The line under the record button: how fast it is, or that RFIs cannot be created here.
+    static func recordHint(_ availability: FeatureAvailability) -> String {
+        availability.available ? "Under a minute, start to Procore" : "RFIs are not available on this project"
+    }
+
+    /// Why Result's New RFI is disabled, or `nil` when RFIs can be created on the project.
+    static func newRFIBlockedHint(_ availability: FeatureAvailability) -> String? {
+        availability.available ? nil : recordHint(availability)
     }
 
     // MARK: - Recent
@@ -271,6 +291,7 @@ struct HomeView: View {
             ResultScreen(
                 draftID: id,
                 projectName: project.map(Self.title),
+                newRFIBlockedHint: Self.newRFIBlockedHint(appState.rfiAvailability),
                 onNewRFI: { path = [.capture(UUID())] },
                 onDone: {
                     path = []
@@ -340,10 +361,10 @@ struct HomeView: View {
 
     // MARK: - Title
 
-    /// Fetches the project and company names for the header, as the picker does; the screen still
-    /// works with a generic title and no company kicker if this fails (offline).
+    /// Reads the project and company names for the header from the session's cache the picker
+    /// filled; the screen still works with a generic title and no company kicker if this fails (offline).
     private func loadTitles() async {
-        let scope = ScopeService(client: appState.client)
+        let scope: ScopeCache = appState.scope
         async let projects = scope.projects(companyID: companyID)
         async let companies = scope.companies()
         if let list = try? await projects { project = list.first { $0.id == projectID } }
@@ -360,20 +381,69 @@ struct HomeView: View {
     }
 }
 
-/// A feature card: the shipped feature selected (2 pt orange border, accent kicker), the rest
-/// coming (dashed hairline, tertiary text, not tappable).
+/// A feature card: the shipped feature selected (2 pt orange border, accent kicker), or not
+/// available on the project (dashed hairline, muted text, Procore's reason beneath the kicker, at
+/// most three lines so the row stays short; VoiceOver reads all of it); the rest coming (dashed
+/// hairline, tertiary text). The title sits at the bottom of every card so a row's titles line up.
+/// None is tappable.
 private struct FeatureCard: View {
+    enum State {
+        case selected
+        case unavailable(reason: String?)
+        case coming
+    }
+
     let title: String
-    let isSelected: Bool
+    let state: State
+
+    private var isSelected: Bool {
+        if case .selected = state { return true }
+        return false
+    }
+
+    private var kicker: String {
+        switch state {
+        case .selected: "Selected"
+        case .unavailable: "Not available"
+        case .coming: "Coming"
+        }
+    }
+
+    private var ink: Color {
+        switch state {
+        case .selected: Theme.Color.textPrimary
+        case .unavailable: Theme.Color.muted
+        case .coming: Theme.Color.tertiary
+        }
+    }
+
+    private var reason: String? {
+        guard case .unavailable(let reason) = state, let reason, !reason.isEmpty else { return nil }
+        return reason
+    }
+
+    private var accessibilityLabel: String {
+        switch state {
+        case .selected: title
+        case .unavailable: "\(title), not available"
+        case .coming: "\(title), coming"
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Kicker(isSelected ? "Selected" : "Coming", style: .card,
-                   color: isSelected ? nil : Theme.Color.tertiary)
+            Kicker(kicker, style: .card, color: isSelected ? nil : ink)
+            if let reason {
+                Text(reason)
+                    .textStyle(Theme.Text.meta12)
+                    .foregroundStyle(Theme.Color.muted)
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 0)
             Text(title)
                 .textStyle(Theme.Text.cardTitle)
-                .foregroundStyle(isSelected ? Theme.Color.textPrimary : Theme.Color.tertiary)
+                .foregroundStyle(ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
         }
@@ -387,7 +457,8 @@ private struct FeatureCard: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isSelected ? title : "\(title), coming")
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(reason ?? "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
@@ -413,8 +484,28 @@ private struct WaitingDraftsGate<Content: View>: View {
     }
 }
 
+#Preview("RFI not available") {
+    VStack(spacing: 22) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
+            FeatureCard(
+                title: "RFI",
+                state: .unavailable(reason: "You have Read Only access to the RFI tool on this project. Ask a Procore admin for Standard access.")
+            )
+            FeatureCard(title: "Observation", state: .coming)
+            FeatureCard(title: "Punch item", state: .coming)
+            FeatureCard(title: "Daily log", state: .coming)
+        }
+        RecordButton(glyph: .mic, size: 116, halo: 10, isEnabled: false) {}
+        Text(HomeView.recordHint(FeatureAvailability(available: false, reason: nil)))
+            .textStyle(Theme.Text.meta13)
+            .foregroundStyle(Theme.Color.muted)
+    }
+    .padding(20)
+    .background(Theme.Color.ground)
+}
+
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     HomeView(companyID: 1, projectID: 7)
         .environment(AppState.preview(container: container))
         .modelContainer(container)

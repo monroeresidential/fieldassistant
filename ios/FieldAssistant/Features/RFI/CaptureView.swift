@@ -125,10 +125,18 @@ struct CaptureView: View {
         .background(Theme.Color.ground.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
-        .task(id: ObjectIdentifier(model)) { await model.start() }
-        // Leaving by any route (sign-out swaps the root, a path change) must not leave the mic on.
-        // Stop, not discard: a successful Build also leaves this screen and owns the files now.
-        .onDisappear { if model.state == .recording { model.stop() } }
+        .task(id: ObjectIdentifier(model)) {
+            appState.activeCapture = model
+            await model.start()
+        }
+        // Leaving the screen (a path change) stops the mic, except under the camera's cover: the
+        // recording runs on there, and nothing touches the mic when the cover is dismissed
+        // (`start()` on reappearing does nothing). The end of the session stops it through
+        // `appState.activeCapture`, since a screen torn down under the cover sees no second disappear.
+        .onDisappear {
+            model.screenDisappeared(underCamera: showsCamera)
+            if !showsCamera, appState.activeCapture === model { appState.activeCapture = nil }
+        }
         .onChange(of: pickedPhotos) { _, items in
             guard !items.isEmpty else { return }
             Task { await addPicked(items) }
@@ -798,7 +806,7 @@ struct CameraPicker: UIViewControllerRepresentable {
 }
 
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     NavigationStack {
         CaptureView(
             model: CaptureModel(transcriber: SpeechTranscriber()),

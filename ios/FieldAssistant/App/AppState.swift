@@ -25,6 +25,27 @@ final class AppState {
         static let draftOwnerID = "draftOwnerProcoreUserID"
     }
 
+    /// Why the last session ended. The sign-in screen explains a sign-out the user did not choose.
+    enum SignOutReason: Equatable {
+        /// The user tapped Sign out.
+        case user
+        /// The backend refused to refresh the session.
+        case refreshRejected
+        /// Procore no longer accepts the user's tokens (`reauth_required`).
+        case procoreSignedOut
+    }
+
+    /// The sign-in screen's note after a sign-out the user did not choose.
+    static let signedOutNote = "Procore signed you out. Sign in again and your drafts will send."
+
+    /// What the sign-in screen says about why the user is there; `nil` when there is nothing to say.
+    static func signInNote(for reason: SignOutReason?) -> String? {
+        switch reason {
+        case .procoreSignedOut, .refreshRejected: signedOutNote
+        case .user, nil: nil
+        }
+    }
+
     /// What happened when a captured draft was sent for extraction.
     enum SendOutcome: Equatable {
         /// The server extracted it; the draft holds the response and opens in Review.
@@ -45,6 +66,8 @@ final class AppState {
     private(set) var isSigningIn = false
     /// Why the last sign-in attempt failed, or `nil`. `.cancelled` means the user closed the sheet.
     private(set) var signInError: AuthError?
+    /// Why the last session ended, until the next sign-in succeeds; `nil` at launch.
+    private(set) var signOutReason: SignOutReason?
     /// Advances each time a session is (re)established, after `/me` has loaded. Screens key their
     /// load tasks on it so they reload after "Sign in again" or a successful offline retry.
     private(set) var sessionGeneration = 0
@@ -61,12 +84,14 @@ final class AppState {
     var selectedProjectID: Int64? {
         didSet {
             Self.persist(selectedProjectID, forKey: Keys.selectedProjectID, in: defaults)
+            if let selectedProjectID { lastSelectedProjectID = selectedProjectID }
             // While `loadMe` fills the selection the phase is not signed in yet; it prefetches itself.
             guard selectedProjectID != oldValue else { return }
             switch phase {
             case .signedIn:
                 prefetchLookups()
                 startRecordSync()
+                refreshFeatures()
             case .offline:
                 // No `/me` yet: a driver for the new project, not run until a tap or reconnect.
                 startRecordSync(run: false)
@@ -74,6 +99,22 @@ final class AppState {
                 break
             }
         }
+    }
+
+    /// The project selected most recently in this session. "Change project" clears the selection
+    /// but not this, so the picker tags the project the user just left "Last used" rather than the
+    /// one `/me` reported at sign-in. The end of the session clears it.
+    private(set) var lastSelectedProjectID: Int64?
+
+    /// The RFI availability the backend last reported for each project the user selected. A failed
+    /// fetch (offline, Procore down, the project refused) keeps the last answer; the end of the
+    /// session clears it.
+    private(set) var features: [Int64: FeatureAvailability] = [:]
+
+    /// Whether the user may create RFIs on the selected project. Available until a fetch says
+    /// otherwise, so a phone that has never reached the server can still record.
+    var rfiAvailability: FeatureAvailability {
+        selectedProjectID.flatMap { features[$0] } ?? FeatureAvailability(available: true, reason: nil)
     }
 
     @ObservationIgnored private let store: SessionStore
@@ -84,8 +125,18 @@ final class AppState {
     /// The cached project lookup lists. Set once in `init`; implicitly unwrapped because it needs the
     /// client, which is built after the middleware closures that capture `self`.
     @ObservationIgnored private(set) var lookups: LookupStore!
+    /// The user's companies and projects, fetched once per session for the picker and Home's title.
+    /// Implicitly unwrapped for the same reason as `lookups`.
+    @ObservationIgnored private(set) var scope: ScopeCache!
+    /// The capture on screen, if any. The capture screen sets it; the end of the session stops its
+    /// microphone, since a screen hidden under the camera's cover gets no second `onDisappear` when
+    /// the root swaps to sign-in.
+    @ObservationIgnored weak var activeCapture: CaptureModel?
     /// The running lookup prefetch, if any. A new selection or the end of the session cancels it.
     @ObservationIgnored private(set) var prefetchTask: Task<Void, Never>?
+    /// The running features fetch started by a selection or a sign-in, if any. A new selection or
+    /// the end of the session cancels it.
+    @ObservationIgnored private(set) var featuresTask: Task<Void, Never>?
     /// The drafts captured on this phone.
     @ObservationIgnored let drafts: DraftStore
     /// The on-device mirror of project records, filled by `recordSync`.
@@ -138,6 +189,7 @@ final class AppState {
         settings = Settings(defaults: defaults)
         selectedCompanyID = Self.storedID(forKey: Keys.selectedCompanyID, in: defaults)
         selectedProjectID = Self.storedID(forKey: Keys.selectedProjectID, in: defaults)
+        lastSelectedProjectID = selectedProjectID
         draftOwnerID = Self.storedID(forKey: Keys.draftOwnerID, in: defaults)
 
         let middleware = AuthMiddleware(
@@ -148,6 +200,9 @@ final class AppState {
             },
             onSignedOut: { [weak self] in
                 await self?.handleSignedOut()
+            },
+            onReauthRequired: { [weak self] in
+                await self?.handleReauthRequired()
             }
         )
         let client = Client(
@@ -158,6 +213,7 @@ final class AppState {
         )
         self.client = client
         lookups = LookupStore(context: modelContext, service: LookupService(client: client))
+        scope = ScopeCache(service: ScopeService(client: client))
         submitRunner = SubmitRunner(store: drafts, service: { DraftService(client: client) })
         authService = AuthService(
             client: client,
@@ -212,6 +268,7 @@ final class AppState {
             signInError = .server(code: "unavailable", message: error.localizedDescription)
             return
         }
+        signOutReason = nil
         await loadMe()
         advanceSessionGeneration()
     }
@@ -219,7 +276,16 @@ final class AppState {
     func signOut() async {
         cancelPrefetch()
         await authService.signOut()
-        endSession()
+        endSession(reason: .user)
+    }
+
+    /// A call answered `reauth_required`: Procore no longer accepts the user's tokens. Ends the
+    /// session once, whichever screen or background pass saw it first; the sign-in screen says why.
+    /// Drafts stay on the phone, queued ones still queued, and send after the next sign-in.
+    func handleReauthRequired() {
+        guard phase != .signedOut else { return }
+        try? store.clear()
+        endSession(reason: .procoreSignedOut)
     }
 
     /// The signed-in user's draft with this id, or `nil` if it is missing or someone else's.
@@ -251,13 +317,15 @@ final class AppState {
     }
 
     /// The app came to the foreground: retry the session if it is offline (a successful `/me`
-    /// starts the sync), otherwise run a sync pass.
+    /// starts the sync and fetches the features), otherwise run a sync pass and refetch the
+    /// selected project's features.
     func becameActive() async {
         if phase == .offline {
             await bootstrap()
         } else {
             await draftSync?.runOnce()
             await recordSync?.runOnce()
+            await loadFeatures()
         }
     }
 
@@ -286,10 +354,29 @@ final class AppState {
         await draftSync?.runOnce()
     }
 
-    /// Syncs the selected project's records now. `force` has the backend pull from Procore first;
-    /// `full` makes that pull a full sweep. Does nothing while no project sync is running.
+    /// Syncs the selected project's records now, then refetches its features. `force` has the
+    /// backend pull from Procore first (and ask Procore again for the features); `full` makes that
+    /// pull a full sweep. The records part does nothing while no project sync is running; the
+    /// features part runs only while signed in with a project selected.
     func syncRecords(force: Bool, full: Bool) async {
         await recordSync?.runOnce(force: force, full: full)
+        await loadFeatures(force: force)
+    }
+
+    /// Fetches which features the user may use on the selected project and keeps the RFI answer.
+    /// `force` asks Procore again instead of taking the backend's ten-minute answer. Any failure
+    /// keeps the last value: offline, Procore down, or a `procore_permission_denied` on this call
+    /// itself (the project is not visible), which the record sync's No access path reports.
+    /// Does nothing unless signed in with a project selected.
+    func loadFeatures(force: Bool = false) async {
+        guard case .signedIn = phase, let companyID = selectedCompanyID, let projectID = selectedProjectID else { return }
+        let epoch = sessionEpoch
+        let service = FeaturesService(client: client)
+        guard let answer = try? await service.features(projectID: projectID, companyID: companyID, noCache: force),
+              epoch == sessionEpoch,
+              let rfi = answer["rfi"]
+        else { return }
+        features[projectID] = rfi
     }
 
     // MARK: - Private
@@ -312,7 +399,7 @@ final class AppState {
     private func loadMeFailed(_ error: Error) {
         if Self.isRefreshRejection(error) {
             // The middleware already cleared the store and reported the sign-out.
-            endSession()
+            endSession(reason: .refreshRejected)
         } else {
             // Offline or transport failure: a field user must not be logged out for that.
             enterOffline()
@@ -327,8 +414,9 @@ final class AppState {
                 return
             }
             if user.reauth_required {
+                // Not `handleReauthRequired`: during a sign-in the phase is still `.signedOut`.
                 try? store.clear()
-                endSession()
+                endSession(reason: .procoreSignedOut)
                 return
             }
             if selectedCompanyID == nil, let id = user.last_company_id { selectedCompanyID = id }
@@ -341,43 +429,58 @@ final class AppState {
             prefetchLookups()
             startDraftSync()
             startRecordSync()
+            refreshFeatures()
         case .unauthorized:
             try? store.clear()
-            endSession()
+            endSession(reason: .refreshRejected)
         case .default:
             enterOffline()
         }
     }
 
+    /// A (re)established session fetches its companies and projects again.
     private func advanceSessionGeneration() {
-        if phase != .signedOut { sessionGeneration += 1 }
+        guard phase != .signedOut else { return }
+        scope.clear()
+        sessionGeneration += 1
     }
 
     private func handleSignedOut() {
-        endSession()
+        endSession(reason: .refreshRejected)
     }
 
     /// The selection belongs to the signed-in user, so it is dropped whenever the session ends.
     /// Setting the IDs to nil also removes their `UserDefaults` keys.
-    /// The cached lookups and mirrored records belong to the signed-in user too, so they are deleted here as well.
-    private func endSession() {
+    /// The cached lookups, companies and projects and the mirrored records belong to the signed-in
+    /// user too, so they are dropped here as well.
+    /// `reason` is kept for the sign-in screen.
+    private func endSession(reason: SignOutReason) {
         sessionEpoch += 1
         cancelPrefetch()
+        featuresTask?.cancel()
+        featuresTask = nil
+        features = [:]
         offlineRetry?.cancel()
         offlineRetry = nil
         draftSync?.stop()
         draftSync = nil
         // Review may be running a submit too; nothing runs on under the next user.
         submitRunner.cancelAll()
+        // The microphone never records on under the sign-in screen.
+        activeCapture?.stop()
+        activeCapture = nil
         recordSync?.stop()
         recordSync = nil
         lookups.clearAll()
+        scope.clear()
         clearUserFiles()
         selectedCompanyID = nil
         selectedProjectID = nil
+        lastSelectedProjectID = nil
         // Drafts stay on the phone (a forced re-sign-in must not lose field work); they are hidden
         // until their owner signs in again.
         draftOwnerID = nil
+        signOutReason = reason
         phase = .signedOut
     }
 
@@ -465,6 +568,14 @@ final class AppState {
         if run { Task { await sync.runOnce() } }
     }
 
+    /// Fetches the selected project's features in the background, replacing any running fetch.
+    private func refreshFeatures() {
+        featuresTask?.cancel()
+        featuresTask = nil
+        guard selectedProjectID != nil else { return }
+        featuresTask = Task { [weak self] in await self?.loadFeatures() }
+    }
+
     private func cancelPrefetch() {
         prefetchTask?.cancel()
         prefetchTask = nil
@@ -499,7 +610,7 @@ final class AppState {
     }
 }
 
-#if DEBUG
+/// Not `#if DEBUG`: the `#Preview` blocks are compiled into Release (Prod) builds too.
 extension AppState {
     /// A signed-out app state for SwiftUI previews: no server, preview-only defaults.
     static func preview(container: ModelContainer) -> AppState {
@@ -512,4 +623,3 @@ extension AppState {
         )
     }
 }
-#endif

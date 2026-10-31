@@ -390,7 +390,7 @@ final class SubmitRunnerTests: XCTestCase {
         _ transport: ClientTransport,
         photos: [(UUID, String, TimeInterval)] = []
     ) throws -> (SubmitRunner, DraftStore, LocalDraft) {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         self.container = container
         let store = DraftStore(context: container.mainContext)
         let capturedAt = Date.now.addingTimeInterval(-600)
