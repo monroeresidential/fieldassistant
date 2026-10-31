@@ -151,7 +151,7 @@ struct RFIResultView: View {
 }
 
 #Preview("Created") {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     let draft = LocalDraft(companyID: 1, projectID: 7, status: .submitted, transcript: "Twisted column",
                            capturedAt: .now.addingTimeInterval(-48))
     container.mainContext.insert(draft)

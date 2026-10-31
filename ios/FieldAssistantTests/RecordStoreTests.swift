@@ -39,7 +39,7 @@ final class RecordStoreTests: XCTestCase {
 
     @MainActor
     private func makeStore() throws -> (RecordStore, ModelContainer) {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         return (RecordStore(context: container.mainContext), container)
     }
 

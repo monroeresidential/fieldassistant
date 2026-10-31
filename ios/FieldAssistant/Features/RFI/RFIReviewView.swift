@@ -938,7 +938,7 @@ private struct ImpactControl: View {
 }
 
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     let appState = AppState.preview(container: container)
     let json = """
     {"id":"7f0c2d4e-1b2a-4c3d-9e8f-001122334455","feature":"rfi","project_id":7,"status":"extracted",

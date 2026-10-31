@@ -414,7 +414,7 @@ private struct WaitingDraftsGate<Content: View>: View {
 }
 
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     HomeView(companyID: 1, projectID: 7)
         .environment(AppState.preview(container: container))
         .modelContainer(container)

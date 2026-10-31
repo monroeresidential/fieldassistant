@@ -28,7 +28,7 @@ final class RFIReviewModelTests: XCTestCase {
     }
 
     func testMoreStaysClosedWhenOnlyTheDraftToggleIsOn() throws {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let store = DraftStore(context: container.mainContext)
         let client = makeClient(StubTransport())
         let body = draftBody(status: "extracted", unresolved: "[]", draft: true)
@@ -618,7 +618,7 @@ final class RFIReviewModelTests: XCTestCase {
         submitAsDraftOverride: Bool? = nil,
         isReachable: @escaping @MainActor () -> Bool = { true }
     ) throws -> (RFIReviewModel, LocalDraft, ModelContainer) {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let store = DraftStore(context: container.mainContext)
         let client = makeClient(transport)
         let lookups = LookupStore(context: container.mainContext, service: LookupService(client: client))

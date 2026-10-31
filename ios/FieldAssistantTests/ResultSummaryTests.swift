@@ -18,7 +18,7 @@ final class ResultSummaryTests: XCTestCase {
     }
 
     func testResultSummaryBuildsAllRows() throws {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let draft = try makeDraft(in: container, dueDate: "2026-10-30", photos: 3,
                                   capturedAt: date(day: 30, hour: 14, minute: 13, second: 12),
                                   updatedAt: date(day: 30, hour: 14, minute: 14))
@@ -39,7 +39,7 @@ final class ResultSummaryTests: XCTestCase {
     /// Review Focus 5: a draft without photos or an assignee omits the row rather than printing
     /// "0 photos" or a dash.
     func testResultSummaryOmitsMissingRows() throws {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let draft = try makeDraft(in: container, dueDate: nil, photos: 0,
                                   capturedAt: date(day: 30, hour: 14, minute: 13, second: 12),
                                   updatedAt: date(day: 30, hour: 14, minute: 14))
@@ -52,7 +52,7 @@ final class ResultSummaryTests: XCTestCase {
     }
 
     func testResultSummarySentMinutes() throws {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let draft = try makeDraft(in: container, dueDate: nil, photos: 1,
                                   capturedAt: date(day: 30, hour: 14, minute: 10, second: 55),
                                   updatedAt: date(day: 30, hour: 14, minute: 14))
@@ -66,7 +66,7 @@ final class ResultSummaryTests: XCTestCase {
 
     /// Reopened another day, Sent carries the date; past an hour it drops the elapsed time.
     func testResultSummarySentOnAnEarlierDay() throws {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let draft = try makeDraft(in: container, dueDate: nil, photos: 0,
                                   capturedAt: date(day: 30, hour: 9, minute: 0),
                                   updatedAt: date(day: 30, hour: 14, minute: 14))

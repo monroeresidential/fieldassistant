@@ -475,7 +475,7 @@ final class DraftSyncTests: XCTestCase {
 
     @MainActor
     private func makeState(transport: ClientTransport, reachability: FakeReachability) -> AppState {
-        let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true))
+        let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true).get())
         self.container = container
         return AppState(
             store: InMemorySessionStore(Session(accessToken: "acc1", refreshToken: "ref1", accessExpiresAt: Date().addingTimeInterval(3600))),

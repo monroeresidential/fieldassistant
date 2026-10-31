@@ -260,7 +260,7 @@ final class RecordSyncTests: XCTestCase {
         _ transport: ClientTransport,
         reachability: FakeReachability = FakeReachability(isReachable: true)
     ) -> (RecordSync, RecordStore) {
-        let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true))
+        let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true).get())
         self.container = container
         let store = RecordStore(context: container.mainContext)
         return (makeSync(transport, store: store, reachability: reachability), store)

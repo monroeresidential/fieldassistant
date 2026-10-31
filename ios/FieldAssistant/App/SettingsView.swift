@@ -237,7 +237,7 @@ private struct RowText: View {
 }
 
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     NavigationStack { SettingsView(projectName: "118 W Illinois", companyName: "Monroe Residential") }
         .environment(AppState.preview(container: container))
         .modelContainer(container)

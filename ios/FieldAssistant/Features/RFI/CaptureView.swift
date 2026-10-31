@@ -798,7 +798,7 @@ struct CameraPicker: UIViewControllerRepresentable {
 }
 
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     NavigationStack {
         CaptureView(
             model: CaptureModel(transcriber: SpeechTranscriber()),

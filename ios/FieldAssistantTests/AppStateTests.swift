@@ -764,7 +764,7 @@ final class AppStateTests: XCTestCase {
         presenter: WebAuthPresenter = FakeWebAuthPresenter(error: CancellationError()),
         reachability: ReachabilityProviding? = nil
     ) -> AppState {
-        let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true))
+        let container = self.container ?? (try! AppContainer.makeModelContainer(inMemory: true).get())
         self.container = container
         return AppState(
             store: store,

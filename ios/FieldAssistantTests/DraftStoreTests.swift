@@ -168,7 +168,7 @@ final class DraftStoreTests: XCTestCase {
 
     @MainActor
     private func makeStore() throws -> (DraftStore, ModelContainer) {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         return (DraftStore(context: container.mainContext), container)
     }
 

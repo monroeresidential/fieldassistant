@@ -142,7 +142,7 @@ final class LookupStoreTests: XCTestCase {
 
     @MainActor
     private func makeStore(_ transport: ClientTransport) throws -> (LookupStore, ModelContainer) {
-        let container = try AppContainer.makeModelContainer(inMemory: true)
+        let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let client = makeClient(transport, middlewares: [IfNoneMatchMiddleware()])
         let store = LookupStore(context: container.mainContext, service: LookupService(client: client))
         return (store, container)

@@ -26,7 +26,7 @@ struct RootView: View {
 }
 
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     RootView()
         .environment(
             AppState(

@@ -89,7 +89,7 @@ struct DraftsListView: View {
 }
 
 #Preview {
-    let container = try! AppContainer.makeModelContainer(inMemory: true)
+    let container = try! AppContainer.makeModelContainer(inMemory: true).get()
     let waiting = LocalDraft(companyID: 1, projectID: 7, ownerProcoreUserID: 42, transcript: "Spalling", capturedAt: .now.addingTimeInterval(-300))
     waiting.subject = "Spalling at loading dock column"
     let queued = LocalDraft(companyID: 1, projectID: 7, ownerProcoreUserID: 42, status: .submitting, transcript: "Window")
