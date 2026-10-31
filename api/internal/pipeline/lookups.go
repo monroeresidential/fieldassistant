@@ -318,7 +318,9 @@ func (l *Lookups) requireAccess(ctx context.Context, userID uuid.UUID, companyID
 
 // fetchProject reads the project with the user's own token. Success records
 // the user's access and refreshes the shared detail cache. A 403 or 404 means
-// the user cannot see the project and is reported as ErrPermissionDenied.
+// the user cannot see the project and is reported as ErrPermissionDenied,
+// wrapping Procore's *procore.APIError when there is one so its body can be
+// shown (ProcoreReason).
 func (l *Lookups) fetchProject(ctx context.Context, userID uuid.UUID, companyID, projectID int64) (procore.ProjectDetail, error) {
 	token, err := l.tokens.AccessToken(ctx, userID)
 	if err != nil {
@@ -327,7 +329,11 @@ func (l *Lookups) fetchProject(ctx context.Context, userID uuid.UUID, companyID,
 	detail, err := l.pc.GetProject(ctx, token, companyID, projectID)
 	if err != nil {
 		var api *procore.APIError
-		if errors.Is(err, procore.ErrPermissionDenied) || (errors.As(err, &api) && api.Status == http.StatusNotFound) {
+		hasAPI := errors.As(err, &api)
+		if errors.Is(err, procore.ErrPermissionDenied) || (hasAPI && api.Status == http.StatusNotFound) {
+			if hasAPI {
+				return procore.ProjectDetail{}, fmt.Errorf("%w: %w", procore.ErrPermissionDenied, api)
+			}
 			return procore.ProjectDetail{}, procore.ErrPermissionDenied
 		}
 		return procore.ProjectDetail{}, err

@@ -206,6 +206,74 @@ func TestFeatures_ProjectNotVisible_PermissionDenied(t *testing.T) {
 	}
 }
 
+func TestFeatures_ProjectNotVisible_CarriesProcoreReason(t *testing.T) {
+	f, fp, _ := newFeatures(t, ProbeRFIManagers)
+	fp.Err["GetProject"] = forbidden(`{"errors":["You do not have access to this project."]}`)
+
+	_, _, err := f.Get(context.Background(), uuid.New(), testCompany, testProject, false)
+	if !errors.Is(err, procore.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+	if got := ProcoreReason(err); got != "You do not have access to this project." {
+		t.Fatalf("reason %q, want Procore's text", got)
+	}
+
+	// A 404 on the project is still a permission error and keeps its body.
+	fp.Err["GetProject"] = &procore.APIError{Status: 404, Body: `{"errors":"Project not found"}`}
+	_, _, err = f.Get(context.Background(), uuid.New(), testCompany, testProject, false)
+	if !errors.Is(err, procore.ErrPermissionDenied) || ProcoreReason(err) != "Project not found" {
+		t.Fatalf("404: err = %v reason %q, want ErrPermissionDenied with Procore's text", err, ProcoreReason(err))
+	}
+}
+
+func TestFeatures_CacheIsolatedByCompany(t *testing.T) {
+	f, fp, _ := newFeatures(t, ProbeRFIManagers)
+	ctx := context.Background()
+	user := uuid.New()
+	const otherCompany = testCompany + 1
+
+	if _, _, err := f.Get(ctx, user, testCompany, testProject, false); err != nil {
+		t.Fatal(err)
+	}
+	fp.RFIManagersErr = forbidden(`{"errors":["Permission denied"]}`)
+	states, _, err := f.Get(ctx, user, otherCompany, testProject, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rfiState(t, states); got.Available {
+		t.Fatalf("other company: rfi = %+v, want its own (denied) answer", got)
+	}
+	if n := fp.CallCount("ListPotentialRFIManagers"); n != 2 {
+		t.Fatalf("probes = %d, want one per company", n)
+	}
+	companies := map[int64]bool{}
+	for _, c := range fp.Calls() {
+		if c.Method == "ListPotentialRFIManagers" {
+			companies[c.CompanyID] = true
+		}
+	}
+	if !companies[testCompany] || !companies[otherCompany] {
+		t.Fatalf("probed companies %v, want %d and %d", companies, testCompany, otherCompany)
+	}
+
+	// Each entry stands on its own: the first company's answer is still the
+	// cached available one, and invalidating it leaves the other alone.
+	states, _, err = f.Get(ctx, user, testCompany, testProject, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rfiState(t, states); !got.Available {
+		t.Fatalf("first company: rfi = %+v, want its cached available answer", got)
+	}
+	f.Invalidate(user, testCompany, testProject)
+	if _, _, err := f.Get(ctx, user, otherCompany, testProject, false); err != nil {
+		t.Fatal(err)
+	}
+	if n := fp.CallCount("ListPotentialRFIManagers"); n != 2 {
+		t.Fatalf("probes after invalidating the first company = %d, want 2", n)
+	}
+}
+
 func TestFeatures_CreateOutcomeProbe_FollowsLastOutcome(t *testing.T) {
 	f, fp, clock := newFeatures(t, ProbeCreateOutcome)
 	ctx := context.Background()

@@ -152,6 +152,20 @@ func TestGetFeatures_ProjectNotVisible_403(t *testing.T) {
 	}
 }
 
+func TestGetFeatures_ProjectNotVisible_403_Message(t *testing.T) {
+	srv, fp, token := newFeatureServer(t)
+	fp.With(func(f *fakeProcore) {
+		f.Forbidden["/projects/9"] = true
+		f.ForbiddenBodies["/projects/9"] = `{"errors":["You do not have access to this project."]}`
+	})
+
+	res, b := getFeatures(t, srv, token, 7)
+	wantError(t, res, b, http.StatusForbidden, "procore_permission_denied")
+	if e := decode[Error](t, b); e.Message != "You do not have access to this project." {
+		t.Fatalf("message %q, want Procore's text", e.Message)
+	}
+}
+
 func TestGetFeatures_NoCache_Refetches(t *testing.T) {
 	srv, fp, token := newFeatureServer(t)
 
