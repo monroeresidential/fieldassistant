@@ -1,9 +1,11 @@
 import SwiftUI
 
-/// Shown at launch instead of the app when the on-device store cannot be opened. The one way on is
-/// to delete the local data; the error stays on screen, small, for whoever is asked about it.
+/// Shown at launch instead of the app when the on-device store cannot be opened. Try again reopens
+/// it without deleting anything; the way on when that keeps failing is to delete the local data.
+/// The error stays on screen, small, for whoever is asked about it.
 struct StoreRecoveryView: View {
     let error: AppContainer.OpenFailure
+    let onRetry: () -> Void
     let onReset: () -> Void
 
     var body: some View {
@@ -26,8 +28,13 @@ struct StoreRecoveryView: View {
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 40)
-                    Button("Reset local data", action: onReset)
-                        .buttonStyle(PrimaryButtonStyle())
+                    VStack(spacing: 10) {
+                        Button("Reset local data", action: onReset)
+                            .buttonStyle(PrimaryButtonStyle())
+                        Button("Try again", action: onRetry)
+                            .buttonStyle(SecondaryButtonStyle())
+                            .accessibilityHint("Opens the local data again without deleting anything")
+                    }
                 }
                 .padding(.top, 40)
                 .padding(.horizontal, 24)
@@ -50,5 +57,5 @@ extension AppContainer.OpenFailure {
 }
 
 #Preview {
-    StoreRecoveryView(error: .open(CocoaError(.fileReadCorruptFile)), onReset: {})
+    StoreRecoveryView(error: .open(CocoaError(.fileReadCorruptFile)), onRetry: {}, onReset: {})
 }

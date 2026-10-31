@@ -284,9 +284,9 @@ struct RFIReviewView: View {
                     .padding(.top, 8)
                     .accessibilityLabel("Procore says: \(formMessage)")
             }
-            ForEach(Array(model.procoreNotes.enumerated()), id: \.offset) { _, note in
+            ForEach(Array(model.procoreNotes.enumerated()), id: \.offset) { index, note in
                 procoreNoteLabel(note, font: Theme.Text.meta13Medium)
-                    .padding(.top, model.formMessage == nil ? 8 : 4)
+                    .padding(.top, index == 0 && model.formMessage == nil ? 8 : 4)
             }
             if let pendingMessage, !model.isQueued {
                 HStack(spacing: 12) {
@@ -540,7 +540,7 @@ struct RFIReviewView: View {
                 Text(Self.placeholder(field)).foregroundStyle(Theme.Color.tertiary)
             }
         }
-        .accessibilityHint("Opens the \(field.lookupKind?.title.lowercased() ?? "list") to choose from")
+        .accessibilityHint("Opens the \(field.lookupKind?.accessibilityNoun ?? "list") to choose from")
     }
 
     private func toggleRow(_ field: RFIField) -> some View {
@@ -609,7 +609,7 @@ struct RFIReviewView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(field.label), \(displayValue(field) ?? "not set")")
-            .accessibilityHint("Opens the \(field.lookupKind?.title.lowercased() ?? "list") to choose from")
+            .accessibilityHint("Opens the \(field.lookupKind?.accessibilityNoun ?? "list") to choose from")
         } else {
             fullControl(field)
         }

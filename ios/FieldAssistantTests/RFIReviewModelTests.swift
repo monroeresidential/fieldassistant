@@ -216,6 +216,38 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertTrue(model.procoreNotes.isEmpty)
     }
 
+    /// Spec section 5 names `question.attachments`; the backend passes such keys through verbatim.
+    func testDottedKeyBecomesNote() {
+        let entries = [form("question.attachments: can't be blank; custom_field_1: is invalid")]
+
+        let notes = RFIReviewModel.procoreNotes(from: entries)
+        XCTAssertEqual(notes, [
+            ProcoreNote(field: "question.attachments", message: "can't be blank"),
+            ProcoreNote(field: "custom_field_1", message: "is invalid"),
+        ])
+        XCTAssertNil(RFIReviewModel.formMessage(from: entries))
+        XCTAssertEqual(notes.first.map { RFIReviewModel.fieldLabel($0.field) }, "Attachments")
+    }
+
+    func testSentenceWithPeriodBeforeColonIsNotNote() {
+        let sentences = [
+            "Procore refused it. reason: unknown",
+            "see.docs. now: later",
+            "attachments.: can't be blank",
+            "question..attachments: can't be blank",
+            ".attachments: can't be blank",
+        ]
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: sentences.map(form)), [])
+        XCTAssertEqual(RFIReviewModel.formMessage(from: sentences.map(form)), sentences.joined(separator: "; "))
+    }
+
+    func testFieldLabelForDottedKeysUsesLastComponent() {
+        XCTAssertEqual(RFIReviewModel.fieldLabel("question.attachments"), "Attachments")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("custom_fields.custom_field_12"), "Custom field 12")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("rfi.due_date"), "Due")
+    }
+
     func testFieldLabelForCustomAndKnownKeys() {
         XCTAssertEqual(RFIReviewModel.fieldLabel("custom_field_123"), "Custom field 123")
         XCTAssertEqual(RFIReviewModel.fieldLabel("rfi_manager_id"), "RFI manager")

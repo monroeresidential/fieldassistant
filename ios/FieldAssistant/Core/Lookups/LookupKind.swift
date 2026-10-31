@@ -36,6 +36,12 @@ enum LookupKind: String, CaseIterable, Codable, Sendable {
         case .rfiManagers: "RFI managers"
         }
     }
+
+    /// The title as it reads mid-sentence ("Opens the people to choose from"): lowercased, except
+    /// that "RFI" keeps its case.
+    var accessibilityNoun: String {
+        self == .rfiManagers ? title : title.lowercased()
+    }
 }
 
 extension LookupRow {

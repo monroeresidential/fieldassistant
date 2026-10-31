@@ -20,4 +20,11 @@ final class LookupPickerFilterTests: XCTestCase {
         XCTAssertEqual(LookupFilter.filter(rows, query: "").map(\.id), [1, 2, 3])
         XCTAssertEqual(LookupFilter.filter(rows, query: "  ").map(\.id), [1, 2, 3])
     }
+
+    /// The picker rows' VoiceOver hint keeps the RFI acronym and lowercases the other titles.
+    func testAccessibilityNounKeepsAcronym() {
+        XCTAssertEqual(LookupKind.rfiManagers.accessibilityNoun, "RFI managers")
+        XCTAssertEqual(LookupKind.users.accessibilityNoun, "people")
+        XCTAssertEqual(LookupKind.specSections.accessibilityNoun, "spec sections")
+    }
 }

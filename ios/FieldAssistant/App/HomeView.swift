@@ -172,11 +172,17 @@ struct HomeView: View {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .short
             return "Synced \(formatter.localizedString(for: date, relativeTo: now))"
-        case .failed(code: "procore_permission_denied", _):
-            return "No RFI access on this project"
+        case .failed(code: "procore_permission_denied", let message):
+            return noAccessMessage(message)
         case .failed:
             return "Sync failed, showing what you have"
         }
+    }
+
+    /// Procore's reason the user cannot see the project's RFIs, or the generic line without one.
+    static func noAccessMessage(_ reason: String?) -> String {
+        let trimmed = reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "No RFI access on this project" : trimmed
     }
 
     // MARK: - Features
@@ -225,6 +231,11 @@ struct HomeView: View {
     /// The line under the record button: how fast it is, or that RFIs cannot be created here.
     static func recordHint(_ availability: FeatureAvailability) -> String {
         availability.available ? "Under a minute, start to Procore" : "RFIs are not available on this project"
+    }
+
+    /// Why Result's New RFI is disabled, or `nil` when RFIs can be created on the project.
+    static func newRFIBlockedHint(_ availability: FeatureAvailability) -> String? {
+        availability.available ? nil : recordHint(availability)
     }
 
     // MARK: - Recent
@@ -280,6 +291,7 @@ struct HomeView: View {
             ResultScreen(
                 draftID: id,
                 projectName: project.map(Self.title),
+                newRFIBlockedHint: Self.newRFIBlockedHint(appState.rfiAvailability),
                 onNewRFI: { path = [.capture(UUID())] },
                 onDone: {
                     path = []

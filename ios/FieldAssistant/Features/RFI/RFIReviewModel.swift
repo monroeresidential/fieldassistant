@@ -140,22 +140,29 @@ final class RFIReviewModel {
             .filter { !$0.isEmpty }
     }
 
-    /// Splits "key: message" when `key` looks like a Procore field key (lowercase, digits,
-    /// underscores), so sentences such as "draft has unresolved fields: _form" are not notes.
+    /// Splits "key: message" when `key` looks like a Procore field key: dot-separated parts of
+    /// lowercase letters, digits and underscores, starting with a letter ("custom_field_123",
+    /// "question.attachments"). Sentences such as "draft has unresolved fields: _form" are not notes.
     private static func note(from message: String) -> ProcoreNote? {
         guard let split = message.range(of: ": ") else { return nil }
         let key = message[..<split.lowerBound]
         let rest = message[split.upperBound...].trimmingCharacters(in: .whitespaces)
         guard let first = key.first, first.isASCII, first.isLowercase, !rest.isEmpty,
-              key.allSatisfy({ $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "_") })
+              key.split(separator: ".", omittingEmptySubsequences: false).allSatisfy({ part in
+                  !part.isEmpty && part.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "_") }
+              })
         else { return nil }
         return ProcoreNote(field: String(key), message: rest)
     }
 
     /// A reader's name for a Procore key: the review row's label when the phone has one, else the
-    /// key with spaces for underscores ("custom_field_123" is "Custom field 123").
+    /// key with spaces for underscores ("custom_field_123" is "Custom field 123"). A dotted key is
+    /// named by its last part ("question.attachments" is "Attachments").
     static func fieldLabel(_ key: String) -> String {
         if let field = RFIField(serverField: key) { return field.label }
+        if let last = key.split(separator: ".").last, last.count < key.count {
+            return fieldLabel(String(last))
+        }
         let spaced = key.replacingOccurrences(of: "_", with: " ")
         return spaced.prefix(1).uppercased() + spaced.dropFirst()
     }

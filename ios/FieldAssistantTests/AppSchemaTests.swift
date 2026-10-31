@@ -103,6 +103,43 @@ final class AppSchemaTests: XCTestCase {
         )
     }
 
+    /// A store that could not be opened at launch but opens now (a one-off failure) swaps the app
+    /// in on Try again.
+    func testRetryAfterStoreBecomesOpenableIsReady() throws {
+        try Data("not a database".utf8).write(to: storeURL)
+        let launch = makeLaunch()
+        guard case .failed = launch.state else { return XCTFail("a garbage store should not open") }
+
+        for url in AppContainer.storeURLs(storeURL: storeURL) {
+            try? FileManager.default.removeItem(at: url)
+        }
+        launch.retry()
+
+        guard case .ready = launch.state else { return XCTFail("the store opens on retry") }
+    }
+
+    func testRetryWhileStoreIsStillBrokenStaysFailed() throws {
+        try Data("not a database".utf8).write(to: storeURL)
+        let launch = makeLaunch()
+        guard case .failed = launch.state else { return XCTFail("a garbage store should not open") }
+
+        launch.retry()
+
+        guard case .failed = launch.state else { return XCTFail("a store that still cannot be opened stays on the recovery screen") }
+        XCTAssertEqual(try Data(contentsOf: storeURL), Data("not a database".utf8), "retry leaves the store file alone")
+    }
+
+    /// A launch over the test store that registers nothing with BackgroundTasks (the test host
+    /// registered its handlers at launch).
+    private func makeLaunch() -> AppLaunch {
+        AppLaunch(
+            opened: AppContainer.makeModelContainer(storeURL: storeURL),
+            storeURL: storeURL,
+            registersBackgroundTasks: false,
+            makeAppState: { AppState.preview(container: $0) }
+        )
+    }
+
     func testMakeModelContainerInMemorySucceeds() throws {
         let container = try AppContainer.makeModelContainer(inMemory: true).get()
         let context = ModelContext(container)
