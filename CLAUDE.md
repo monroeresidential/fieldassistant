@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side (`docs/superpowers/plans/2026-10-25-project-sync-ios.md`, contract 1.5.1) is merged to `develop` (PR #12) and passed the device check on Drew's iPhone on 2026-10-26. The design pass (roadmap 2b, `docs/superpowers/plans/2026-10-26-design-pass.md`) is implemented on branch `design-pass` as of 2026-10-29, with the device check pending. The attachments backend (contract 1.6.0: draft attachments in the object store, pushed to Procore by the submit job via Direct File Upload) is implemented on branch `m3-attachments-offline` as of 2026-10-30. Next is the iOS plan `docs/superpowers/plans/2026-10-30-milestone-3-attachments-ios.md` (photo pipeline, queued submit, Settings row).
+Phase 1 is implemented and verified end to end against the Procore sandbox on 2026-10-23 (see git history): Go backend plus iOS sign-in, company/project picker and RFI list. Milestone 2 is implemented and merged to `develop` (backend plus iOS capture, review and submit), and the first dictated RFI was submitted from a phone on 2026-10-24. The project-sync backend (per-user RFI mirror, contract 1.5.0) is merged to `develop` and verified against the sandbox on 2026-10-25 (delta filter, Show bodies, submit path); the phone side (`docs/superpowers/plans/2026-10-25-project-sync-ios.md`, contract 1.5.1) is merged to `develop` (PR #12) and passed the device check on Drew's iPhone on 2026-10-26. The design pass (roadmap 2b, `docs/superpowers/plans/2026-10-26-design-pass.md`) is implemented on branch `design-pass` as of 2026-10-29, with the device check pending. Milestone 3's attachments and queued submit are implemented: the backend (contract 1.6.0: draft attachments in the object store, pushed to Procore by the submit job via Direct File Upload; PR #15) is merged to `develop` and deployed to dev, and the phone side (`docs/superpowers/plans/2026-10-30-milestone-3-attachments-ios.md`: photo pipeline, queued submit, background tasks, Settings photo size) is implemented on branch `m3-attachments-ios` as of 2026-10-31, with the device check pending (list in the roadmap). Next: that device check, then milestone 4.
 
 Governing documents:
 
@@ -72,8 +72,8 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 | `ios/FieldAssistant/Core/Auth` | Sign-in flow, Keychain session store, token refresh. |
 | `ios/FieldAssistant/Core/Network` | API client wrapper, auth middleware, failure mapping. |
 | `ios/FieldAssistant/Core/Scope` | Company and project selection and its persistence. |
-| `ios/FieldAssistant/Core/Capture` | Capture model, on-device speech transcriber, one-shot location, photo saving. |
-| `ios/FieldAssistant/Core/Drafts` | Local draft store, submit and resend sync, reconcile on launch. |
+| `ios/FieldAssistant/Core/Capture` | Capture model, on-device speech transcriber, one-shot location, photo saving. Photos go through an ImageIO pipeline at capture: downscale to 2,500 px on the long edge and EXIF strip (orientation and GPS kept). |
+| `ios/FieldAssistant/Core/Drafts` | Local draft store, submit and resend sync, reconcile on launch. `SubmitRunner` is the one pass that saves, uploads photos, submits and polls; `BackgroundSync` runs it from the iOS refresh and processing tasks. |
 | `ios/FieldAssistant/Core/Lookups` | Lookup lists fetched from the backend and cached locally for review pickers. |
 | `ios/FieldAssistant/Core/Records` | Per-user mirror of the project's Procore records on the phone: SwiftData models, delta sync driver, local queries. |
 | `ios/FieldAssistant/Core/Review` | Review screen rows, lookup picker, unresolved-field rows, footer. |
@@ -95,6 +95,7 @@ Deploy: see `deploy/README.md` (droplet setup, secrets, backups) and `.github/wo
 - The phone reads RFIs from the local mirror (`getRecords`, `syncProject`); `listRFIs` was removed in contract 1.5.1. `getRFIAttachment` streams the file with Procore's real `Content-Type` (declared `*/*` in the contract).
 - Attachment-level codes `procore_refused`, `expired` and `size_mismatch` (the stored object's size differs from its record) live on `DraftResponse.attachments[].error`; the draft-level failure is an `unresolved[]` entry with field `attachments` and reason `procore_validation`. Neither is an HTTP error-body code.
 - `procore_validation` is a draft-level error code carried in `DraftResponse.error` and `JobStatus.error`, not an HTTP error-body code.
+- `submitting` plus `submitPending` is the queued intent on the phone; reconcile skips queued drafts; only the server's answer clears the flag.
 - On iOS only `AuthRefreshError.rejected` signs the user out; other refresh failures keep the session.
 
 ## Repository layout
