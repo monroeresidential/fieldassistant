@@ -5,6 +5,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/monroeresidential/fieldassistant/api/internal/auth"
 )
 
 func TestAuthStart_ReturnsAuthorizeURLWithState(t *testing.T) {
@@ -136,7 +139,7 @@ func TestAuthExchange_CodeSingleUse(t *testing.T) {
 }
 
 func TestAuthRefresh_RotatesAndRejectsReuse(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv, fp := newTestServer(t)
 	pair := signIn(t, srv, "device-1")
 
 	res, b := call(t, srv, http.MethodPost, "/v1/auth/refresh", "", AuthRefreshRequest{RefreshToken: pair.RefreshToken})
@@ -148,12 +151,48 @@ func TestAuthRefresh_RotatesAndRejectsReuse(t *testing.T) {
 		t.Fatalf("refresh token not rotated: %q", rotated.RefreshToken)
 	}
 
+	// Past the grace window, presenting the rotated-away token is theft.
+	fp.With(func(f *fakeProcore) { f.Clock.Advance(auth.RefreshGrace + time.Second) })
 	res, b = call(t, srv, http.MethodPost, "/v1/auth/refresh", "", AuthRefreshRequest{RefreshToken: pair.RefreshToken})
 	wantError(t, res, b, http.StatusUnauthorized, "unauthorized")
 
 	// Reuse revokes the whole session, so the rotated pair is dead too.
 	res, b = call(t, srv, http.MethodGet, "/v1/me", rotated.AccessToken, nil)
 	wantError(t, res, b, http.StatusUnauthorized, "unauthorized")
+}
+
+func TestAuthRefresh_ReplayWithinGrace_200(t *testing.T) {
+	srv, fp := newTestServer(t)
+	pair := signIn(t, srv, "device-1")
+
+	res, b := call(t, srv, http.MethodPost, "/v1/auth/refresh", "", AuthRefreshRequest{RefreshToken: pair.RefreshToken})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("refresh: status %d; body %s", res.StatusCode, b)
+	}
+	rotated := decode[TokenPair](t, b)
+
+	// The phone never saw that response and retries with the same token.
+	fp.With(func(f *fakeProcore) { f.Clock.Advance(3 * time.Second) })
+	res, b = call(t, srv, http.MethodPost, "/v1/auth/refresh", "", AuthRefreshRequest{RefreshToken: pair.RefreshToken})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("replayed refresh: status %d; body %s", res.StatusCode, b)
+	}
+	replay := decode[TokenPair](t, b)
+	if replay.RefreshToken != rotated.RefreshToken {
+		t.Fatal("replay did not return the rotated refresh token")
+	}
+
+	// Both access tokens work: the session is alive.
+	for _, bearer := range []string{replay.AccessToken, rotated.AccessToken} {
+		res, b = call(t, srv, http.MethodGet, "/v1/me", bearer, nil)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("/v1/me: status %d; body %s", res.StatusCode, b)
+		}
+	}
+	res, b = call(t, srv, http.MethodPost, "/v1/auth/refresh", "", AuthRefreshRequest{RefreshToken: rotated.RefreshToken})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("refresh with the rotated token: status %d; body %s", res.StatusCode, b)
+	}
 }
 
 func TestAuthLogout_204_ThenBearerRejected(t *testing.T) {

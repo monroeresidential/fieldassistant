@@ -12,9 +12,9 @@ import (
 )
 
 const createSession = `-- name: CreateSession :one
-insert into sessions (user_id, device_id, refresh_hash, expires_at)
-values ($1, $2, $3, $4)
-returning id, user_id, device_id, refresh_hash, prev_refresh_hash, expires_at, created_at
+insert into sessions (user_id, device_id, refresh_hash, expires_at, refresh_enc)
+values ($1, $2, $3, $4, $5)
+returning id, user_id, device_id, refresh_hash, prev_refresh_hash, expires_at, created_at, rotated_at, refresh_enc
 `
 
 type CreateSessionParams struct {
@@ -22,6 +22,7 @@ type CreateSessionParams struct {
 	DeviceID    string
 	RefreshHash []byte
 	ExpiresAt   pgtype.Timestamptz
+	RefreshEnc  []byte
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
@@ -30,6 +31,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.DeviceID,
 		arg.RefreshHash,
 		arg.ExpiresAt,
+		arg.RefreshEnc,
 	)
 	var i Session
 	err := row.Scan(
@@ -40,6 +42,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.PrevRefreshHash,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.RotatedAt,
+		&i.RefreshEnc,
 	)
 	return i, err
 }
@@ -63,7 +67,7 @@ func (q *Queries) DeleteSessionsForUser(ctx context.Context, userID pgtype.UUID)
 }
 
 const getSession = `-- name: GetSession :one
-select id, user_id, device_id, refresh_hash, prev_refresh_hash, expires_at, created_at from sessions where id = $1
+select id, user_id, device_id, refresh_hash, prev_refresh_hash, expires_at, created_at, rotated_at, refresh_enc from sessions where id = $1
 `
 
 func (q *Queries) GetSession(ctx context.Context, id pgtype.UUID) (Session, error) {
@@ -77,12 +81,14 @@ func (q *Queries) GetSession(ctx context.Context, id pgtype.UUID) (Session, erro
 		&i.PrevRefreshHash,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.RotatedAt,
+		&i.RefreshEnc,
 	)
 	return i, err
 }
 
 const getSessionByPrevRefreshHash = `-- name: GetSessionByPrevRefreshHash :one
-select id, user_id, device_id, refresh_hash, prev_refresh_hash, expires_at, created_at from sessions where prev_refresh_hash = $1
+select id, user_id, device_id, refresh_hash, prev_refresh_hash, expires_at, created_at, rotated_at, refresh_enc from sessions where prev_refresh_hash = $1
 `
 
 func (q *Queries) GetSessionByPrevRefreshHash(ctx context.Context, prevRefreshHash []byte) (Session, error) {
@@ -96,12 +102,14 @@ func (q *Queries) GetSessionByPrevRefreshHash(ctx context.Context, prevRefreshHa
 		&i.PrevRefreshHash,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.RotatedAt,
+		&i.RefreshEnc,
 	)
 	return i, err
 }
 
 const getSessionByRefreshHash = `-- name: GetSessionByRefreshHash :one
-select id, user_id, device_id, refresh_hash, prev_refresh_hash, expires_at, created_at from sessions where refresh_hash = $1
+select id, user_id, device_id, refresh_hash, prev_refresh_hash, expires_at, created_at, rotated_at, refresh_enc from sessions where refresh_hash = $1
 `
 
 func (q *Queries) GetSessionByRefreshHash(ctx context.Context, refreshHash []byte) (Session, error) {
@@ -115,13 +123,15 @@ func (q *Queries) GetSessionByRefreshHash(ctx context.Context, refreshHash []byt
 		&i.PrevRefreshHash,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.RotatedAt,
+		&i.RefreshEnc,
 	)
 	return i, err
 }
 
 const rotateSessionRefresh = `-- name: RotateSessionRefresh :one
 update sessions
-set refresh_hash = $2, prev_refresh_hash = refresh_hash, expires_at = $3
+set refresh_hash = $2, prev_refresh_hash = refresh_hash, rotated_at = $6, refresh_enc = $5, expires_at = $3
 where id = $1 and refresh_hash = $4
 returning id
 `
@@ -131,6 +141,8 @@ type RotateSessionRefreshParams struct {
 	RefreshHash   []byte
 	ExpiresAt     pgtype.Timestamptz
 	RefreshHash_2 []byte
+	RefreshEnc    []byte
+	RotatedAt     pgtype.Timestamptz
 }
 
 func (q *Queries) RotateSessionRefresh(ctx context.Context, arg RotateSessionRefreshParams) (pgtype.UUID, error) {
@@ -139,6 +151,8 @@ func (q *Queries) RotateSessionRefresh(ctx context.Context, arg RotateSessionRef
 		arg.RefreshHash,
 		arg.ExpiresAt,
 		arg.RefreshHash_2,
+		arg.RefreshEnc,
+		arg.RotatedAt,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)

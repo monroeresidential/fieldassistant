@@ -471,7 +471,7 @@ func startTestServer(t *testing.T, scheme string) testServer {
 	oauth := procore.NewOAuth(cfg.Procore, procoreSrv.Client(), clock.now)
 	pc := procore.NewClient(cfg.Procore.APIURL, procoreSrv.Client(), func(time.Duration) {}, clock.now)
 	tokens := auth.NewTokenSource(st, vault, oauth, clock.now)
-	sessions := auth.NewSessions(st, cfg.SessionSecret, clock.now)
+	sessions := auth.NewSessions(st, cfg.SessionSecret, vault, clock.now)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	lookups := pipeline.NewLookups(st, pc, tokens, 10*time.Minute, clock.now, logger)
 	featureSet := pipeline.NewFeatures(lookups, pc, tokens, pipeline.ProbeRFIManagers, 10*time.Minute, clock.now, logger)

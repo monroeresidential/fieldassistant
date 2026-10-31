@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -32,7 +33,11 @@ func newTestSessions(t *testing.T) (*Sessions, *store.Store, *testClock, uuid.UU
 	if err != nil {
 		t.Fatalf("upsert user: %v", err)
 	}
-	return NewSessions(st, []byte("test-secret-at-least-32-bytes-long!"), clock.now), st, clock, uuid.UUID(u.ID.Bytes)
+	vault, err := NewVault(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatalf("NewVault: %v", err)
+	}
+	return NewSessions(st, []byte("test-secret-at-least-32-bytes-long!"), vault, clock.now), st, clock, uuid.UUID(u.ID.Bytes)
 }
 
 func TestSessions_CreateAndVerify(t *testing.T) {
@@ -121,7 +126,7 @@ func TestSessions_RefreshRotates(t *testing.T) {
 }
 
 func TestSessions_RefreshReuse_RevokesFamily(t *testing.T) {
-	s, st, _, userID := newTestSessions(t)
+	s, st, clock, userID := newTestSessions(t)
 	ctx := context.Background()
 
 	sid, pair1, err := s.Create(ctx, userID, "device-1")
@@ -132,6 +137,8 @@ func TestSessions_RefreshReuse_RevokesFamily(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Refresh(r1): %v", err)
 	}
+	// Past the grace window a replay is theft, not a lost response.
+	clock.advance(RefreshGrace + time.Second)
 	if _, err := s.Refresh(ctx, pair1.RefreshToken); !errors.Is(err, ErrSessionRevoked) {
 		t.Fatalf("reused Refresh(r1) err = %v, want ErrSessionRevoked", err)
 	}
@@ -175,7 +182,7 @@ func TestSessions_Revoke(t *testing.T) {
 }
 
 func TestSessions_Reissue(t *testing.T) {
-	s, _, _, userID := newTestSessions(t)
+	s, _, clock, userID := newTestSessions(t)
 	ctx := context.Background()
 
 	sid, pair1, err := s.Create(ctx, userID, "device-1")
@@ -196,6 +203,7 @@ func TestSessions_Reissue(t *testing.T) {
 	if claims.UserID != userID || claims.SessionID != sid {
 		t.Fatalf("claims = %+v, want user %v session %v", claims, userID, sid)
 	}
+	clock.advance(RefreshGrace + time.Second)
 	if _, err := s.Refresh(ctx, pair1.RefreshToken); !errors.Is(err, ErrSessionRevoked) {
 		t.Fatalf("Refresh(pre-reissue token) err = %v, want ErrSessionRevoked", err)
 	}
@@ -229,7 +237,50 @@ func TestSessions_ExpiredSessionCannotRefresh(t *testing.T) {
 	}
 }
 
-func TestSessions_RotateLosesRace(t *testing.T) {
+// TestSessions_RotateLosesRace_WithinGrace_ReturnsCurrentPair: a request
+// that read the session before a concurrent rotation loses the
+// compare-and-swap, but within the grace it gets the winner's pair.
+func TestSessions_RotateLosesRace_WithinGrace_ReturnsCurrentPair(t *testing.T) {
+	s, st, clock, userID := newTestSessions(t)
+	ctx := context.Background()
+
+	sid, pair1, err := s.Create(ctx, userID, "device-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Our request reads the session, then a concurrent request rotates first.
+	sess, err := st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	pair2, err := s.Refresh(ctx, pair1.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh(r1): %v", err)
+	}
+	clock.advance(time.Second)
+	got, err := s.rotate(ctx, sess)
+	if err != nil {
+		t.Fatalf("rotate after lost race within grace: %v", err)
+	}
+	if got.RefreshToken != pair2.RefreshToken {
+		t.Fatal("lost race did not return the winner's refresh token")
+	}
+	claims, err := s.Verify(got.AccessToken)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if claims.SessionID != sid || claims.UserID != userID {
+		t.Fatalf("claims = %+v, want user %v session %v", claims, userID, sid)
+	}
+	if _, err := s.Refresh(ctx, pair2.RefreshToken); err != nil {
+		t.Fatalf("Refresh(r2) after lost race: %v", err)
+	}
+}
+
+// TestSessions_RotateLosesRace_UnrelatedHash_Revokes: losing the
+// compare-and-swap to a hash that is not the session's previous one is
+// treated as reuse, as before the grace window existed.
+func TestSessions_RotateLosesRace_UnrelatedHash_Revokes(t *testing.T) {
 	s, st, _, userID := newTestSessions(t)
 	ctx := context.Background()
 
@@ -237,8 +288,6 @@ func TestSessions_RotateLosesRace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	// Simulate a concurrent request that rotated between our lookup and our
-	// update: the compare-and-swap must see a stale refresh hash.
 	sess, err := st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true})
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
@@ -249,5 +298,160 @@ func TestSessions_RotateLosesRace(t *testing.T) {
 	}
 	if _, err := s.Refresh(ctx, pair1.RefreshToken); !errors.Is(err, ErrSessionRevoked) {
 		t.Fatalf("Refresh after lost race err = %v, want ErrSessionRevoked", err)
+	}
+}
+
+// TestSessions_RotateLosesRace_AfterGrace_Revokes: a lost race noticed after
+// the grace window has closed is reuse.
+func TestSessions_RotateLosesRace_AfterGrace_Revokes(t *testing.T) {
+	s, st, clock, userID := newTestSessions(t)
+	ctx := context.Background()
+
+	sid, pair1, err := s.Create(ctx, userID, "device-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	sess, err := st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if _, err := s.Refresh(ctx, pair1.RefreshToken); err != nil {
+		t.Fatalf("Refresh(r1): %v", err)
+	}
+	clock.advance(RefreshGrace + time.Second)
+	if _, err := s.rotate(ctx, sess); !errors.Is(err, ErrSessionRevoked) {
+		t.Fatalf("rotate after grace err = %v, want ErrSessionRevoked", err)
+	}
+	if _, err := st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("GetSession err = %v, want pgx.ErrNoRows", err)
+	}
+}
+
+func TestSessions_RefreshReplayWithinGrace_ReturnsSamePair(t *testing.T) {
+	s, st, clock, userID := newTestSessions(t)
+	ctx := context.Background()
+
+	sid, pair1, err := s.Create(ctx, userID, "device-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pair2, err := s.Refresh(ctx, pair1.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh(r1): %v", err)
+	}
+	// The response carrying pair2 was lost; the phone retries with r1.
+	clock.advance(3 * time.Second)
+	replay, err := s.Refresh(ctx, pair1.RefreshToken)
+	if err != nil {
+		t.Fatalf("replayed Refresh(r1) within grace: %v", err)
+	}
+	if replay.RefreshToken != pair2.RefreshToken {
+		t.Fatal("replay did not return pair2's refresh token")
+	}
+	claims, err := s.Verify(replay.AccessToken)
+	if err != nil {
+		t.Fatalf("Verify(replay access): %v", err)
+	}
+	if claims.SessionID != sid || claims.UserID != userID {
+		t.Fatalf("claims = %+v, want user %v session %v", claims, userID, sid)
+	}
+	if err := s.Lookup(ctx, sid); err != nil {
+		t.Fatalf("Lookup after replay: %v", err)
+	}
+	// The replay did not rotate: the stored hash is still pair2's.
+	sess, err := st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if !bytes.Equal(sess.RefreshHash, hashRefreshToken(pair2.RefreshToken)) {
+		t.Fatal("replay rotated the refresh token")
+	}
+	if _, err := s.Refresh(ctx, pair2.RefreshToken); err != nil {
+		t.Fatalf("Refresh(r2) after replay: %v", err)
+	}
+}
+
+func TestSessions_RefreshReplayAfterGrace_Revokes(t *testing.T) {
+	s, st, clock, userID := newTestSessions(t)
+	ctx := context.Background()
+
+	sid, pair1, err := s.Create(ctx, userID, "device-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pair2, err := s.Refresh(ctx, pair1.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh(r1): %v", err)
+	}
+	clock.advance(121 * time.Second)
+	if _, err := s.Refresh(ctx, pair1.RefreshToken); !errors.Is(err, ErrSessionRevoked) {
+		t.Fatalf("Refresh(r1) after grace err = %v, want ErrSessionRevoked", err)
+	}
+	if _, err := st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("GetSession err = %v, want pgx.ErrNoRows", err)
+	}
+	if _, err := s.Refresh(ctx, pair2.RefreshToken); !errors.Is(err, ErrSessionRevoked) {
+		t.Fatalf("Refresh(r2) after theft err = %v, want ErrSessionRevoked", err)
+	}
+}
+
+func TestSessions_ReplayOfOlderToken_Revokes(t *testing.T) {
+	s, _, _, userID := newTestSessions(t)
+	ctx := context.Background()
+
+	_, pair1, err := s.Create(ctx, userID, "device-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pair2, err := s.Refresh(ctx, pair1.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh(r1): %v", err)
+	}
+	if _, err := s.Refresh(ctx, pair2.RefreshToken); err != nil {
+		t.Fatalf("Refresh(r2): %v", err)
+	}
+	// r1 is two rotations old: no grace, even within 120 s.
+	if _, err := s.Refresh(ctx, pair1.RefreshToken); !errors.Is(err, ErrSessionRevoked) {
+		t.Fatalf("Refresh(r1) after two rotations err = %v, want ErrSessionRevoked", err)
+	}
+}
+
+func TestSessions_CreateStoresEncryptedRefresh(t *testing.T) {
+	s, st, _, userID := newTestSessions(t)
+	ctx := context.Background()
+
+	sid, pair1, err := s.Create(ctx, userID, "device-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	sess, err := st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if bytes.Contains(sess.RefreshEnc, []byte(pair1.RefreshToken)) {
+		t.Fatal("refresh_enc holds the plaintext token")
+	}
+	got, err := s.vault.Decrypt(sess.RefreshEnc)
+	if err != nil {
+		t.Fatalf("Decrypt(refresh_enc): %v", err)
+	}
+	if got != pair1.RefreshToken {
+		t.Fatal("refresh_enc does not decrypt to the issued refresh token")
+	}
+
+	pair2, err := s.Refresh(ctx, pair1.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh(r1): %v", err)
+	}
+	sess, err = st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	got, err = s.vault.Decrypt(sess.RefreshEnc)
+	if err != nil {
+		t.Fatalf("Decrypt(refresh_enc) after rotate: %v", err)
+	}
+	if got != pair2.RefreshToken {
+		t.Fatal("rotate did not store the new refresh token in refresh_enc")
 	}
 }

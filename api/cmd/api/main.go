@@ -132,7 +132,7 @@ func buildDeps(ctx context.Context, cfg config.Config) (httpapi.Deps, func(), er
 	oauth := procore.NewOAuth(cfg.Procore, hc, time.Now)
 	pc := procore.NewClient(cfg.Procore.APIURL, hc, nil, nil)
 	tokens := auth.NewTokenSource(st, vault, oauth, time.Now)
-	sessions := auth.NewSessions(st, cfg.SessionSecret, time.Now)
+	sessions := auth.NewSessions(st, cfg.SessionSecret, vault, time.Now)
 
 	logger := slog.Default()
 	blobs, err := buildBlobs(ctx, cfg.ObjectStore)
