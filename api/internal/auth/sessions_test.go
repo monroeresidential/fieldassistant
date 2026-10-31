@@ -339,6 +339,10 @@ func TestSessions_RefreshReplayWithinGrace_ReturnsSamePair(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Refresh(r1): %v", err)
 	}
+	before, err := st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true})
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
 	// The response carrying pair2 was lost; the phone retries with r1.
 	clock.advance(3 * time.Second)
 	replay, err := s.Refresh(ctx, pair1.RefreshToken)
@@ -365,6 +369,20 @@ func TestSessions_RefreshReplayWithinGrace_ReturnsSamePair(t *testing.T) {
 	}
 	if !bytes.Equal(sess.RefreshHash, hashRefreshToken(pair2.RefreshToken)) {
 		t.Fatal("replay rotated the refresh token")
+	}
+	// Nor did it move the rotation time or the session expiry.
+	if !sess.RotatedAt.Time.Equal(before.RotatedAt.Time) || !sess.ExpiresAt.Time.Equal(before.ExpiresAt.Time) {
+		t.Fatalf("replay changed rotated_at/expires_at: %v/%v -> %v/%v",
+			before.RotatedAt.Time, before.ExpiresAt.Time, sess.RotatedAt.Time, sess.ExpiresAt.Time)
+	}
+	// A second lost response: replaying again within the grace still works.
+	clock.advance(3 * time.Second)
+	again, err := s.Refresh(ctx, pair1.RefreshToken)
+	if err != nil {
+		t.Fatalf("second replay of r1 within grace: %v", err)
+	}
+	if again.RefreshToken != pair2.RefreshToken {
+		t.Fatal("second replay did not return pair2's refresh token")
 	}
 	if _, err := s.Refresh(ctx, pair2.RefreshToken); err != nil {
 		t.Fatalf("Refresh(r2) after replay: %v", err)
@@ -407,12 +425,18 @@ func TestSessions_ReplayOfOlderToken_Revokes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Refresh(r1): %v", err)
 	}
-	if _, err := s.Refresh(ctx, pair2.RefreshToken); err != nil {
+	pair3, err := s.Refresh(ctx, pair2.RefreshToken)
+	if err != nil {
 		t.Fatalf("Refresh(r2): %v", err)
 	}
 	// r1 is two rotations old: no grace, even within 120 s.
 	if _, err := s.Refresh(ctx, pair1.RefreshToken); !errors.Is(err, ErrSessionRevoked) {
 		t.Fatalf("Refresh(r1) after two rotations err = %v, want ErrSessionRevoked", err)
+	}
+	// Only one previous hash is kept, so r1 cannot be tied to the session:
+	// the session survives, as before the grace window existed.
+	if _, err := s.Refresh(ctx, pair3.RefreshToken); err != nil {
+		t.Fatalf("Refresh(r3) after stale r1: %v", err)
 	}
 }
 
@@ -453,5 +477,105 @@ func TestSessions_CreateStoresEncryptedRefresh(t *testing.T) {
 	}
 	if got != pair2.RefreshToken {
 		t.Fatal("rotate did not store the new refresh token in refresh_enc")
+	}
+}
+
+// rotatedOnce creates a session and rotates it once, returning the session
+// id, the rotated-away pair and the current pair.
+func rotatedOnce(t *testing.T, s *Sessions, userID uuid.UUID) (uuid.UUID, TokenPair, TokenPair) {
+	t.Helper()
+	ctx := context.Background()
+	sid, pair1, err := s.Create(ctx, userID, "device-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	pair2, err := s.Refresh(ctx, pair1.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh(r1): %v", err)
+	}
+	return sid, pair1, pair2
+}
+
+// wantReplayRevokes asserts that replaying r1 is theft: ErrSessionRevoked
+// and the session deleted.
+func wantReplayRevokes(t *testing.T, s *Sessions, st *store.Store, sid uuid.UUID, r1 string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.Refresh(ctx, r1); !errors.Is(err, ErrSessionRevoked) {
+		t.Fatalf("replay err = %v, want ErrSessionRevoked", err)
+	}
+	if _, err := st.Q.GetSession(ctx, pgtype.UUID{Bytes: sid, Valid: true}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("GetSession err = %v, want pgx.ErrNoRows", err)
+	}
+}
+
+// TestSessions_ReplayWithoutGraceColumns_Revokes: a row rotated before the
+// grace window existed has no rotated_at or no refresh_enc; a replay of its
+// previous token is theft, as before.
+func TestSessions_ReplayWithoutGraceColumns_Revokes(t *testing.T) {
+	for _, tc := range []struct {
+		name, sql string
+	}{
+		{"null rotated_at", "update sessions set rotated_at = null where id = $1"},
+		{"null refresh_enc", "update sessions set refresh_enc = null where id = $1"},
+		{"empty refresh_enc", "update sessions set refresh_enc = ''::bytea where id = $1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, st, clock, userID := newTestSessions(t)
+			sid, pair1, _ := rotatedOnce(t, s, userID)
+			if _, err := st.Pool.Exec(context.Background(), tc.sql, sid); err != nil {
+				t.Fatalf("simulate pre-migration row: %v", err)
+			}
+			clock.advance(3 * time.Second)
+			wantReplayRevokes(t, s, st, sid, pair1.RefreshToken)
+		})
+	}
+}
+
+// TestSessions_ReplayWithFutureRotation_Revokes: if the clock steps back so
+// rotated_at lies in the future, the elapsed time is negative and the replay
+// is not in grace.
+func TestSessions_ReplayWithFutureRotation_Revokes(t *testing.T) {
+	s, st, clock, userID := newTestSessions(t)
+	sid, pair1, _ := rotatedOnce(t, s, userID)
+	clock.advance(-10 * time.Minute)
+	wantReplayRevokes(t, s, st, sid, pair1.RefreshToken)
+}
+
+// TestSessions_ReplayOnExpiredSession_Revokes: within the grace but past the
+// session's expiry, a replay is not answered.
+func TestSessions_ReplayOnExpiredSession_Revokes(t *testing.T) {
+	s, st, clock, userID := newTestSessions(t)
+	sid, pair1, _ := rotatedOnce(t, s, userID)
+	if _, err := st.Pool.Exec(context.Background(),
+		"update sessions set expires_at = $2 where id = $1", sid, clock.now().Add(time.Second)); err != nil {
+		t.Fatalf("shorten expiry: %v", err)
+	}
+	clock.advance(3 * time.Second)
+	wantReplayRevokes(t, s, st, sid, pair1.RefreshToken)
+}
+
+// TestSessions_ReissueThenReplayWithinGrace_ReturnsReissuedPair: Reissue
+// rotates like Refresh, so the pre-reissue token replayed within the grace
+// gets the reissued pair.
+func TestSessions_ReissueThenReplayWithinGrace_ReturnsReissuedPair(t *testing.T) {
+	s, _, clock, userID := newTestSessions(t)
+	ctx := context.Background()
+
+	sid, pair1, err := s.Create(ctx, userID, "device-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	reissued, err := s.Reissue(ctx, sid)
+	if err != nil {
+		t.Fatalf("Reissue: %v", err)
+	}
+	clock.advance(3 * time.Second)
+	replay, err := s.Refresh(ctx, pair1.RefreshToken)
+	if err != nil {
+		t.Fatalf("replay of pre-reissue token within grace: %v", err)
+	}
+	if replay.RefreshToken != reissued.RefreshToken {
+		t.Fatal("replay did not return the reissued refresh token")
 	}
 }

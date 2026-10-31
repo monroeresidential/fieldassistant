@@ -260,12 +260,15 @@ func (s *Sessions) lostRace(ctx context.Context, stale db.Session) (TokenPair, e
 
 // inGrace reports whether sess was rotated at most RefreshGrace ago by the
 // injected clock and is unexpired, so its previous refresh token may be
-// answered with the current pair.
+// answered with the current pair. A rotation with no recorded time or no
+// encrypted token (a row from before the grace window existed), or one
+// apparently in the future (the clock stepped back), is never in grace.
 func (s *Sessions) inGrace(sess db.Session) bool {
 	if !sess.RotatedAt.Valid || len(sess.RefreshEnc) == 0 || s.expired(sess) {
 		return false
 	}
-	return s.now().Sub(sess.RotatedAt.Time) <= RefreshGrace
+	elapsed := s.now().Sub(sess.RotatedAt.Time)
+	return 0 <= elapsed && elapsed <= RefreshGrace
 }
 
 // currentPair returns sess's current refresh token, decrypted from
