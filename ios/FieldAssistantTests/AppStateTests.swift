@@ -364,6 +364,60 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testReauthDuringWaitingResendKeepsDraftAndShowsNote() async throws {
+        // A capture saved with no signal: the transcript still has to be sent for extraction (POST).
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "Need header height",
+                               capturedAt: .now.addingTimeInterval(-600))
+        XCTAssertEqual(draft.status, .waiting)
+        let reauth = APIStub.error(.unauthorized, code: "reauth_required", message: "sign in to Procore again")
+        let transport = ScriptedTransport([
+            .response(APIStub.me(procoreUserID: 42)),
+            .response(reauth),
+            .response(APIStub.tokenPair(access: "acc2", refresh: "ref2")),
+            .response(reauth),
+        ])
+        let store = InMemorySessionStore(validSession())
+        let state = makeState(
+            store: store, transport: transport,
+            presenter: FakeWebAuthPresenter(callback: URL(string: "fieldassistant://auth?code=abc")!),
+            reachability: FakeReachability(isReachable: true)
+        )
+        try state.drafts.insert(draft)
+
+        // A cold background launch: bootstrap, then one pass, whose resend finds Procore signed out.
+        await state.runBackgroundPass()
+        try await waitUntil { state.phase == .signedOut }
+        await settle()
+
+        XCTAssertEqual(state.signOutReason, .procoreSignedOut)
+        XCTAssertEqual(
+            AppState.signInNote(for: state.signOutReason),
+            "Procore signed you out. Sign in again and your drafts will send."
+        )
+        XCTAssertNil(store.current)
+        XCTAssertNil(state.draftSync)
+        XCTAssertEqual(transport.requests.map(\.path), ["/me", "/drafts", "/auth/refresh", "/drafts"],
+                       "the session ended once: no second refresh, nothing sent after it")
+        XCTAssertEqual(draft.status, .waiting, "the draft still waits to be sent")
+        XCTAssertNil(draft.errorMessage, "the ended session cancels the pass, which records nothing on the row")
+
+        // Signing in again runs a pass that sends the waiting draft.
+        transport.append(.response(APIStub.authStartOK()))
+        transport.append(.response(APIStub.tokenPair(access: "acc3", refresh: "ref3")))
+        transport.append(.response(APIStub.me(procoreUserID: 42)))
+        transport.append(.response(APIStub.draft(id: draft.id)))
+
+        await state.signIn()
+        try await waitUntil { draft.status == .draft }
+
+        XCTAssertNil(state.signOutReason)
+        XCTAssertNil(draft.errorMessage)
+        XCTAssertEqual(draft.subject, "Header height at grid C")
+        XCTAssertEqual(Array(transport.requests.map(\.path).suffix(4)), ["/auth/start", "/auth/exchange", "/me", "/drafts"])
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
     func testBootstrapWithStoredSelectionPrefetchesLookups() async throws {
         let transport = RouteTransport()
         transport.route("/me", APIStub.me(lastCompanyID: 7, lastProjectID: 99))
