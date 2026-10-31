@@ -196,13 +196,22 @@ func TestPilotReport_CorrectionsIncludeFilledEmpties(t *testing.T) {
 	if got := report.Corrections(json.RawMessage(a), json.RawMessage(a)); len(got) != 0 {
 		t.Errorf("unchanged = %v, want none", got)
 	}
+	// Reordering a list of IDs is not a correction; changing it is.
+	ids1 := `{"assignee_ids":[11,12],"distribution_ids":["a","b"]}`
+	ids2 := `{"assignee_ids":[12,11],"distribution_ids":["b","a"]}`
+	if got := report.Corrections(json.RawMessage(ids1), json.RawMessage(ids2)); len(got) != 0 {
+		t.Errorf("reordered lists = %v, want none", got)
+	}
+	if got := report.Corrections(json.RawMessage(ids1), json.RawMessage(`{"assignee_ids":[11,13],"distribution_ids":["a","b"]}`)); !reflect.DeepEqual(got, []string{"assignee_ids"}) {
+		t.Errorf("changed list = %v, want [assignee_ids]", got)
+	}
 
 	f := newFixture(t)
 	u := f.user(42, "Pat Field")
-	id := f.draft(draftRow{user: u, status: "reviewed", created: at(2), llm: llm, final: final})
-	// A built draft nobody edited has no corrections: its final payload is
-	// the extraction.
-	untouched := f.draft(draftRow{user: u, status: "extracted", created: at(3), llm: llm})
+	id := f.draft(draftRow{user: u, status: "submitted", created: at(2), llm: llm, final: final, recordID: 701})
+	// A submitted draft nobody edited has no corrections: its final payload
+	// is the extraction.
+	untouched := f.draft(draftRow{user: u, status: "submitted", created: at(3), llm: llm, recordID: 702})
 	s := f.build()
 	if got := s.Corrections.PerDraft[id]; got != 4 {
 		t.Errorf("PerDraft = %d, want 4", got)
@@ -369,7 +378,10 @@ func TestPilotReport_WorstFiveOrdered(t *testing.T) {
 	}
 	// A tie with the 4-correction draft, created later, ranks after it.
 	llm, final := corrected(4)
-	tie := f.draft(draftRow{user: pat, status: "reviewed", created: at(20), llm: llm, final: final})
+	tie := f.draft(draftRow{user: pat, status: "submitted", created: at(20), llm: llm, final: final, recordID: 700})
+	// A heavily edited draft that was never submitted is not a candidate.
+	llm9, final9 := corrected(9)
+	f.draft(draftRow{user: pat, status: "reviewed", created: at(21), llm: llm9, final: final9})
 
 	s := f.build()
 	want := []uuid.UUID{ids[6], ids[5], ids[4], tie, ids[3]}
@@ -393,8 +405,8 @@ func TestPilotReport_WorstFiveOrdered(t *testing.T) {
 	if r := byName["Mike Ross"]; r.Created != 4 || r.Submitted != 4 || r.Corrections != 12 {
 		t.Errorf("Mike Ross = %+v, want created 4, submitted 4, corrections 12", r)
 	}
-	if r := byName["Pat Field"]; r.Created != 4 || r.Submitted != 3 || r.Corrections != 13 {
-		t.Errorf("Pat Field = %+v, want created 4, submitted 3, corrections 13", r)
+	if r := byName["Pat Field"]; r.Created != 5 || r.Submitted != 4 || r.Corrections != 13 {
+		t.Errorf("Pat Field = %+v, want created 5, submitted 4, corrections 13", r)
 	}
 }
 
@@ -437,7 +449,7 @@ func TestPilotReport_MarkdownHasEverySection(t *testing.T) {
 	for _, want := range []string{
 		"2026-11-03T00:00:00Z", "2026-11-10T00:00:00Z",
 		"| Created | 2 |", "| Submitted | 1 |", "procore_validation",
-		"Drafts over two corrections: 1 of 2",
+		"Drafts over two corrections: 1 over 1 submitted drafts", "Built drafts not submitted, left out: 1.",
 		worst.String(), failed.String(), "502",
 		"| p50 | 4.2s |", "| Pushed | 1 |", "procore_refused",
 		`Pat \| Field`, "The steel column at the roof is twisted.", "```json", `"field_2": "x"`,
@@ -467,10 +479,13 @@ func TestPilotReport_MarkdownHasEverySection(t *testing.T) {
 func TestPilotReport_WindowBounds(t *testing.T) {
 	f := newFixture(t)
 	u := f.user(42, "Pat Field")
-	before := f.draft(draftRow{user: u, created: from.Add(-time.Second), llm: `{}`})
-	first := f.draft(draftRow{user: u, created: from, llm: `{}`})
-	last := f.draft(draftRow{user: u, created: to.Add(-time.Second), llm: `{}`})
-	after := f.draft(draftRow{user: u, created: to, llm: `{}`})
+	sub := func(created time.Time, rec int64) uuid.UUID {
+		return f.draft(draftRow{user: u, status: "submitted", created: created, llm: `{}`, recordID: rec})
+	}
+	before := sub(from.Add(-time.Second), 801)
+	first := sub(from, 802)
+	last := sub(to.Add(-time.Second), 803)
+	after := sub(to, 804)
 
 	s := f.build()
 	if s.Drafts.Created != 2 {
@@ -488,5 +503,78 @@ func TestPilotReport_WindowBounds(t *testing.T) {
 	}
 	if s.Window != week {
 		t.Errorf("Window = %+v, want %+v", s.Window, week)
+	}
+}
+
+func TestPilotReport_GateOverSubmittedDrafts(t *testing.T) {
+	f := newFixture(t)
+	u := f.user(42, "Pat Field")
+	llm3, final3 := corrected(3)
+	gated := f.draft(draftRow{user: u, status: "submitted", created: at(1), llm: llm3, final: final3, recordID: 501})
+	// Extracted and never reviewed or submitted: they would score zero and
+	// dilute the ratio.
+	f.draft(draftRow{user: u, status: "extracted", created: at(2), llm: `{"subject":"S"}`})
+	f.draft(draftRow{user: u, status: "extracted", created: at(3), llm: `{"subject":"S"}`})
+	// Reviewed but not submitted: a partial edit, not a final payload.
+	llm4, final4 := corrected(4)
+	f.draft(draftRow{user: u, status: "reviewed", created: at(4), llm: llm4, final: final4})
+
+	s := f.build()
+	if !reflect.DeepEqual(s.Corrections.PerDraft, map[uuid.UUID]int{gated: 3}) {
+		t.Errorf("PerDraft = %v, want only the submitted draft at 3", s.Corrections.PerDraft)
+	}
+	if s.Corrections.DraftsOverTwo != 1 || !reflect.DeepEqual(s.Corrections.Histogram, map[int]int{3: 1}) {
+		t.Errorf("Corrections = %+v, want 1 over two and histogram {3:1}", s.Corrections)
+	}
+	if s.Corrections.BuiltNotSubmitted != 3 || s.Drafts.Built != 4 {
+		t.Errorf("BuiltNotSubmitted = %d, Built = %d, want 3 and 4", s.Corrections.BuiltNotSubmitted, s.Drafts.Built)
+	}
+	if len(s.Worst) != 1 || s.Worst[0].ID != gated {
+		t.Errorf("Worst = %+v, want only the submitted draft", s.Worst)
+	}
+	if len(s.PerUser) != 1 || s.PerUser[0].Corrections != 3 {
+		t.Errorf("PerUser = %+v, want corrections 3", s.PerUser)
+	}
+	md := report.Markdown(s)
+	if !strings.Contains(md, "Drafts over two corrections: 1 over 1 submitted drafts (100%).") {
+		t.Errorf("gate line wrong:\n%s", md)
+	}
+}
+
+func TestPilotReport_DuplicatesScanDraftsByEventWindow(t *testing.T) {
+	f := newFixture(t)
+	u := f.user(42, "Pat Field")
+	early := from.Add(-48 * time.Hour)
+	// Created last week, submitted twice this week, with a mirror twin.
+	twice := f.draft(draftRow{user: u, status: "submitted", created: early, llm: `{"subject":"Old"}`, recordID: 901})
+	f.audit(twice, "attempt", at(1), `{"attempt":1,"subject":"Old"}`, "")
+	f.audit(twice, "submitted", at(1).Add(time.Minute), "", `{}`)
+	f.audit(twice, "submitted", at(1).Add(2*time.Minute), "", `{}`)
+	f.mirrorRFI(u, 901, "Old", 42)
+	f.mirrorRFI(u, 902, "Old", 42)
+	// Created last week, posted this week with no outcome, now failed.
+	open := f.draft(draftRow{user: u, status: "failed", created: early.Add(time.Hour), llm: `{}`, errorCode: "procore_unavailable"})
+	f.audit(open, "attempt", at(2), `{"attempt":1}`, "")
+	// Created and posted last week, still submitting.
+	stuck := f.draft(draftRow{user: u, status: "submitting", created: early.Add(2 * time.Hour), llm: `{}`})
+	f.audit(stuck, "attempt", early.Add(3*time.Hour), `{"attempt":1}`, "")
+	// Last week's business: two submitted events, both before the window.
+	done := f.draft(draftRow{user: u, status: "submitted", created: early.Add(4 * time.Hour), llm: `{}`, recordID: 903})
+	f.audit(done, "submitted", early.Add(5*time.Hour), "", `{}`)
+	f.audit(done, "submitted", early.Add(6*time.Hour), "", `{}`)
+
+	s := f.build()
+	if !reflect.DeepEqual(s.Duplicates.MultipleSubmitted, []uuid.UUID{twice}) {
+		t.Errorf("MultipleSubmitted = %v, want [%v]", s.Duplicates.MultipleSubmitted, twice)
+	}
+	if want := []uuid.UUID{open, stuck}; !reflect.DeepEqual(s.Duplicates.UnknownAttempts, want) {
+		t.Errorf("UnknownAttempts = %v, want %v", s.Duplicates.UnknownAttempts, want)
+	}
+	if len(s.Duplicates.MirrorMatches) != 1 || s.Duplicates.MirrorMatches[0].ProcoreID != 902 || s.Duplicates.MirrorMatches[0].DraftID != twice {
+		t.Errorf("MirrorMatches = %+v, want 902 for %v", s.Duplicates.MirrorMatches, twice)
+	}
+	// The draft counts keep the created_at window.
+	if s.Drafts.Created != 0 || s.Drafts.Submitted != 0 || s.Drafts.Failed != 0 || len(s.PerUser) != 0 {
+		t.Errorf("Drafts = %+v, PerUser = %+v, want nothing created in the window", s.Drafts, s.PerUser)
 	}
 }

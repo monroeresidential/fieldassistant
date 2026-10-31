@@ -4,10 +4,12 @@
 package report
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -31,13 +33,23 @@ type Summary struct {
 		Created, Built, Submitted, Failed int
 		FailedByCode                      map[string]int
 	}
+	// Corrections cover the window's submitted drafts only: a correction is
+	// judged against the final submitted payload, and a draft nobody
+	// finished would score a misleading zero.
 	Corrections struct {
-		// PerDraft has every built draft, with its correction count.
+		// PerDraft has every submitted draft, with its correction count.
 		PerDraft      map[uuid.UUID]int
 		DraftsOverTwo int
-		// Histogram maps a correction count to the drafts that have it.
+		// Histogram maps a correction count to the submitted drafts that
+		// have it.
 		Histogram map[int]int
+		// BuiltNotSubmitted counts built drafts left out because they are
+		// not submitted.
+		BuiltNotSubmitted int
 	}
+	// Duplicates cover the window's drafts plus every draft with an
+	// attempt, submitted or failed event in the window and every draft still
+	// submitting, whenever it was created; the trail is read up to To.
 	Duplicates struct {
 		// MultipleSubmitted are drafts with more than one submitted event.
 		MultipleSubmitted []uuid.UUID
@@ -56,9 +68,11 @@ type Summary struct {
 		Pushed       int
 		FailedByCode map[string]int
 	}
-	// PerUser is sorted by name.
+	// PerUser is sorted by name; Corrections there are over submitted
+	// drafts.
 	PerUser []UserRow
-	// Worst are up to five drafts with the most corrections, most first.
+	// Worst are up to five submitted drafts with the most corrections, most
+	// first.
 	Worst []WorstDraft
 }
 
@@ -113,7 +127,8 @@ const unknownUser = "(unknown user)"
 const worstCount = 5
 
 // Build reads the window's drafts and their trail and summarises them. It
-// issues only selects.
+// issues only selects. Counts and statuses are as of the call; the audit
+// trail is read up to w.To.
 func Build(ctx context.Context, q *db.Queries, w Window) (Summary, error) {
 	var s Summary
 	s.Window = w
@@ -129,14 +144,40 @@ func Build(ctx context.Context, q *db.Queries, w Window) (Summary, error) {
 	if err != nil {
 		return s, fmt.Errorf("report: list drafts: %w", err)
 	}
-	if len(drafts) == 0 {
+	active, err := q.ListDraftsWithSubmitEventsInWindow(ctx, db.ListDraftsWithSubmitEventsInWindowParams{
+		FromAt: pgtype.Timestamptz{Time: w.From, Valid: true},
+		ToAt:   pgtype.Timestamptz{Time: w.To, Valid: true},
+	})
+	if err != nil {
+		return s, fmt.Errorf("report: list drafts with submit events: %w", err)
+	}
+	// dupDrafts are the drafts the duplicate signals look at: the window's
+	// drafts and the active ones, oldest first.
+	dupDrafts := slices.Clone(drafts)
+	inWindow := map[pgtype.UUID]bool{}
+	for _, d := range drafts {
+		inWindow[d.ID] = true
+	}
+	for _, d := range active {
+		if !inWindow[d.ID] {
+			dupDrafts = append(dupDrafts, d)
+		}
+	}
+	slices.SortStableFunc(dupDrafts, func(a, b db.Draft) int {
+		return cmp.Or(a.CreatedAt.Time.Compare(b.CreatedAt.Time), bytes.Compare(a.ID.Bytes[:], b.ID.Bytes[:]))
+	})
+	if len(dupDrafts) == 0 {
 		return s, nil
 	}
 
 	draftIDs := make([]pgtype.UUID, 0, len(drafts))
-	userIDs := []pgtype.UUID{}
 	for _, d := range drafts {
 		draftIDs = append(draftIDs, d.ID)
+	}
+	dupIDs := make([]pgtype.UUID, 0, len(dupDrafts))
+	userIDs := []pgtype.UUID{}
+	for _, d := range dupDrafts {
+		dupIDs = append(dupIDs, d.ID)
 		if !slices.Contains(userIDs, d.UserID) {
 			userIDs = append(userIDs, d.UserID)
 		}
@@ -161,7 +202,7 @@ func Build(ctx context.Context, q *db.Queries, w Window) (Summary, error) {
 	}
 
 	events, err := q.ListAuditEventsForDrafts(ctx, db.ListAuditEventsForDraftsParams{
-		DraftIds: draftIDs,
+		DraftIds: dupIDs,
 		Kinds:    []string{auditSubmitted, auditFailed, auditAttempt},
 		BeforeAt: pgtype.Timestamptz{Time: w.To, Valid: true},
 	})
@@ -204,6 +245,10 @@ func Build(ctx context.Context, q *db.Queries, w Window) (Summary, error) {
 			continue
 		}
 		s.Drafts.Built++
+		if d.Status != statusSubmitted {
+			s.Corrections.BuiltNotSubmitted++
+			continue
+		}
 		fields := Corrections(d.LlmOutput, d.UserPayload)
 		n := len(fields)
 		s.Corrections.PerDraft[id] = n
@@ -222,18 +267,20 @@ func Build(ctx context.Context, q *db.Queries, w Window) (Summary, error) {
 	// drafts are oldest first and the sort is stable, so ties keep that order.
 	sort.SliceStable(worst, func(i, j int) bool { return len(worst[i].Fields) > len(worst[j].Fields) })
 	s.Worst = worst[:min(worstCount, len(worst))]
-	for _, row := range perUser {
-		s.PerUser = append(s.PerUser, *row)
-	}
-	slices.SortStableFunc(s.PerUser, func(a, b UserRow) int {
-		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Created, b.Created))
+	// By name, then user id, so two users sharing a name keep their order
+	// from run to run.
+	userOrder := slices.SortedFunc(maps.Keys(perUser), func(a, b uuid.UUID) int {
+		return cmp.Or(cmp.Compare(perUser[a].Name, perUser[b].Name), bytes.Compare(a[:], b[:]))
 	})
+	for _, id := range userOrder {
+		s.PerUser = append(s.PerUser, *perUser[id])
+	}
 	s.Extraction.N = len(extractMS)
 	s.Extraction.P50 = time.Duration(percentile(extractMS, 0.50)) * time.Millisecond
 	s.Extraction.P95 = time.Duration(percentile(extractMS, 0.95)) * time.Millisecond
 
 	// Duplicates from the trail.
-	for _, d := range drafts {
+	for _, d := range dupDrafts {
 		evs := eventsByDraft[uuid.UUID(d.ID.Bytes)]
 		submitted := 0
 		for _, ev := range evs {
@@ -254,7 +301,7 @@ func Build(ctx context.Context, q *db.Queries, w Window) (Summary, error) {
 	subjectsByDraft := map[uuid.UUID][]string{}
 	var projects []int64
 	var allSubjects []string
-	for _, d := range drafts {
+	for _, d := range dupDrafts {
 		if d.Status != statusSubmitted || !d.ProcoreRecordID.Valid {
 			continue
 		}
@@ -295,7 +342,7 @@ func Build(ctx context.Context, q *db.Queries, w Window) (Summary, error) {
 		if err != nil {
 			return s, fmt.Errorf("report: list mirror RFIs: %w", err)
 		}
-		for _, d := range drafts {
+		for _, d := range dupDrafts {
 			id := uuid.UUID(d.ID.Bytes)
 			subjects, ok := subjectsByDraft[id]
 			if !ok {
@@ -350,6 +397,12 @@ type failedResponse struct {
 // attempt marker is a POST that may have created an RFI unless the event
 // right after it is a rejection of that POST (rejected). Other failures
 // (a timeout, a retry) leave the attempt unknown.
+//
+// The trail here holds only those three kinds, while priorAttempts walks
+// every kind. They agree because RunSubmit writes uploaded events before an
+// attempt marker and edits are locked while a draft is submitting, so no
+// other kind falls between an attempt and its rejection. If that order
+// changes, fetch every kind here.
 func unknownAttempt(evs []db.ListAuditEventsForDraftsRow) bool {
 	rejectedAfter := false
 	for i := len(evs) - 1; i >= 0; i-- {

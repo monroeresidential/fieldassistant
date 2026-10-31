@@ -22,6 +22,7 @@ func Markdown(s Summary) string {
 
 	p("## Window\n\n")
 	p("Drafts created from %s up to, not including, %s.\n\n", stamp(s.Window.From), stamp(s.Window.To))
+	p("Counts and statuses are as of the run; the audit trail is read up to the window's end.\n\n")
 
 	p("## Drafts\n\n")
 	p("| Drafts | Count |\n| --- | --- |\n")
@@ -31,14 +32,15 @@ func Markdown(s Summary) string {
 	countTable(&b, "Code", s.Drafts.FailedByCode)
 
 	p("## Corrections\n\n")
-	p("A correction is a field whose final value differs from the extraction's, including an empty one the user filled; counted per field, not per save.\n\n")
-	built := len(s.Corrections.PerDraft)
-	if built == 0 {
-		p("Drafts over two corrections: none (no built drafts).\n\n")
+	p("A correction is a field whose final submitted value differs from the extraction's, including an empty one the user filled; counted per field, not per save, over submitted drafts only.\n\n")
+	submitted := len(s.Corrections.PerDraft)
+	if submitted == 0 {
+		p("Drafts over two corrections: none (no submitted drafts).\n\n")
 	} else {
-		p("Drafts over two corrections: %d of %d built (%.0f%%).\n\n",
-			s.Corrections.DraftsOverTwo, built, 100*float64(s.Corrections.DraftsOverTwo)/float64(built))
+		p("Drafts over two corrections: %d over %d submitted drafts (%.0f%%).\n\n",
+			s.Corrections.DraftsOverTwo, submitted, 100*float64(s.Corrections.DraftsOverTwo)/float64(submitted))
 	}
+	p("Built drafts not submitted, left out: %d.\n\n", s.Corrections.BuiltNotSubmitted)
 	if len(s.Corrections.Histogram) == 0 {
 		p("Histogram: none\n\n")
 	} else {
@@ -50,7 +52,7 @@ func Markdown(s Summary) string {
 	}
 
 	p("## Duplicates\n\n")
-	p("Expected: none in each list.\n\n")
+	p("Drafts created in the window, plus any draft with an attempt, submitted or failed event in it and any draft still submitting. Expected: none in each list.\n\n")
 	p("### More than one submitted event\n\n")
 	idList(&b, s.Duplicates.MultipleSubmitted)
 	p("### Attempts with an unknown outcome at the window's end\n\n")
@@ -91,7 +93,7 @@ func Markdown(s Summary) string {
 	}
 
 	p("## Worst five\n\n")
-	p("To seed an eval case from one, file it under `internal/features/rfi/evals/pilot/` once Drew confirms the expected values, in the case format of `evals/README.md`: the transcript as `transcript`, the final values of the changed fields as `expect.payload` (or `expect.absent`), and a fixture from the project's lookups.\n\n")
+	p("The submitted drafts with the most corrections. To seed an eval case from one, file it under `internal/features/rfi/evals/pilot/` once Drew confirms the expected values, in the case format of `evals/README.md`: the transcript as `transcript`, the final values of the changed fields as `expect.payload` (or `expect.absent`), and a fixture from the project's lookups.\n\n")
 	if len(s.Worst) == 0 {
 		p("none\n")
 	}

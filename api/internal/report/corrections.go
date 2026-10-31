@@ -2,8 +2,10 @@ package report
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 )
 
@@ -14,7 +16,9 @@ import (
 // missing, null, "", [] or {} (an object whose members are all empty, such
 // as {"status":"no","value":null} against {"status":"no"}, is compared
 // without those members). Nested values such as impacts are compared as
-// values, so one field counts once however many times it was saved.
+// values, so one field counts once however many times it was saved. A list
+// of plain values (IDs, strings) compares as a set of values, so reordering
+// it is not a correction.
 //
 // An empty or null final means the draft was never reviewed: its final
 // payload is the extraction, so there are no corrections. A payload that is
@@ -70,8 +74,17 @@ func normalize(v any) any {
 			return nil
 		}
 		out := make([]any, len(t))
+		scalars := true
 		for i, e := range t {
 			out[i] = normalize(e)
+			switch out[i].(type) {
+			case string, float64, bool:
+			default:
+				scalars = false
+			}
+		}
+		if scalars {
+			slices.SortFunc(out, func(a, b any) int { return cmp.Compare(compact(a), compact(b)) })
 		}
 		return out
 	case map[string]any:

@@ -6,6 +6,20 @@ select * from drafts
 where created_at >= sqlc.arg(from_at) and created_at < sqlc.arg(to_at)
 order by created_at, id;
 
+-- name: ListDraftsWithSubmitEventsInWindow :many
+-- Drafts, whenever created, with an attempt, submitted or failed audit event
+-- in [from, to), plus every draft still submitting: the drafts whose
+-- duplicate signals belong to this window.
+select * from drafts d
+where d.status = 'submitting'
+   or exists (
+     select 1 from audit_events e
+     where e.draft_id = d.id
+       and e.kind in ('attempt', 'submitted', 'failed')
+       and e.created_at >= sqlc.arg(from_at) and e.created_at < sqlc.arg(to_at)
+   )
+order by d.created_at, d.id;
+
 -- name: ListAuditEventsForDrafts :many
 -- The drafts' audit events of the given kinds written before before_at,
 -- in trail order per draft. Payloads of other kinds (extracted turns,
@@ -38,7 +52,8 @@ select distinct on (r.company_id, r.project_id, r.procore_id)
   r.project_id,
   r.procore_id,
   coalesce(r.body->>'subject', '')::text as subject,
-  coalesce((r.body->'created_by'->>'id')::bigint, 0)::bigint as created_by_id
+  (case when r.body->'created_by'->>'id' ~ '^[0-9]+$'
+        then (r.body->'created_by'->>'id')::bigint else 0 end)::bigint as created_by_id
 from user_records r
 where r.kind = 'rfi'
   and r.deleted_at is null

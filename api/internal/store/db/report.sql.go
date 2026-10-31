@@ -157,13 +157,79 @@ func (q *Queries) ListDraftsInWindow(ctx context.Context, arg ListDraftsInWindow
 	return items, nil
 }
 
+const listDraftsWithSubmitEventsInWindow = `-- name: ListDraftsWithSubmitEventsInWindow :many
+select id, company_id, project_id, user_id, feature, status, transcript, captured_at, llm_output, user_payload, unresolved, confidence, model_version, prompt_version, extract_ms, procore_record_id, procore_record_number, procore_url, error_code, error_message, job_id, submit_attempts, created_at, updated_at from drafts d
+where d.status = 'submitting'
+   or exists (
+     select 1 from audit_events e
+     where e.draft_id = d.id
+       and e.kind in ('attempt', 'submitted', 'failed')
+       and e.created_at >= $1 and e.created_at < $2
+   )
+order by d.created_at, d.id
+`
+
+type ListDraftsWithSubmitEventsInWindowParams struct {
+	FromAt pgtype.Timestamptz
+	ToAt   pgtype.Timestamptz
+}
+
+// Drafts, whenever created, with an attempt, submitted or failed audit event
+// in [from, to), plus every draft still submitting: the drafts whose
+// duplicate signals belong to this window.
+func (q *Queries) ListDraftsWithSubmitEventsInWindow(ctx context.Context, arg ListDraftsWithSubmitEventsInWindowParams) ([]Draft, error) {
+	rows, err := q.db.Query(ctx, listDraftsWithSubmitEventsInWindow, arg.FromAt, arg.ToAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Draft
+	for rows.Next() {
+		var i Draft
+		if err := rows.Scan(
+			&i.ID,
+			&i.CompanyID,
+			&i.ProjectID,
+			&i.UserID,
+			&i.Feature,
+			&i.Status,
+			&i.Transcript,
+			&i.CapturedAt,
+			&i.LlmOutput,
+			&i.UserPayload,
+			&i.Unresolved,
+			&i.Confidence,
+			&i.ModelVersion,
+			&i.PromptVersion,
+			&i.ExtractMs,
+			&i.ProcoreRecordID,
+			&i.ProcoreRecordNumber,
+			&i.ProcoreUrl,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.JobID,
+			&i.SubmitAttempts,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMirrorRFIsForProjectSubjects = `-- name: ListMirrorRFIsForProjectSubjects :many
 select distinct on (r.company_id, r.project_id, r.procore_id)
   r.company_id,
   r.project_id,
   r.procore_id,
   coalesce(r.body->>'subject', '')::text as subject,
-  coalesce((r.body->'created_by'->>'id')::bigint, 0)::bigint as created_by_id
+  (case when r.body->'created_by'->>'id' ~ '^[0-9]+$'
+        then (r.body->'created_by'->>'id')::bigint else 0 end)::bigint as created_by_id
 from user_records r
 where r.kind = 'rfi'
   and r.deleted_at is null
