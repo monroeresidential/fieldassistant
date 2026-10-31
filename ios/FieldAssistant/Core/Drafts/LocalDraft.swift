@@ -58,6 +58,18 @@ final class LocalDraft {
     var resultProcoreID: Int64?
     var errorMessage: String?
     var updatedAt: Date
+    /// Submit was tapped and the server has not answered 200 or 202 yet: `SubmitRunner` still owes
+    /// the save, the photo uploads and the POST. Set with `submitting`, which then reads "Queued";
+    /// reconcile leaves a flagged draft alone. The default lets older stores migrate.
+    var submitPending: Bool = false
+    /// The reviewed payload still to PATCH (JSON `RFIDraftPayload` via `LocalDraft.encoder`); nil once saved.
+    var pendingPayloadData: Data?
+    /// When the last queued run was left pending by the server (a 5xx, no answer), so the row reads
+    /// "retrying". Cleared when a later run makes progress or the queued flag clears. The default
+    /// lets older stores migrate.
+    var lastQueueFailureAt: Date?
+    /// The user-facing reason for `lastQueueFailureAt`.
+    var lastQueueFailureMessage: String?
 
     init(
         id: UUID = UUID(),
@@ -86,6 +98,12 @@ final class LocalDraft {
         updatedAt = capturedAt
     }
 
+    /// Forgets the last queued-run failure: a run made progress, or the draft is no longer queued.
+    func clearQueueFailure() {
+        if lastQueueFailureAt != nil { lastQueueFailureAt = nil }
+        if lastQueueFailureMessage != nil { lastQueueFailureMessage = nil }
+    }
+
     var status: LocalDraftStatus {
         get { LocalDraftStatus(rawValue: statusRaw) ?? .waiting }
         set { statusRaw = newValue.rawValue }
@@ -97,7 +115,8 @@ final class LocalDraft {
         set { serverData = newValue.flatMap { try? Self.encoder.encode($0) } }
     }
 
-    /// Records a server response: status, subject, Procore result, any error, and the response itself.
+    /// Records a server response: status, subject, Procore result, any error, each photo's upload
+    /// state, and the response itself.
     func apply(_ response: DraftResponse) {
         status = LocalDraftStatus(server: response.status)
         subject = response.payload.subject
@@ -105,8 +124,30 @@ final class LocalDraft {
         resultURL = response.result?.url
         resultProcoreID = response.result?.procore_id
         errorMessage = response.error?.message
+        applyAttachmentStates(response.attachments)
         server = response
         updatedAt = response.updated_at
+    }
+
+    /// Sets each photo's upload state from the server's attachment list, matched by id. A photo the
+    /// server still has as `pending` keeps its local state; ids the phone does not have are ignored.
+    /// A photo removed on the phone stays removed: the DELETE may not have landed yet, and a stale
+    /// server state must not bring it back.
+    private func applyAttachmentStates(_ attachments: [Components.Schemas.Attachment]) {
+        let byID = Dictionary(attachments.map { ($0.id.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
+        for photo in photos where photo.uploadState != .removed {
+            guard let attachment = byID[photo.id.uuidString.lowercased()] else { continue }
+            switch attachment.state {
+            case .stored, .uploaded:
+                photo.uploadState = .stored
+                photo.failureMessage = nil
+            case .failed:
+                photo.uploadState = .failed
+                photo.failureMessage = attachment.error?.message
+            case .pending:
+                break
+            }
+        }
     }
 
     /// Codes `DraftResponse` the way the API sends it: ISO 8601 dates, with or without fractional seconds.

@@ -179,6 +179,7 @@ final class RecordSync {
         case .permissionDenied: "procore_permission_denied"
         case .reauthRequired: "reauth_required"
         case .validation: "bad_request"
+        case .notFound: "not_found"
         case .server: nil
         }
     }

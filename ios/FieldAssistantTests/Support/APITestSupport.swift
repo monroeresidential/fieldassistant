@@ -96,6 +96,11 @@ enum APIStub {
         """#)
     }
 
+    /// A 200 `Attachment` for a photo upload.
+    static func attachment(id: UUID, filename: String = "photo.jpg", state: String, bytes: Int = 1) -> (HTTPResponse, HTTPBody?) {
+        json(.ok, #"{"id":"\#(id.uuidString.lowercased())","filename":"\#(filename)","bytes":\#(bytes),"state":"\#(state)"}"#)
+    }
+
     /// A 200 `JobStatus` for a submit job.
     static func job(id: String = "job-1", draftID: UUID, status: String) -> (HTTPResponse, HTTPBody?) {
         json(.ok, #"{"id":"\#(id)","draft_id":"\#(draftID.uuidString.lowercased())","status":"\#(status)"}"#)

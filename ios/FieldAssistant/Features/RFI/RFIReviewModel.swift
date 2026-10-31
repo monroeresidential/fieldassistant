@@ -14,11 +14,22 @@ final class RFIReviewModel {
         /// that only carries a `_form` message also lands here with no blocking flags: Submit stays
         /// enabled and the screen shows the message.
         case needsFixes
-        /// The submit is or may be queued but Procore has not confirmed it: the job poll timed out,
-        /// failed or was cancelled, or the connection dropped before the server answered the POST.
-        /// The draft stays `submitting` and Check or the sync settles it from the server.
+        /// The submit is queued but Procore has not confirmed it: the server queued it and the job
+        /// poll timed out, failed or was cancelled (Check or the sync settles it), or the phone has
+        /// not reached the server yet and the sync sends it when there is signal. The draft stays
+        /// `submitting` either way.
         case pending(message: String)
         case failed(APIFailure)
+    }
+
+    /// What "Stop sending" did to a queued draft.
+    enum StopOutcome: Equatable {
+        /// The flag is cleared and the draft is a plain draft again, open for editing.
+        case stopped
+        /// The server already has the submit; its state is applied and nothing is stopped.
+        case alreadySent
+        /// A run for the draft is in progress and owns it; nothing changed.
+        case sending
     }
 
     private(set) var payload: RFIDraftPayload
@@ -35,12 +46,18 @@ final class RFIReviewModel {
     var unresolvedCount: Int { unresolved.filter { $0.blocking && RFIField(serverField: $0.field) != nil }.count }
     /// Flags shown on their rows that do not stop submit.
     var advisoryCount: Int { unresolved.filter { !$0.blocking }.count }
+    /// Submit was tapped and the phone has not yet handed the draft to the server; Review is
+    /// read-only and offers "Stop sending". `LocalDraft` is observable, so views track it.
+    var isQueued: Bool { draft.submitPending }
 
     @ObservationIgnored private let draft: LocalDraft
     @ObservationIgnored private let lookups: LookupStore
     @ObservationIgnored private let service: DraftService
     @ObservationIgnored private let store: DraftStore
+    @ObservationIgnored private let runner: SubmitRunner
     @ObservationIgnored private let submitAsDraftOverride: Bool?
+    /// Whether the phone has a network path, read when "Stop sending" decides to ask the server.
+    @ObservationIgnored private let isReachable: @MainActor () -> Bool
     /// Labels of every candidate the server offered, by lookup kind, so a chosen row keeps its
     /// label after its flag is cleared even when the cached list does not have it.
     @ObservationIgnored private var candidateLabels: [LookupKind: [Int64: String]] = [:]
@@ -48,10 +65,11 @@ final class RFIReviewModel {
     private static let formField = "_form"
     /// The prefix of the backend's 400 when submit finds unresolved fields.
     private static let unresolvedPrefix = "draft has unresolved fields:"
+    /// The draft's error line after Submit was refused for unresolved fields, which the rows flag.
+    static let fixFlaggedMessage = "Fix the flagged fields and submit again."
     private static let pendingMessage = "Procore has not confirmed the RFI yet; it will update automatically."
-    private static let connectionLostMessage = "The connection dropped while sending. Tap Check to see whether Procore has the RFI."
-    /// The backend's 400 for a save on a draft that is submitting or submitted (`ErrDraftLocked`).
-    private static let lockedMessage = "draft is submitted or being submitted"
+    /// The submit is on the phone, waiting for the runner to reach the server.
+    static let queuedMessage = "Queued. It sends on its own when you have signal."
     private static let alreadySendingMessage = "This RFI is already being saved or sent."
 
     init(
@@ -60,12 +78,16 @@ final class RFIReviewModel {
         lookups: LookupStore,
         service: DraftService,
         store: DraftStore,
-        submitAsDraftOverride: Bool?
+        runner: SubmitRunner,
+        submitAsDraftOverride: Bool?,
+        isReachable: @escaping @MainActor () -> Bool = { true }
     ) {
         self.draft = draft
+        self.isReachable = isReachable
         self.lookups = lookups
         self.service = service
         self.store = store
+        self.runner = runner
         self.submitAsDraftOverride = submitAsDraftOverride
         payload = response.payload
         unresolved = response.unresolved.filter { $0.field != Self.formField }
@@ -176,13 +198,22 @@ final class RFIReviewModel {
         return await persist()
     }
 
-    /// Saves (the server validates again), queues the submit and waits for the job. Does nothing
-    /// while a save or submit is already running.
+    /// Saves (the server validates again), then queues the submit on the phone and runs it: the
+    /// runner uploads the photos, posts the submit and waits for the job. With no signal the draft
+    /// stays queued and the sync sends it later. Does nothing while a save or submit is already running.
     func submit() async -> SubmitOutcome {
         guard !isSubmitting, !isSaving else { return .pending(message: Self.alreadySendingMessage) }
         isSubmitting = true
         defer { isSubmitting = false }
-        if let failure = await persist() { return .failed(failure) }
+        if let failure = await persist() {
+            switch failure {
+            case .offline, .server:
+                // No answer: the payload waits on the phone and the runner saves it first.
+                break
+            case .validation, .permissionDenied, .reauthRequired, .notFound:
+                return .failed(failure)
+            }
+        }
         // The save found the draft already sent (a submit whose answer was lost); report where it stands.
         switch draft.status {
         case .submitted:
@@ -193,45 +224,88 @@ final class RFIReviewModel {
             break
         }
 
-        let previous = draft.status
         draft.status = .submitting
+        draft.submitPending = true
         // Sync leaves a submit this recent alone: until the POST lands the server still says `reviewed`.
         draft.updatedAt = .now
         try? store.save()
 
-        let start: DraftService.SubmitStart
-        do {
-            start = try await service.submit(id: draft.id, companyID: draft.companyID)
-        } catch {
-            let failure = APIFailure(error)
-            switch failure {
-            case .validation, .permissionDenied, .reauthRequired:
-                // The server answered and refused: nothing was queued, so the draft goes back.
-                draft.status = previous
+        switch await runner.run(draft) {
+        case .accepted(let response?):
+            return takeAccepted(response)
+        case .accepted(nil):
+            // Queued on the server, but the phone has no copy of the draft to show.
+            return .pending(message: Self.pendingMessage)
+        case .stillPending:
+            return .pending(message: Self.queuedMessage)
+        case .refused(let failure):
+            if case .validation(let message) = failure, message.hasPrefix(Self.unresolvedPrefix) {
+                // The rows show which fields; the draft's line says what to do rather than the server's list.
+                draft.errorMessage = Self.fixFlaggedMessage
                 try? store.save()
-                if case .validation(let message) = failure, flagFields(from: message) { return .needsFixes }
-                return .failed(failure)
-            case .offline, .server:
-                // No definitive answer: the POST may have reached the server and queued the submit.
-                // The draft stays `submitting`; Check or the sync settles it from the server.
-                return .pending(message: Self.connectionLostMessage)
+            }
+            if case .validation(let message) = failure, flagFields(from: message) { return .needsFixes }
+            return .failed(failure)
+        case .photoFailed:
+            // The failed photo's tile says what to fix.
+            return .needsFixes
+        }
+    }
+
+    // MARK: - Queued drafts
+
+    /// Takes back a queued submit. Refused while a run for the draft is in progress. With signal
+    /// the server is asked first: if it already has the draft `submitting` or `submitted` (a POST
+    /// whose answer was lost), its state is applied and nothing is stopped. Otherwise, or with no
+    /// signal, the flag is cleared and the draft becomes a plain draft again; the reviewed payload
+    /// stays on the phone for the next save. With no signal, a POST that did land shows up later
+    /// as a locked save, which takes the server's state, so no path sends the RFI twice.
+    func stopSending() async -> StopOutcome {
+        guard !runner.isRunning(draft.id) else { return .sending }
+        if isReachable(), let response = try? await service.get(id: draft.id, companyID: draft.companyID) {
+            switch response.status {
+            case .submitting, .submitted:
+                // The server no longer takes edits, so nothing is left to save.
+                draft.pendingPayloadData = nil
+                draft.submitPending = false
+                draft.clearQueueFailure()
+                take(response)
+                if response.status == .submitted { DraftFiles.removeAll(for: draft.id) }
+                return .alreadySent
+            case .extracted, .reviewed, .failed:
+                break
             }
         }
+        // A pass may have started while the server was asked.
+        guard !runner.isRunning(draft.id) else { return .sending }
+        guard draft.submitPending else { return .stopped }
+        draft.submitPending = false
+        draft.clearQueueFailure()
+        draft.status = .draft
+        try? store.save()
+        return .stopped
+    }
 
-        let response: DraftResponse
-        switch start {
-        case .submitted(let submitted):
-            response = submitted
-        case .running(let jobID):
-            do {
-                response = try await service.waitForJob(id: jobID, draftID: draft.id, companyID: draft.companyID)
-            } catch {
-                // The job is queued, so a failed poll says nothing about the RFI: the draft stays
-                // `submitting` and Check or the sync settles it.
-                return .pending(message: Self.pendingMessage)
-            }
+    /// Takes a photo off the draft: marked `removed` and its file deleted now; the runner sends
+    /// the DELETE before the next submit and then drops the row. When that photo's failure was
+    /// all that stopped the draft, the draft is a plain draft again and Submit is open.
+    func removePhoto(_ photo: LocalPhoto) {
+        guard !isQueued, !isSubmitting, photo.uploadState != .removed else { return }
+        // A photo can fail with no server message; the runner then wrote its own line on the draft.
+        let message = photo.failureMessage ?? SubmitRunner.photoRefusedMessage
+        try? FileManager.default.removeItem(at: DraftFiles.photoURL(draftID: draft.id, fileName: photo.fileName))
+        photo.uploadState = .removed
+        photo.failureMessage = nil
+        let otherFailed = draft.photos.contains { $0.uploadState == .failed }
+        if draft.status == .failed, !otherFailed, draft.errorMessage == message {
+            draft.status = .draft
+            draft.errorMessage = nil
         }
+        try? store.save()
+    }
 
+    /// Takes the server's answer to an accepted submit and says what it means for the screen.
+    private func takeAccepted(_ response: DraftResponse) -> SubmitOutcome {
         take(response)
         switch response.status {
         case .submitted:
@@ -251,18 +325,24 @@ final class RFIReviewModel {
     // MARK: - Private
 
     /// Writes the payload to the phone, then PATCHes it. The local copy goes first so a failed
-    /// request (offline is the normal jobsite case) still keeps the edits on the phone.
+    /// request (offline is the normal jobsite case) still keeps the edits on the phone, and
+    /// `pendingPayloadData` holds it until a PATCH lands, so a queued submit saves it first.
     private func persist() async -> APIFailure? {
         if let submitAsDraftOverride { payload.draft = submitAsDraftOverride }
         storeLocally()
         let sent = payload
+        draft.pendingPayloadData = try? LocalDraft.encoder.encode(sent)
+        try? store.save()
         do {
             let response = try await service.save(id: draft.id, companyID: draft.companyID, payload: sent)
             take(response, sent: sent)
+            // Edits made while the PATCH was out are still owed to the server.
+            draft.pendingPayloadData = payload == sent ? nil : try? LocalDraft.encoder.encode(payload)
+            try? store.save()
             return nil
         } catch {
             let failure = APIFailure(error)
-            guard failure == .validation(Self.lockedMessage) else { return failure }
+            guard failure == .validation(SubmitRunner.lockedMessage) else { return failure }
             return await refreshLocked()
         }
     }
@@ -273,6 +353,8 @@ final class RFIReviewModel {
     private func refreshLocked() async -> APIFailure? {
         do {
             let response = try await service.get(id: draft.id, companyID: draft.companyID)
+            // The server no longer takes edits, so nothing is left to save.
+            draft.pendingPayloadData = nil
             take(response)
             if draft.status == .submitted { DraftFiles.removeAll(for: draft.id) }
             return nil

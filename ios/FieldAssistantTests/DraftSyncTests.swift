@@ -3,6 +3,7 @@ import Foundation
 import HTTPTypes
 import OpenAPIRuntime
 import SwiftData
+import UIKit
 import XCTest
 @testable import FieldAssistant
 
@@ -243,6 +244,39 @@ final class DraftSyncTests: XCTestCase {
     }
 
     @MainActor
+    func testPassHoldsBackgroundGraceUntilItEnds() async throws {
+        let draft = waitingDraft(transcript: "first", minutesAgo: 2)
+        let transport = ScriptedTransport([.response(APIStub.draft(id: draft.id))])
+        let grace = FakeGrace()
+        let (_, sync) = makeSync(transport: transport, drafts: [draft], grace: grace)
+
+        await sync.runOnce()
+
+        XCTAssertEqual(grace.begun.count, 1, "the pass asks for the grace period")
+        XCTAssertEqual(grace.ended, grace.begun, "and gives it back when it ends")
+        XCTAssertEqual(draft.status, .draft)
+    }
+
+    @MainActor
+    func testGraceExpiryCancelsThePass() async throws {
+        let first = waitingDraft(transcript: "first", minutesAgo: 2)
+        let second = waitingDraft(transcript: "second", minutesAgo: 1)
+        let transport = ScriptedTransport([.hang])
+        let grace = FakeGrace()
+        let (_, sync) = makeSync(transport: transport, drafts: [first, second], grace: grace)
+
+        let run = Task { await sync.runOnce() }
+        try await waitUntil { transport.requests.count == 1 }
+        grace.expire()
+        await run.value
+
+        XCTAssertEqual(transport.requests.count, 1, "an expired grace period ends the pass")
+        XCTAssertEqual(first.status, .waiting)
+        XCTAssertNil(first.errorMessage, "a cancelled pass records nothing")
+        XCTAssertEqual(grace.ended, grace.begun, "the grace period is ended exactly once")
+    }
+
+    @MainActor
     func testSignInStartsSyncAndSignOutStopsIt() async throws {
         let transport = ScriptedTransport([.response(APIStub.me(procoreUserID: 42)), .response((HTTPResponse(status: .noContent), nil))])
         let state = makeState(transport: transport, reachability: FakeReachability(isReachable: true))
@@ -255,7 +289,153 @@ final class DraftSyncTests: XCTestCase {
         XCTAssertNil(state.draftSync, "sync stops when the session ends")
     }
 
+    @MainActor
+    func testQueuedDraftRunsWhenReachable() async throws {
+        let draft = queuedDraft(transcript: "queued", minutesAgo: 5)
+        let transport = ScriptedTransport([
+            .response(APIStub.submit(.ok, draftID: draft.id)),
+            .response(APIStub.draft(id: draft.id, status: "submitted")),
+        ])
+        let reachability = FakeReachability(isReachable: false)
+        let (_, sync) = makeSync(transport: transport, reachability: reachability, drafts: [draft])
+
+        sync.start()
+        await settle()
+        XCTAssertTrue(transport.requests.isEmpty, "a queued draft waits for a network path")
+        XCTAssertTrue(draft.submitPending)
+
+        reachability.set(true)
+        try await waitUntil { draft.status == .submitted }
+
+        let path = "/drafts/\(draft.id.uuidString.lowercased())"
+        XCTAssertEqual(transport.requests.map(\.method), [.post, .get])
+        XCTAssertEqual(transport.requests.map(\.path), [path + "/submit", path])
+        XCTAssertFalse(draft.submitPending)
+        sync.stop()
+    }
+
+    @MainActor
+    func testReconcileSkipsPendingDraft() async throws {
+        // A queued draft whose run is in flight (Review started it): the server still says
+        // `reviewed` until the POST lands, so reconcile must not fold it back to `draft`.
+        let draft = queuedDraft(transcript: "queued", minutesAgo: 10)
+        let transport = ScriptedTransport([.hang, .response(APIStub.draft(id: draft.id, status: "reviewed"))])
+        let (state, sync) = makeSync(transport: transport, drafts: [draft])
+        let run = Task { _ = await state.submitRunner.run(draft) }
+        try await waitUntil { transport.requests.count == 1 }
+        XCTAssertTrue(sync.isRunning(draftID: draft.id))
+
+        await sync.runOnce()
+
+        XCTAssertEqual(transport.requests.count, 1, "the running draft is neither run again nor fetched")
+        XCTAssertEqual(draft.status, .submitting)
+        XCTAssertTrue(draft.submitPending)
+        run.cancel()
+        await run.value
+    }
+
+    @MainActor
+    func testQueuedDraftOnlyRunsForItsOwner() async throws {
+        let mine = queuedDraft(transcript: "mine", minutesAgo: 5)
+        let theirs = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 43, status: .submitting, transcript: "theirs",
+                                capturedAt: .now.addingTimeInterval(-600))
+        theirs.submitPending = true
+        let transport = ScriptedTransport([
+            .response(APIStub.submit(.ok, draftID: mine.id)),
+            .response(APIStub.draft(id: mine.id, status: "submitted")),
+        ])
+        let (_, sync) = makeSync(transport: transport, drafts: [mine, theirs])
+
+        await sync.runOnce()
+
+        XCTAssertEqual(mine.status, .submitted)
+        XCTAssertFalse(mine.submitPending)
+        XCTAssertEqual(theirs.status, .submitting)
+        XCTAssertTrue(theirs.submitPending)
+        XCTAssertEqual(transport.requests.count, 2)
+    }
+
+    @MainActor
+    func testQueuedRunStopsPassWhenOffline() async throws {
+        let first = queuedDraft(transcript: "first", minutesAgo: 10)
+        let second = queuedDraft(transcript: "second", minutesAgo: 5)
+        // Not queued: a submit the server owns, which reconcile would otherwise fetch.
+        let owned = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "owned",
+                               capturedAt: .now.addingTimeInterval(-900))
+        let transport = ScriptedTransport([.failure(URLError(.notConnectedToInternet))])
+        let (_, sync) = makeSync(transport: transport, drafts: [first, second, owned])
+
+        await sync.runOnce()
+
+        XCTAssertEqual(transport.requests.count, 1, "the pass ends at the first offline failure")
+        XCTAssertEqual(transport.requests.first?.path, "/drafts/\(first.id.uuidString.lowercased())/submit")
+        XCTAssertTrue(first.submitPending)
+        XCTAssertTrue(second.submitPending)
+        XCTAssertEqual(first.status, .submitting)
+        XCTAssertEqual(owned.status, .submitting)
+    }
+
+    @MainActor
+    func testQueuedServerFailureSkipsToNextDraft() async throws {
+        let first = queuedDraft(transcript: "first", minutesAgo: 10)
+        let photoID = UUID()
+        first.photos.append(LocalPhoto(id: photoID, fileName: "a.jpg", bytes: 4, createdAt: first.capturedAt))
+        let folder = try DraftFiles.directory(for: first.id)
+        defer { DraftFiles.removeAll(for: first.id) }
+        try Data([0xFF, 0xD8, 0xFF, 0xD9]).write(to: folder.appending(path: "a.jpg"))
+        let second = queuedDraft(transcript: "second", minutesAgo: 5)
+        let transport = ScriptedTransport([
+            .response(APIStub.error(.internalServerError, code: "internal", message: "Something broke")),
+            .response(APIStub.submit(.ok, draftID: second.id)),
+            .response(APIStub.draft(id: second.id, status: "submitted")),
+        ])
+        let (_, sync) = makeSync(transport: transport, drafts: [first, second])
+
+        await sync.runOnce()
+
+        XCTAssertEqual(transport.requests.map(\.method), [.put, .post, .get])
+        XCTAssertTrue(first.submitPending, "the failing draft retries on the next pass")
+        XCTAssertEqual(first.status, .submitting)
+        XCTAssertNil(first.errorMessage)
+        XCTAssertEqual(second.status, .submitted)
+        XCTAssertFalse(second.submitPending)
+    }
+
+    @MainActor
+    func testSignOutCancelsRunningSubmit() async throws {
+        let draft = queuedDraft(transcript: "queued", minutesAgo: 5)
+        let transport = ScriptedTransport([.hang, .response((HTTPResponse(status: .noContent), nil))])
+        let state = makeState(transport: transport, reachability: FakeReachability(isReachable: true))
+        self.state = state
+        try state.drafts.insert(draft)
+        let run = Task { await state.submitRunner.run(draft) == .stillPending(.server) }
+        try await waitUntil { transport.requests.count == 1 }
+        XCTAssertTrue(state.submitRunner.isRunning(draft.id))
+
+        await state.signOut()
+
+        XCTAssertFalse(state.submitRunner.isRunning(draft.id), "no run continues under the next user")
+        let endedPending = await run.value
+        XCTAssertTrue(endedPending)
+        XCTAssertTrue(draft.submitPending, "the draft stays queued for its owner")
+        XCTAssertEqual(draft.status, .submitting)
+    }
+
     // MARK: - Helpers
+
+    /// A draft Submit has queued: `submitting` with the flag set, last touched `minutesAgo`.
+    private func queuedDraft(transcript: String, minutesAgo: Double) -> LocalDraft {
+        let draft = LocalDraft(
+            companyID: 7,
+            projectID: 99,
+            ownerProcoreUserID: 42,
+            status: .submitting,
+            transcript: transcript,
+            capturedAt: Date.now.addingTimeInterval(-minutesAgo * 60)
+        )
+        draft.submitPending = true
+        return draft
+    }
 
     private func waitingDraft(transcript: String, minutesAgo: Double) -> LocalDraft {
         LocalDraft(
@@ -274,7 +454,8 @@ final class DraftSyncTests: XCTestCase {
         transport: ClientTransport,
         reachability: FakeReachability = FakeReachability(isReachable: true),
         drafts: [LocalDraft],
-        owner: Int64? = 42
+        owner: Int64? = 42,
+        grace: BackgroundGrace? = nil
     ) -> (AppState, DraftSync) {
         let state = makeState(transport: transport, reachability: reachability)
         self.state = state
@@ -283,9 +464,11 @@ final class DraftSyncTests: XCTestCase {
         let sync = DraftSync(
             store: state.drafts,
             service: { DraftService(client: client) },
+            runner: state.submitRunner,
             reachability: reachability,
             owner: { owner },
-            send: { [weak state] draft in await state?.send(draft) ?? .waiting }
+            send: { [weak state] draft in await state?.send(draft) ?? .waiting },
+            grace: grace
         )
         return (state, sync)
     }
@@ -318,6 +501,33 @@ final class DraftSyncTests: XCTestCase {
             guard ContinuousClock.now < deadline else { return XCTFail("condition not met in time") }
             try await Task.sleep(for: .milliseconds(10))
         }
+    }
+}
+
+/// A `BackgroundGrace` that records each grace period and can expire the open ones.
+@MainActor
+final class FakeGrace: BackgroundGrace {
+    private(set) var begun: [UIBackgroundTaskIdentifier] = []
+    private(set) var ended: [UIBackgroundTaskIdentifier] = []
+    private var handlers: [UIBackgroundTaskIdentifier: @MainActor @Sendable () -> Void] = [:]
+    private var next = 1
+
+    func begin(name: String, expired: @escaping @MainActor @Sendable () -> Void) -> UIBackgroundTaskIdentifier {
+        let identifier = UIBackgroundTaskIdentifier(rawValue: next)
+        next += 1
+        begun.append(identifier)
+        handlers[identifier] = expired
+        return identifier
+    }
+
+    func end(_ identifier: UIBackgroundTaskIdentifier) {
+        ended.append(identifier)
+        handlers[identifier] = nil
+    }
+
+    /// The system ends every open grace period.
+    func expire() {
+        for handler in Array(handlers.values) { handler() }
     }
 }
 

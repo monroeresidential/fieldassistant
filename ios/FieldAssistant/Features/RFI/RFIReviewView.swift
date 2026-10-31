@@ -97,7 +97,9 @@ struct ReviewScreen: View {
             lookups: appState.lookups,
             service: appState.draftService,
             store: appState.drafts,
-            submitAsDraftOverride: appState.settings.submitAsDraft
+            runner: appState.submitRunner,
+            submitAsDraftOverride: appState.settings.submitAsDraft,
+            isReachable: { [reachability = appState.reachability] in reachability.isReachable }
         )
         load = .ready(draft, model)
     }
@@ -159,6 +161,7 @@ struct RFIReviewView: View {
     /// Set while Procore has not confirmed a submit; the screen stays read-only until it does.
     @State private var pendingMessage: String?
     @State private var isRechecking = false
+    @State private var isStopping = false
     @State private var failure: APIFailure?
     @State private var saveNote: String?
     @State private var scrollTarget: RFIField?
@@ -183,8 +186,14 @@ struct RFIReviewView: View {
         _pendingMessage = State(initialValue: draft.status == .submitting ? Self.sendingMessage : nil)
     }
 
-    /// Editing stops while a save or submit runs and while a submit waits for Procore.
-    private var isLocked: Bool { model.isSaving || model.isSubmitting || pendingMessage != nil }
+    /// Editing stops while a save or submit runs, while a submit is queued on the phone, and
+    /// while a submit waits for Procore.
+    private var isLocked: Bool { model.isSaving || model.isSubmitting || model.isQueued || pendingMessage != nil }
+
+    /// Photos the server refused; Submit waits until each is removed.
+    private var failedPhotos: [LocalPhoto] {
+        draft.photos.inCaptureOrder().filter { $0.uploadState == .failed }
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -215,15 +224,21 @@ struct RFIReviewView: View {
         }
         .background(Theme.Color.ground.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ReviewFooter(
-                blockingCount: model.unresolvedCount,
-                isSubmitting: model.isSubmitting,
-                onSave: { Task { await save() } },
-                onSubmit: { Task { await submit() } }
-            ) {
-                footerNotes
+            // An inline submit keeps its spinner; the queued footer is for a submit left waiting.
+            if model.isQueued, !model.isSubmitting {
+                queuedFooter
+            } else {
+                ReviewFooter(
+                    blockingCount: model.unresolvedCount + failedPhotos.count,
+                    failedPhotoCount: failedPhotos.count,
+                    isSubmitting: model.isSubmitting,
+                    onSave: { Task { await save() } },
+                    onSubmit: { Task { await submit() } }
+                ) {
+                    footerNotes
+                }
+                .disabled(model.isSaving || pendingMessage != nil)
             }
-            .disabled(model.isSaving || pendingMessage != nil)
         }
         // The back link replaces the system bar; the edge swipe still pops.
         .toolbar(.hidden, for: .navigationBar)
@@ -269,7 +284,7 @@ struct RFIReviewView: View {
                     .padding(.top, 8)
                     .accessibilityLabel("Procore says: \(formMessage)")
             }
-            if let pendingMessage {
+            if let pendingMessage, !model.isQueued {
                 HStack(spacing: 12) {
                     ProgressView()
                         .tint(Theme.Color.tertiary)
@@ -354,6 +369,39 @@ struct RFIReviewView: View {
         }
     }
 
+    /// A queued draft's footer in place of Save and Submit: the Queued tag, the queued note, and
+    /// "Stop sending", which is off while a pass for the draft is running.
+    private var queuedFooter: some View {
+        let running = appState.submitRunner.isRunning(draft.id)
+        return VStack(spacing: 0) {
+            HairlineDivider()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    StatusTag(.queued)
+                    Spacer(minLength: 0)
+                    Button {
+                        Task { await stop() }
+                    } label: {
+                        if isStopping { ProgressView().tint(Theme.Color.tertiary) } else { Text("Stop sending") }
+                    }
+                    .buttonStyle(TextLinkButtonStyle())
+                    .frame(minWidth: 44)
+                    .disabled(running || isStopping)
+                    .accessibilityLabel("Stop sending")
+                    .accessibilityHint(running ? "Sending now; try again when it stops" : "Keeps the RFI on the phone so you can edit it")
+                }
+                Text(RFIReviewModel.queuedMessage)
+                    .textStyle(Theme.Text.meta13)
+                    .foregroundStyle(Theme.Color.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+        }
+        .background(Theme.Color.ground.ignoresSafeArea())
+    }
+
     static func needsYou(_ count: Int) -> String {
         count == 1 ? "1 field needs you" : "\(count) fields need you"
     }
@@ -407,21 +455,33 @@ struct RFIReviewView: View {
         }
     }
 
+    /// The photos in capture order: the ones on their way as 64 pt tiles, each one the server
+    /// refused as a flagged tile with the reason and "Remove". Removed photos are gone from view.
     @ViewBuilder
     private var photosRow: some View {
-        let photos = draft.photos.sorted { $0.createdAt < $1.createdAt }
+        let photos = draft.photos.inCaptureOrder().filter { $0.uploadState != .removed }
+        let sending = photos.filter { $0.uploadState != .failed }
         if !photos.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HairlineDivider()
                 VStack(alignment: .leading, spacing: 10) {
                     Kicker("Photos · \(photos.count)", style: .label, color: Theme.Color.tertiary)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(photos) { photo in
-                                PhotoThumbnail(url: DraftFiles.photoURL(draftID: draft.id, fileName: photo.fileName), side: 64)
-                                    .accessibilityLabel("Photo")
+                    if !sending.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(sending) { photo in
+                                    PhotoThumbnail(url: DraftFiles.photoURL(draftID: draft.id, fileName: photo.fileName), side: 64)
+                                        .accessibilityLabel("Photo")
+                                }
                             }
                         }
+                    }
+                    ForEach(photos.filter { $0.uploadState == .failed }) { photo in
+                        FailedPhotoTile(
+                            url: DraftFiles.photoURL(draftID: draft.id, fileName: photo.fileName),
+                            message: photo.failureMessage ?? SubmitRunner.photoRefusedMessage,
+                            onRemove: { model.removePhoto(photo) }
+                        )
                     }
                 }
                 .padding(.vertical, 14)
@@ -678,6 +738,22 @@ struct RFIReviewView: View {
         }
     }
 
+    private func stop() async {
+        guard !isStopping else { return }
+        isStopping = true
+        defer { isStopping = false }
+        saveNote = nil
+        switch await model.stopSending() {
+        case .stopped:
+            pendingMessage = nil
+        case .alreadySent:
+            pendingMessage = Self.sendingMessage
+            saveNote = "Already sent"
+        case .sending:
+            break
+        }
+    }
+
     private func recheck() async {
         isRechecking = true
         defer { isRechecking = false }
@@ -705,6 +781,48 @@ private struct EditableRow<Content: View>: View {
                 content()
             }
         }
+    }
+}
+
+/// A photo the server refused: the flagged card's tokens (brand bar, flagged ground), the
+/// thumbnail, "Couldn't send" with the reason beneath in 12, and "Remove".
+private struct FailedPhotoTile: View {
+    let url: URL
+    let message: String
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(Theme.Color.brand)
+                .frame(width: 4)
+                .accessibilityHidden(true)
+            HStack(alignment: .top, spacing: 12) {
+                PhotoThumbnail(url: url, side: 64)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Couldn't send")
+                            .textStyle(Theme.Text.meta13Medium)
+                            .foregroundStyle(Theme.Color.accent)
+                        Text(message)
+                            .textStyle(Theme.Text.meta12)
+                            .foregroundStyle(Theme.Color.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Photo couldn't send: \(message)")
+                    Button("Remove", action: onRemove)
+                        .buttonStyle(TextLinkButtonStyle(size: 13))
+                        .accessibilityLabel("Remove photo")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(12)
+        }
+        .background(Theme.Color.flaggedBackground)
+        .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 8, topTrailingRadius: 8))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -843,6 +961,7 @@ private struct ImpactControl: View {
         lookups: appState.lookups,
         service: appState.draftService,
         store: appState.drafts,
+        runner: appState.submitRunner,
         submitAsDraftOverride: nil
     )
     return NavigationStack {

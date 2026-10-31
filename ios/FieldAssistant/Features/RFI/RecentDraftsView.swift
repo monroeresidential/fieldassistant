@@ -73,14 +73,54 @@ struct RecentDraftsView: View {
     }
 }
 
-/// The meta line under a draft's title: "RFI · 2:14 PM · 3 photos".
+/// Where a draft queued on the phone (`submitPending`) stands, for its row. The status tag already
+/// reads "Queued", so the meta line only adds why it has not gone yet.
+enum QueuedState: Equatable {
+    case waitingForSignal, sending, retrying, queued
+
+    /// `nil` when the draft is not queued. No signal wins over a run in progress (the run is about
+    /// to stop), a run in progress over a retry after a server failure (`failed`, from
+    /// `LocalDraft.lastQueueFailureAt`), and that over plain Queued.
+    init?(submitPending: Bool, reachable: Bool, running: Bool, failed: Bool = false) {
+        guard submitPending else { return nil }
+        if !reachable {
+            self = .waitingForSignal
+        } else if running {
+            self = .sending
+        } else if failed {
+            self = .retrying
+        } else {
+            self = .queued
+        }
+    }
+
+    var segments: [String] {
+        switch self {
+        case .waitingForSignal: ["waiting for signal"]
+        case .sending: ["sending"]
+        case .retrying: ["retrying"]
+        case .queued: []
+        }
+    }
+}
+
+/// The meta line under a draft's title: "RFI · 2:14 PM · 3 photos", then where a queued draft
+/// stands: "· waiting for signal".
 enum DraftRowMeta {
     /// The feature upper-cased; the capture time today, "Yesterday" the day before, otherwise the
-    /// weekday; the photo count only when there are photos. Formats with the calendar's locale
-    /// and time zone.
-    static func line(feature: String, capturedAt: Date, photos: Int, now: Date, calendar: Calendar = .current) -> String {
+    /// weekday; the photo count only when there are photos; the queued state when there is one.
+    /// Formats with the calendar's locale and time zone.
+    static func line(
+        feature: String,
+        capturedAt: Date,
+        photos: Int,
+        queued: QueuedState? = nil,
+        now: Date,
+        calendar: Calendar = .current
+    ) -> String {
         var segments = [feature.uppercased(), when(capturedAt, now: now, calendar: calendar)]
         if photos > 0 { segments.append(photos == 1 ? "1 photo" : "\(photos) photos") }
+        if let queued { segments += queued.segments }
         return segments.joined(separator: " · ")
     }
 
@@ -108,6 +148,24 @@ struct DraftRow: View {
     let draft: LocalDraft
     var showsDetail = false
 
+    @Environment(AppState.self) private var appState
+
+    /// Where a queued draft stands. Reachability, the runner and the draft are all observed, so the
+    /// row moves between waiting, sending, retrying and plain Queued on its own.
+    private var queued: QueuedState? {
+        QueuedState(
+            submitPending: draft.submitPending,
+            reachable: appState.reachability.isReachable,
+            running: appState.submitRunner.isRunning(draft.id),
+            failed: draft.lastQueueFailureAt != nil
+        )
+    }
+
+    /// Photos the user removed are on their way out and are not counted.
+    private var photoCount: Int {
+        draft.photos.filter { $0.uploadState != .removed }.count
+    }
+
     private static let metaStyle = Theme.TextStyle(12, .regular, relativeTo: .caption, monospacedDigits: true)
     private static let emphasisStyle = Theme.TextStyle(12, .medium, relativeTo: .caption)
 
@@ -125,7 +183,7 @@ struct DraftRow: View {
                     .foregroundStyle(Theme.Color.textPrimary)
                     .lineLimit(showsDetail ? 2 : 1)
                 Text(DraftRowMeta.line(feature: draft.feature, capturedAt: draft.capturedAt,
-                                       photos: draft.photos.count, now: .now))
+                                       photos: photoCount, queued: queued, now: .now))
                     .textStyle(Self.metaStyle)
                     .foregroundStyle(Theme.Color.tertiary)
                 if showsDetail, let detail {

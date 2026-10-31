@@ -114,6 +114,8 @@ enum Theme {
         static let rowSubtitle = TextStyle(12, .regular, relativeTo: .caption, lineHeight: 1.4)
         /// Settings' build line: version, environment and host.
         static let buildLine = TextStyle(11, .regular, relativeTo: .caption2, monospacedDigits: true)
+        /// A Settings row's value on the right: the meta size with tabular digits.
+        static let metaTabular = TextStyle(13, .regular, relativeTo: .footnote, monospacedDigits: true)
         static let meta13 = TextStyle(13, .regular, relativeTo: .footnote)
         static let meta13Medium = TextStyle(13, .medium, relativeTo: .footnote)
         static let transcript = TextStyle(24, .medium, relativeTo: .title2, em: -0.01, lineHeight: 1.35)

@@ -93,12 +93,24 @@ final class AppState {
     @ObservationIgnored let settings: Settings
     /// Whether the phone has a network path. Home observes it for the "No signal" banner.
     @ObservationIgnored let reachability: ReachabilityProviding
-    /// Resends waiting drafts and reconciles submitting ones while a user is signed in; `nil` otherwise.
+    /// Runs queued submits for Review and for `draftSync`. One for the app's lifetime, so both see
+    /// the same running drafts, and built in `init` so Review can queue a submit while offline.
+    @ObservationIgnored private(set) var submitRunner: SubmitRunner!
+    /// Background refresh and processing tasks that run one `draftSync` pass. Registered by the app
+    /// at launch; scheduled from `enteredBackground`.
+    @ObservationIgnored private(set) var background: BackgroundSync!
+    /// Resends waiting drafts, runs queued submits and reconciles submitting ones while a user is
+    /// signed in; `nil` otherwise.
     @ObservationIgnored private(set) var draftSync: DraftSync?
+    /// Holds each draft pass through the app's grace period after it leaves the foreground. The app
+    /// passes the system's; tests and previews pass none.
+    @ObservationIgnored private let backgroundGrace: BackgroundGrace?
     /// Keeps the selected project's records current while a user is signed in, and reports the last
     /// sync (not running until asked) while the session is offline; `nil` otherwise.
     /// Observed, so a screen that read `nil` updates when the driver is created or replaced.
     private(set) var recordSync: RecordSync?
+    /// Whether a `bootstrap` is running, so a background task does not start a second one.
+    @ObservationIgnored private var isBootstrapping = false
     /// While the session is `offline`, retries `/me` each time the network path comes back.
     @ObservationIgnored private var offlineRetry: Task<Void, Never>?
     /// Advances each time the session ends. A `/me` that was started before then (an offline retry,
@@ -114,8 +126,10 @@ final class AppState {
         modelContext: ModelContext,
         transport: ClientTransport? = nil,
         defaults: UserDefaults = .standard,
-        reachability: ReachabilityProviding? = nil
+        reachability: ReachabilityProviding? = nil,
+        backgroundGrace: BackgroundGrace? = nil
     ) {
+        self.backgroundGrace = backgroundGrace
         self.store = store
         self.defaults = defaults
         self.reachability = reachability ?? Reachability()
@@ -144,16 +158,30 @@ final class AppState {
         )
         self.client = client
         lookups = LookupStore(context: modelContext, service: LookupService(client: client))
+        submitRunner = SubmitRunner(store: drafts, service: { DraftService(client: client) })
         authService = AuthService(
             client: client,
             store: store,
             presenter: presenter,
             deviceID: Self.deviceID(in: defaults)
         )
+        background = BackgroundSync(
+            run: { [weak self] in await self?.runBackgroundPass() },
+            cancelPass: { [weak self] in self?.draftSync?.cancelPass() },
+            counts: { [weak self] in
+                guard let self, let owner = draftOwnerID else { return (0, 0) }
+                return (
+                    drafts.drafts(withStatus: .waiting, owner: owner).count,
+                    drafts.draftsPendingSubmit(owner: owner).count
+                )
+            }
+        )
     }
 
     /// Decides the first screen: signed out without a stored session, otherwise loads the user.
     func bootstrap() async {
+        isBootstrapping = true
+        defer { isBootstrapping = false }
         let session: Session?
         do {
             session = try store.load()
@@ -231,6 +259,31 @@ final class AppState {
             await draftSync?.runOnce()
             await recordSync?.runOnce()
         }
+    }
+
+    /// The app went to the background: ask iOS for a background run when a draft is waiting or queued.
+    func enteredBackground() {
+        guard let owner = draftOwnerID else {
+            background.cancelAll()
+            return
+        }
+        background.schedule(
+            waiting: drafts.drafts(withStatus: .waiting, owner: owner).count,
+            pendingSubmit: drafts.draftsPendingSubmit(owner: owner).count
+        )
+    }
+
+    /// One background task's worth of work: a single draft pass. When iOS relaunches the app for a
+    /// background task the scene never connects, so `RootView` has not bootstrapped and there is no
+    /// `draftSync` yet: bootstrap first (a stored session loads `/me`, which starts the sync). A
+    /// bootstrap already running, from the foreground, is left to finish. A session left `.offline`
+    /// (a cold launch with no signal) bootstraps again too, since the signal may be back by now. If
+    /// there is still no sync (signed out, or still offline), there is nothing to run.
+    func runBackgroundPass() async {
+        if draftSync == nil, phase == .loading || phase == .offline, !isBootstrapping {
+            await bootstrap()
+        }
+        await draftSync?.runOnce()
     }
 
     /// Syncs the selected project's records now. `force` has the backend pull from Procore first;
@@ -314,6 +367,8 @@ final class AppState {
         offlineRetry = nil
         draftSync?.stop()
         draftSync = nil
+        // Review may be running a submit too; nothing runs on under the next user.
+        submitRunner.cancelAll()
         recordSync?.stop()
         recordSync = nil
         lookups.clearAll()
@@ -381,9 +436,11 @@ final class AppState {
         let sync = DraftSync(
             store: drafts,
             service: { DraftService(client: client) },
+            runner: submitRunner,
             reachability: reachability,
             owner: { [weak self] in self?.draftOwnerID },
-            send: { [weak self] draft in await self?.send(draft) ?? .waiting }
+            send: { [weak self] draft in await self?.send(draft) ?? .waiting },
+            grace: backgroundGrace
         )
         draftSync = sync
         sync.start()

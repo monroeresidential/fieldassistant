@@ -45,4 +45,10 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertNotEqual(line(company: "Monroe Residential", refreshed: now.addingTimeInterval(-60)),
                           "Monroe Residential · lookups refreshed just now")
     }
+
+    @MainActor
+    func testPhotoSizeValueFormatsLongEdge() {
+        XCTAssertEqual(SettingsView.photoSizeValue(PhotoLimits.longEdge, locale: locale), "2,500 px")
+        XCTAssertEqual(SettingsView.photoSizeValue(800, locale: locale), "800 px")
+    }
 }

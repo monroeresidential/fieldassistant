@@ -67,6 +67,55 @@ final class DraftStoreTests: XCTestCase {
         XCTAssertFalse(container.mainContext.hasChanges)
     }
 
+    @MainActor
+    func testApplyMapsAttachmentStatesOntoPhotos() throws {
+        let (store, _) = try makeStore()
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "Need the slab edge detail")
+        let stored = LocalPhoto(fileName: "stored.jpg", bytes: 10)
+        let refused = LocalPhoto(fileName: "refused.jpg", bytes: 20)
+        let untouched = LocalPhoto(fileName: "untouched.jpg", bytes: 30)
+        untouched.uploadState = .stored
+        draft.photos = [stored, refused, untouched]
+        try store.insert(draft)
+        let attachments = """
+        [{"id":"\(stored.id.uuidString.lowercased())","filename":"stored.jpg","bytes":10,"state":"stored"},
+         {"id":"\(refused.id.uuidString.lowercased())","filename":"refused.jpg","bytes":20,"state":"failed",
+          "error":{"code":"procore_refused","message":"Procore would not take this photo."}},
+         {"id":"\(untouched.id.uuidString.lowercased())","filename":"untouched.jpg","bytes":30,"state":"pending"},
+         {"id":"\(UUID().uuidString.lowercased())","filename":"unknown.jpg","bytes":40,"state":"stored"}]
+        """
+        let response = try decodeResponse(id: draft.id, status: "extracted", result: "null", attachments: attachments)
+
+        draft.apply(response)
+        try store.save()
+
+        XCTAssertEqual(stored.uploadState, .stored)
+        XCTAssertNil(stored.failureMessage)
+        XCTAssertEqual(refused.uploadState, .failed)
+        XCTAssertEqual(refused.failureMessage, "Procore would not take this photo.")
+        XCTAssertEqual(untouched.uploadState, .stored, "pending on the server leaves the local state as is")
+        XCTAssertEqual(draft.photos.count, 3, "an id the phone does not have is ignored")
+    }
+
+    @MainActor
+    func testApplyLeavesRemovedPhotosAlone() throws {
+        let (store, _) = try makeStore()
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, transcript: "Need the slab edge detail")
+        let removed = LocalPhoto(fileName: "removed.jpg", bytes: 10)
+        removed.uploadState = .removed
+        draft.photos = [removed]
+        try store.insert(draft)
+        let attachments = """
+        [{"id":"\(removed.id.uuidString.lowercased())","filename":"removed.jpg","bytes":10,"state":"stored"}]
+        """
+        let response = try decodeResponse(id: draft.id, status: "extracted", result: "null", attachments: attachments)
+
+        draft.apply(response)
+        try store.save()
+
+        XCTAssertEqual(removed.uploadState, .removed, "a server state from before the DELETE does not bring it back")
+    }
+
     func testStatusMappingExtractedAndReviewedAreDraft() {
         XCTAssertEqual(LocalDraftStatus(server: .extracted), .draft)
         XCTAssertEqual(LocalDraftStatus(server: .reviewed), .draft)
@@ -123,12 +172,17 @@ final class DraftStoreTests: XCTestCase {
         return (DraftStore(context: container.mainContext), container)
     }
 
-    private func decodeResponse(id: UUID, status: String, result: String) throws -> Components.Schemas.DraftResponse {
+    private func decodeResponse(
+        id: UUID,
+        status: String,
+        result: String,
+        attachments: String = "[]"
+    ) throws -> Components.Schemas.DraftResponse {
         let json = """
         {"id":"\(id.uuidString)","feature":"rfi","project_id":99,"status":"\(status)",
          "payload":{"subject":"Slab edge detail at grid C","assignee_ids":[],"distribution_ids":[],"private":false,"draft":false},
          "unresolved":[],"confidence":{},"transcript":"Need the slab edge detail","model_version":"test-model",
-         "attachments":[],
+         "attachments":\(attachments),
          "result":\(result),
          "created_at":"2026-10-24T15:00:00Z","updated_at":"2026-10-24T15:01:02.345Z"}
         """

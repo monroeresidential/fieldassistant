@@ -3,7 +3,10 @@ import SwiftUI
 /// Sticky bottom bar over a hairline: save as a draft or submit, with any note above the buttons.
 /// Submit stays disabled while a blocking flag remains or a submit is running.
 struct ReviewFooter<Notes: View>: View {
+    /// Flagged fields plus failed photos.
     let blockingCount: Int
+    /// How many of `blockingCount` are failed photos.
+    let failedPhotoCount: Int
     let isSubmitting: Bool
     let onSave: () -> Void
     let onSubmit: () -> Void
@@ -11,12 +14,14 @@ struct ReviewFooter<Notes: View>: View {
 
     init(
         blockingCount: Int,
+        failedPhotoCount: Int = 0,
         isSubmitting: Bool,
         onSave: @escaping () -> Void,
         onSubmit: @escaping () -> Void,
         @ViewBuilder notes: @escaping () -> Notes
     ) {
         self.blockingCount = blockingCount
+        self.failedPhotoCount = failedPhotoCount
         self.isSubmitting = isSubmitting
         self.onSave = onSave
         self.onSubmit = onSubmit
@@ -48,7 +53,7 @@ struct ReviewFooter<Notes: View>: View {
                     .buttonStyle(PrimaryButtonStyle(height: 54))
                     .disabled(submitDisabled)
                     .accessibilityLabel(isSubmitting ? "Submitting to Procore" : "Submit to Procore")
-                    .accessibilityHint(blockingCount > 0 ? "Resolve the flagged fields first" : "")
+                    .accessibilityHint(ReviewFooterHint.text(blockingCount: blockingCount, failedPhotoCount: failedPhotoCount) ?? "")
                 }
             }
             .padding(.horizontal, 20)
@@ -60,9 +65,21 @@ struct ReviewFooter<Notes: View>: View {
     }
 }
 
+/// What the footer says about a disabled Submit.
+enum ReviewFooterHint {
+    /// `blockingCount` includes `failedPhotoCount`. When failed photos are the only blockers the
+    /// fix is to remove them, not to look for flagged fields.
+    static func text(blockingCount: Int, failedPhotoCount: Int) -> String? {
+        guard blockingCount > 0 else { return nil }
+        return blockingCount == failedPhotoCount ? "Remove the failed photo first." : "Resolve the flagged fields first"
+    }
+}
+
 extension ReviewFooter where Notes == EmptyView {
-    init(blockingCount: Int, isSubmitting: Bool, onSave: @escaping () -> Void, onSubmit: @escaping () -> Void) {
-        self.init(blockingCount: blockingCount, isSubmitting: isSubmitting, onSave: onSave, onSubmit: onSubmit) {
+    init(blockingCount: Int, failedPhotoCount: Int = 0, isSubmitting: Bool,
+         onSave: @escaping () -> Void, onSubmit: @escaping () -> Void) {
+        self.init(blockingCount: blockingCount, failedPhotoCount: failedPhotoCount, isSubmitting: isSubmitting,
+                  onSave: onSave, onSubmit: onSubmit) {
             EmptyView()
         }
     }

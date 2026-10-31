@@ -6,6 +6,11 @@
 	<string>$(API_BASE_URL)</string>
 	<key>API_ENV</key>
 	<string>$(API_ENV)</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).draftsync.refresh</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).draftsync.processing</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -51,6 +56,11 @@
 		<string>PublicSans-Medium.ttf</string>
 		<string>PublicSans-SemiBold.ttf</string>
 		<string>PublicSans-Bold.ttf</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

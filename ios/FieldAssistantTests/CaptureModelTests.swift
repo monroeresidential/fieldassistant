@@ -1,4 +1,5 @@
 import CoreLocation
+import ImageIO
 import UIKit
 import XCTest
 @testable import FieldAssistant
@@ -15,9 +16,10 @@ final class CaptureModelTests: XCTestCase {
     private func makeModel(
         transcriber: FakeTranscriber,
         location: LocationOnce? = nil,
-        clock: any Clock<Duration> = ContinuousClock()
+        clock: any Clock<Duration> = ContinuousClock(),
+        photoWriter: PhotoWriter = PhotoWriter()
     ) -> CaptureModel {
-        let model = CaptureModel(transcriber: transcriber, location: location, clock: clock)
+        let model = CaptureModel(transcriber: transcriber, location: location, clock: clock, photoWriter: photoWriter)
         draftIDs.append(model.draftID)
         return model
     }
@@ -87,7 +89,7 @@ final class CaptureModelTests: XCTestCase {
         let continuation = try XCTUnwrap(transcriber.continuation)
         continuation.yield("Need the slab edge detail at grid C")
         await waitUntil { !model.transcript.isEmpty }
-        try model.addPhoto(Self.image())
+        try await model.addPhoto(image: Self.image(), metadata: nil)
 
         continuation.finish(throwing: SpeechTranscriberError.interrupted)
         await waitUntil { model.state != .recording }
@@ -156,8 +158,8 @@ final class CaptureModelTests: XCTestCase {
         await waitUntil { model.coordinate != nil && !model.transcript.isEmpty }
         model.stop()
 
-        try model.addPhoto(Self.image())
-        try model.addPhoto(Self.image())
+        try await model.addPhoto(image: Self.image(), metadata: nil)
+        try await model.addPhoto(image: Self.image(), metadata: nil)
         let removed = try XCTUnwrap(model.photos.last)
         let removedURL = DraftFiles.photoURL(draftID: model.draftID, fileName: removed.fileName)
         XCTAssertTrue(FileManager.default.fileExists(atPath: removedURL.path(percentEncoded: false)))
@@ -221,7 +223,7 @@ final class CaptureModelTests: XCTestCase {
         let transcriber = FakeTranscriber()
         let model = makeModel(transcriber: transcriber)
         await model.start()
-        try model.addPhoto(Self.image())
+        try await model.addPhoto(image: Self.image(), metadata: nil)
         XCTAssertTrue(FileManager.default.fileExists(atPath: DraftFiles.audioURL(for: model.draftID).deletingLastPathComponent().path))
 
         model.discard()
@@ -229,6 +231,124 @@ final class CaptureModelTests: XCTestCase {
         XCTAssertEqual(transcriber.stopCount, 1)
         XCTAssertTrue(model.photos.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: DraftFiles.audioURL(for: model.draftID).deletingLastPathComponent().path))
+    }
+
+    func testEleventhPhotoIsRefused() async throws {
+        let model = makeModel(transcriber: FakeTranscriber())
+        for _ in 0..<PhotoLimits.maxPerDraft {
+            try await model.addPhoto(image: Self.image(), metadata: nil)
+        }
+        XCTAssertEqual(model.photos.count, 10)
+
+        do {
+            try await model.addPhoto(image: Self.image(), metadata: nil)
+            XCTFail("an eleventh camera photo is refused")
+        } catch PhotoSaverError.tooManyPhotos {}
+        let jpeg = try XCTUnwrap(Self.image().jpegData(compressionQuality: 0.85))
+        do {
+            try await model.addPhoto(data: jpeg)
+            XCTFail("an eleventh library photo is refused")
+        } catch PhotoSaverError.tooManyPhotos {}
+
+        XCTAssertEqual(model.photos.count, 10)
+        let files = try FileManager.default.contentsOfDirectory(atPath: DraftFiles.directory(for: model.draftID).path(percentEncoded: false))
+        XCTAssertEqual(files.filter { $0.hasSuffix(".jpg") }.count, 10, "a refused photo writes no file")
+    }
+
+    func testSaveLibraryPhotoWithoutGPSDoesNotGetDraftLocation() async throws {
+        let transcriber = FakeTranscriber()
+        let coordinate = CLLocationCoordinate2D(latitude: 41.89, longitude: -87.63)
+        let model = makeModel(transcriber: transcriber, location: LocationOnce(stub: coordinate))
+        await model.start()
+        await waitUntil { model.coordinate != nil }
+
+        let jpeg = try XCTUnwrap(Self.image().jpegData(compressionQuality: 0.85), "UIKit writes no GPS")
+        try await model.addPhoto(data: jpeg)
+        try await model.addPhoto(image: Self.image(), metadata: nil)
+
+        XCTAssertEqual(model.photos.count, 2)
+        let library = try properties(of: model.photos[0], in: model)
+        XCTAssertNil(library[kCGImagePropertyGPSDictionary], "a library photo keeps the GPS it had: none")
+        let camera = try properties(of: model.photos[1], in: model)
+        let gps = try XCTUnwrap(camera[kCGImagePropertyGPSDictionary] as? [CFString: Any], "a camera photo gets the draft's fix")
+        XCTAssertEqual(gps[kCGImagePropertyGPSLatitudeRef] as? String, "N")
+    }
+
+    func testCanBuildIsFalseWhileAPhotoIsSaving() async throws {
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        var writer = PhotoWriter()
+        writer.camera = { image, metadata, draftID, location in
+            for await _ in gate { break }
+            return try PhotoSaver.write(image: image, metadata: metadata, draftID: draftID, location: location)
+        }
+        let transcriber = FakeTranscriber()
+        let model = makeModel(transcriber: transcriber, photoWriter: writer)
+        await model.start()
+        try XCTUnwrap(transcriber.continuation).yield("Slab edge at grid C")
+        await waitUntil { !model.transcript.isEmpty }
+        model.stop()
+        XCTAssertTrue(model.canBuild)
+
+        let adding = Task { try await model.addPhoto(image: Self.image(), metadata: nil) }
+        await waitUntil { model.isSavingPhotos }
+        XCTAssertFalse(model.canBuild, "Build waits for the photo")
+
+        open.yield()
+        try await adding.value
+
+        XCTAssertFalse(model.isSavingPhotos)
+        XCTAssertTrue(model.canBuild)
+        XCTAssertEqual(model.photos.count, 1)
+    }
+
+    func testCanBuildIsFalseWhilePickedPhotosAreLoading() async throws {
+        let model = try await stoppedModelWithText()
+        XCTAssertTrue(model.canBuild)
+
+        // Three photos picked; none has reached the saver yet.
+        model.beginPicking(3)
+        XCTAssertTrue(model.isSavingPhotos)
+        XCTAssertFalse(model.canBuild, "Build waits for the whole selection")
+
+        // One fails to load, one is saved: one is still loading.
+        model.finishPick()
+        try await model.addPhoto(data: Self.jpegData())
+        model.finishPick()
+        XCTAssertEqual(model.photos.count, 1)
+        XCTAssertFalse(model.canBuild, "the last pick still holds Build")
+
+        model.finishPick()
+        XCTAssertFalse(model.isSavingPhotos)
+        XCTAssertTrue(model.canBuild)
+    }
+
+    func testEndPickingRestoresCanBuild() async throws {
+        let model = try await stoppedModelWithText()
+        model.beginPicking(4)
+        model.finishPick()
+        XCTAssertFalse(model.canBuild)
+
+        // The selection loop ended early (a refusal, the limit): the rest stop holding Build.
+        model.endPicking()
+
+        XCTAssertFalse(model.isSavingPhotos)
+        XCTAssertTrue(model.canBuild)
+        model.finishPick()
+        XCTAssertTrue(model.canBuild, "an extra finish never goes below zero")
+    }
+
+    private func stoppedModelWithText() async throws -> CaptureModel {
+        let transcriber = FakeTranscriber()
+        let model = makeModel(transcriber: transcriber)
+        await model.start()
+        try XCTUnwrap(transcriber.continuation).yield("Slab edge at grid C")
+        await waitUntil { !model.transcript.isEmpty }
+        model.stop()
+        return model
+    }
+
+    private static func jpegData() throws -> Data {
+        try XCTUnwrap(image().jpegData(compressionQuality: 0.8))
     }
 
     func testDiscardDuringPermissionPromptNeverStartsMic() async {
@@ -291,6 +411,12 @@ final class CaptureModelTests: XCTestCase {
         XCTAssertTrue(model.canBuild)
     }
     #endif
+
+    private func properties(of photo: LocalPhoto, in model: CaptureModel) throws -> [CFString: Any] {
+        let url = DraftFiles.photoURL(draftID: model.draftID, fileName: photo.fileName)
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+        return try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+    }
 
     private static func image() -> UIImage {
         UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in

@@ -44,6 +44,7 @@ final class RFIReviewModelTests: XCTestCase {
             lookups: LookupStore(context: container.mainContext, service: LookupService(client: client)),
             service: DraftService(client: client),
             store: store,
+            runner: SubmitRunner(store: store, service: { DraftService(client: client) }),
             submitAsDraftOverride: nil
         )
 
@@ -129,9 +130,10 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertTrue(assignee.blocking)
         XCTAssertNotNil(model.unresolved(for: .rfiManagerId))
         XCTAssertEqual(model.unresolvedCount, 2)
-        XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .post])
-        // The server's `reviewed` folds into the local `.draft`; nothing was queued.
-        XCTAssertEqual(local.status, .draft)
+        XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .post, .get], "the refusal re-reads the draft")
+        // Nothing was queued; the refusal is kept on the phone so the draft reads Fix.
+        XCTAssertEqual(local.status, .failed)
+        XCTAssertFalse(local.submitPending)
     }
 
     func testSubmit400FormAndUnknownNamesDoNotAddRows() async throws {
@@ -282,7 +284,7 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertFalse(model.isSubmitting)
     }
 
-    func testDefinitiveSubmitRefusalRevertsToDraft() async throws {
+    func testDefinitiveSubmitRefusalPersistsFailed() async throws {
         let transport = StubTransport([
             draftJSON(status: "reviewed", unresolved: "[]"),
             APIStub.error(.forbidden, code: "procore_permission_denied", message: "No RFI access"),
@@ -292,7 +294,9 @@ final class RFIReviewModelTests: XCTestCase {
         let outcome = await model.submit()
 
         XCTAssertEqual(outcome, .failed(.permissionDenied("No RFI access")))
-        XCTAssertEqual(local.status, .draft)
+        XCTAssertEqual(local.status, .failed)
+        XCTAssertEqual(local.errorMessage, "No RFI access")
+        XCTAssertFalse(local.submitPending)
     }
 
     func testLockedSaveRefreshesFromServer() async throws {
@@ -341,11 +345,235 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(local.status, .submitting)
     }
 
+    func testSubmitOfflineQueuesAndReturnsQueuedMessage() async throws {
+        let (model, local, container) = try makeModel(FailingTransport(error: URLError(.notConnectedToInternet)))
+        model.setText("Edited offline", for: .subject)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .pending(message: "Queued. It sends on its own when you have signal."))
+        XCTAssertEqual(local.status, .submitting)
+        XCTAssertTrue(local.submitPending)
+        let saved = try LocalDraft.decoder.decode(RFIDraftPayload.self, from: try XCTUnwrap(local.pendingPayloadData))
+        XCTAssertEqual(saved.subject, "Edited offline", "the reviewed payload waits on the phone for the runner")
+        let id = draftID
+        let reloaded = try XCTUnwrap(ModelContext(container).fetch(FetchDescriptor<LocalDraft>(predicate: #Predicate { $0.id == id })).first)
+        XCTAssertTrue(reloaded.submitPending, "the queued intent survives a relaunch")
+        XCTAssertNotNil(reloaded.pendingPayloadData)
+        XCTAssertFalse(model.isSubmitting)
+    }
+
+    func testSubmitRefusalShowsFixAndPersistsFailed() async throws {
+        let message = "draft has unresolved fields: rfi_manager_id"
+        let transport = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.error(.badRequest, code: "bad_request", message: message),
+            draftJSON(
+                status: "reviewed",
+                unresolved: #"[{"field":"rfi_manager_id","reason":"not_found","candidates":[],"blocking":true}]"#
+            ),
+        ])
+        let (model, local, _) = try makeModel(transport)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .needsFixes)
+        XCTAssertEqual(model.unresolved(for: .rfiManagerId)?.message, message)
+        XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .post, .get])
+        XCTAssertEqual(local.status, .failed)
+        XCTAssertEqual(local.errorMessage, RFIReviewModel.fixFlaggedMessage, "the rows name the fields; the line says what to do")
+        XCTAssertFalse(local.submitPending)
+        XCTAssertEqual(local.server?.unresolved.map(\.field), ["rfi_manager_id"], "the server's flags survive on the phone")
+    }
+
+    func testInlineUnresolvedRefusalStoresFixMessageOtherRefusalsKeepServerText() async throws {
+        let unresolvedMessage = "draft has unresolved fields: rfi_manager_id"
+        let unresolved = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.error(.badRequest, code: "bad_request", message: unresolvedMessage),
+            draftJSON(status: "reviewed", unresolved: "[]"),
+        ])
+        let (flagged, flaggedDraft, flaggedContainer) = try makeModel(unresolved)
+        _ = await flagged.submit()
+        XCTAssertEqual(flaggedDraft.errorMessage, "Fix the flagged fields and submit again.")
+
+        let otherMessage = "Idempotency-Key must equal the draft id"
+        let other = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.error(.badRequest, code: "bad_request", message: otherMessage),
+            draftJSON(status: "reviewed", unresolved: "[]"),
+        ])
+        let (model, local, container) = try makeModel(other)
+        let outcome = await model.submit()
+        XCTAssertEqual(outcome, .failed(.validation(otherMessage)))
+        XCTAssertEqual(local.errorMessage, otherMessage, "other refusals keep the server's message")
+        withExtendedLifetime((flaggedContainer, container)) {}
+    }
+
+    func testSubmitAcceptedPathUnchanged() async throws {
+        let transport = StubTransport([
+            draftJSON(status: "reviewed"),
+            APIStub.submit(.accepted, jobID: "job-5", draftID: draftID),
+            APIStub.job(id: "job-5", draftID: draftID, status: "succeeded"),
+            draftJSON(
+                status: "submitted",
+                unresolved: "[]",
+                result: #"{"procore_id":501,"number":"214","url":"https://sandbox.procore.com/rfis/501"}"#
+            ),
+        ])
+        let (model, local, _) = try makeModel(transport)
+        let leftover = try DraftFiles.directory(for: draftID).appending(path: "audio.m4a")
+        try Data("audio".utf8).write(to: leftover)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .submitted(number: "214", url: "https://sandbox.procore.com/rfis/501"))
+        XCTAssertEqual(local.status, .submitted)
+        XCTAssertEqual(local.resultNumber, "214")
+        XCTAssertFalse(local.submitPending)
+        XCTAssertNil(local.pendingPayloadData, "the PATCH landed, so nothing is left to save")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: leftover.path(percentEncoded: false)))
+        XCTAssertEqual(transport.requests.map(\.request.method), [.patch, .post, .get, .get])
+        XCTAssertEqual(transport.requests.map(\.request.path), [
+            draftPath, draftPath + "/submit", "/jobs/job-5", draftPath,
+        ])
+        XCTAssertFalse(model.isSubmitting)
+    }
+
     func testUnknownBlockingFieldDoesNotCountAsUnresolved() throws {
         let unresolved = #"[{"field":"mystery_field","reason":"procore_validation","candidates":[],"blocking":true}]"#
         let (model, _, _) = try makeModel(StubTransport(), unresolved: unresolved)
 
         XCTAssertEqual(model.unresolvedCount, 0, "nothing on screen could clear it")
+    }
+
+    // MARK: - Queued drafts and failed photos
+
+    func testStopSendingWhileRunningIsRefused() async throws {
+        let gate = GateTransport(StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.submit(.ok, draftID: draftID),
+            draftJSON(status: "submitted", unresolved: "[]", result: #"{"procore_id":501,"number":"214"}"#),
+        ]), gating: { $0.method == .post })
+        let (model, local, _) = try makeModel(gate)
+        let submit = Task { await model.submit() }
+        try await gate.waitUntilHeld()
+        XCTAssertTrue(model.isQueued)
+
+        let outcome = await model.stopSending()
+
+        XCTAssertEqual(outcome, .sending)
+        XCTAssertTrue(local.submitPending, "the run in progress owns the draft")
+        XCTAssertEqual(local.status, .submitting)
+        gate.release()
+        let submitted = await submit.value
+        XCTAssertEqual(submitted, .submitted(number: "214", url: nil))
+        XCTAssertEqual(gate.inner.requests.map(\.request.method), [.patch, .post, .get], "Stop sent nothing")
+    }
+
+    func testStopSendingAsksServerAndReportsAlreadySent() async throws {
+        let transport = StubTransport([draftJSON(status: "submitting", unresolved: "[]")])
+        let (model, local, _) = try makeModel(transport)
+        try queue(local, model: model)
+
+        let outcome = await model.stopSending()
+
+        XCTAssertEqual(outcome, .alreadySent)
+        XCTAssertEqual(transport.requests.map(\.request.method), [.get])
+        XCTAssertEqual(transport.requests.first?.request.path, draftPath)
+        XCTAssertEqual(local.status, .submitting, "the server's state is applied")
+        XCTAssertFalse(local.submitPending, "the server owns the draft now")
+        XCTAssertNil(local.pendingPayloadData, "the server takes no more edits")
+        XCTAssertFalse(model.isQueued)
+    }
+
+    func testStopSendingWithSignalServerNotSentStops() async throws {
+        let transport = StubTransport([draftJSON(status: "reviewed", unresolved: "[]")])
+        let (model, local, _) = try makeModel(transport)
+        try queue(local, model: model)
+
+        let outcome = await model.stopSending()
+
+        XCTAssertEqual(outcome, .stopped)
+        XCTAssertEqual(transport.requests.map(\.request.method), [.get])
+        XCTAssertEqual(local.status, .draft)
+        XCTAssertFalse(local.submitPending)
+        XCTAssertNotNil(local.pendingPayloadData, "the reviewed edits still wait for the next save")
+    }
+
+    func testStopSendingOfflineClearsFlagAndUnlocks() async throws {
+        let transport = StubTransport()
+        let (model, local, container) = try makeModel(transport, isReachable: { false })
+        try queue(local, model: model)
+
+        let outcome = await model.stopSending()
+
+        XCTAssertEqual(outcome, .stopped)
+        XCTAssertTrue(transport.requests.isEmpty, "with no signal the flag clears at once")
+        XCTAssertFalse(model.isQueued)
+        XCTAssertEqual(local.status, .draft)
+        XCTAssertNotNil(local.pendingPayloadData, "the reviewed edits are kept")
+        let id = draftID
+        let reloaded = try XCTUnwrap(ModelContext(container).fetch(FetchDescriptor<LocalDraft>(predicate: #Predicate { $0.id == id })).first)
+        XCTAssertFalse(reloaded.submitPending, "the stop is saved")
+        XCTAssertEqual(reloaded.status, .draft)
+    }
+
+    func testRemovePhotoMarksRemovedAndDeletesFile() async throws {
+        let (model, local, container) = try makeModel(StubTransport())
+        let file = DraftFiles.photoURL(draftID: draftID, fileName: "big.jpg")
+        _ = try DraftFiles.directory(for: draftID)
+        try Data([0xFF, 0xD8, 0xFF, 0xD9]).write(to: file)
+        let photo = LocalPhoto(fileName: "big.jpg", bytes: 4)
+        local.photos.append(photo)
+        photo.uploadState = .failed
+        photo.failureMessage = "Photo is larger than 15 MB."
+        local.status = .failed
+        local.errorMessage = "Photo is larger than 15 MB."
+        try container.mainContext.save()
+
+        model.removePhoto(photo)
+
+        XCTAssertEqual(photo.uploadState, .removed, "the runner sends the DELETE later")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path(percentEncoded: false)), "the file goes now")
+        XCTAssertEqual(local.status, .draft, "the photo was all that stopped it, so Submit is open again")
+        XCTAssertNil(local.errorMessage)
+        let id = photo.id
+        let reloaded = try XCTUnwrap(ModelContext(container).fetch(FetchDescriptor<LocalPhoto>(predicate: #Predicate { $0.id == id })).first)
+        XCTAssertEqual(reloaded.uploadState, .removed, "the removal is saved")
+    }
+
+    func testRemovePhotoWithoutMessageClearsFix() async throws {
+        let (model, local, container) = try makeModel(StubTransport())
+        let photo = LocalPhoto(fileName: "odd.jpg", bytes: 4)
+        local.photos.append(photo)
+        // The server refused the photo without saying why, so the runner wrote its own line.
+        photo.uploadState = .failed
+        photo.failureMessage = nil
+        local.status = .failed
+        local.errorMessage = SubmitRunner.photoRefusedMessage
+        try container.mainContext.save()
+
+        model.removePhoto(photo)
+
+        XCTAssertEqual(local.status, .draft, "the fallback message still counts as the photo's failure")
+        XCTAssertNil(local.errorMessage)
+    }
+
+    func testRemovePhotoLeavesAnUnrelatedFailureAlone() async throws {
+        let (model, local, container) = try makeModel(StubTransport())
+        let photo = LocalPhoto(fileName: "odd.jpg", bytes: 4)
+        local.photos.append(photo)
+        photo.uploadState = .failed
+        photo.failureMessage = nil
+        local.status = .failed
+        local.errorMessage = "Procore did not accept this RFI."
+        try container.mainContext.save()
+
+        model.removePhoto(photo)
+
+        XCTAssertEqual(local.status, .failed)
+        XCTAssertEqual(local.errorMessage, "Procore did not accept this RFI.")
     }
 
     // MARK: - Fixtures
@@ -387,7 +615,8 @@ final class RFIReviewModelTests: XCTestCase {
         _ transport: ClientTransport,
         unresolved: String? = nil,
         draft: Bool = false,
-        submitAsDraftOverride: Bool? = nil
+        submitAsDraftOverride: Bool? = nil,
+        isReachable: @escaping @MainActor () -> Bool = { true }
     ) throws -> (RFIReviewModel, LocalDraft, ModelContainer) {
         let container = try AppContainer.makeModelContainer(inMemory: true)
         let store = DraftStore(context: container.mainContext)
@@ -405,9 +634,20 @@ final class RFIReviewModelTests: XCTestCase {
             lookups: lookups,
             service: DraftService(client: client),
             store: store,
-            submitAsDraftOverride: submitAsDraftOverride
+            runner: SubmitRunner(store: store, service: { DraftService(client: client) }),
+            submitAsDraftOverride: submitAsDraftOverride,
+            isReachable: isReachable
         )
         return (model, local, container)
+    }
+
+    /// Puts the draft in the state a Submit tapped with no signal leaves it: Queued, with the
+    /// reviewed payload waiting on the phone.
+    private func queue(_ local: LocalDraft, model: RFIReviewModel) throws {
+        local.status = .submitting
+        local.submitPending = true
+        local.pendingPayloadData = try LocalDraft.encoder.encode(model.payload)
+        XCTAssertTrue(model.isQueued)
     }
 }
 

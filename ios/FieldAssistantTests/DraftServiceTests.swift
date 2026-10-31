@@ -163,6 +163,160 @@ final class DraftServiceTests: XCTestCase {
         XCTAssertEqual(clock.sleeps.reduce(.zero, +), .seconds(60))
     }
 
+    func testCreateSendsAttachmentManifestInCapturedOrder() async throws {
+        let transport = StubTransport([APIStub.draft(id: draftID)])
+        let service = DraftService(client: makeClient(transport))
+        let draft = localDraft()
+        let start = Date(timeIntervalSince1970: 1_793_000_100)
+        let first = LocalPhoto(fileName: "first.jpg", bytes: 1_200, createdAt: start)
+        let second = LocalPhoto(fileName: "second.jpg", bytes: 3_400, createdAt: start.addingTimeInterval(30))
+        // Appended out of capture order: the manifest follows `createdAt`, not the array.
+        draft.photos = [second, first]
+
+        _ = try await service.create(draft)
+
+        let body = try APIStub.jsonObject(try XCTUnwrap(transport.requests.first).body)
+        let attachments = try XCTUnwrap(body["attachments"] as? [[String: Any]])
+        XCTAssertEqual(attachments.count, 2)
+        // The raw wire id, so an uppercase regression shows.
+        XCTAssertEqual(attachments.map { $0["id"] as? String }, [
+            first.id.uuidString.lowercased(), second.id.uuidString.lowercased(),
+        ])
+        XCTAssertEqual(attachments.map { $0["filename"] as? String }, ["first.jpg", "second.jpg"])
+        XCTAssertEqual(attachments.map { $0["content_type"] as? String }, ["image/jpeg", "image/jpeg"])
+        XCTAssertEqual(attachments.map { $0["bytes"] as? Int }, [1_200, 3_400])
+    }
+
+    func testCreateManifestExcludesRemovedPhotos() async throws {
+        let transport = StubTransport([APIStub.draft(id: draftID)])
+        let service = DraftService(client: makeClient(transport))
+        let draft = localDraft()
+        let start = Date(timeIntervalSince1970: 1_793_000_100)
+        let kept = LocalPhoto(fileName: "kept.jpg", bytes: 1_200, createdAt: start)
+        let removed = LocalPhoto(fileName: "removed.jpg", bytes: 3_400, createdAt: start.addingTimeInterval(30))
+        removed.uploadState = .removed
+        draft.photos = [kept, removed]
+
+        _ = try await service.create(draft)
+
+        let body = try APIStub.jsonObject(try XCTUnwrap(transport.requests.first).body)
+        let attachments = try XCTUnwrap(body["attachments"] as? [[String: Any]])
+        XCTAssertEqual(attachments.map { $0["filename"] as? String }, ["kept.jpg"])
+    }
+
+    func testCreateManifestUsesFileSizeWhenBytesUnknown() async throws {
+        // Photos captured before the phone recorded sizes report 0 bytes, which the backend refuses.
+        let transport = StubTransport([APIStub.draft(id: draftID)])
+        let service = DraftService(client: makeClient(transport))
+        let draft = localDraft()
+        let start = Date(timeIntervalSince1970: 1_793_000_100)
+        let legacy = LocalPhoto(fileName: "legacy.jpg", bytes: 0, createdAt: start)
+        let missing = LocalPhoto(fileName: "missing.jpg", bytes: 0, createdAt: start.addingTimeInterval(10))
+        let known = LocalPhoto(fileName: "known.jpg", bytes: 3_400, createdAt: start.addingTimeInterval(20))
+        draft.photos = [legacy, missing, known]
+        _ = try DraftFiles.directory(for: draftID)
+        defer { DraftFiles.removeAll(for: draftID) }
+        try Data(repeating: 0xFF, count: 777).write(to: DraftFiles.photoURL(draftID: draftID, fileName: "legacy.jpg"))
+
+        _ = try await service.create(draft)
+
+        let body = try APIStub.jsonObject(try XCTUnwrap(transport.requests.first).body)
+        let attachments = try XCTUnwrap(body["attachments"] as? [[String: Any]])
+        XCTAssertEqual(attachments.map { $0["filename"] as? String }, ["legacy.jpg", "known.jpg"],
+                       "a 0-byte photo with no file on disk is left out")
+        XCTAssertEqual(attachments.map { $0["bytes"] as? Int }, [777, 3_400])
+    }
+
+    func testCreateWithoutPhotosOmitsAttachments() async throws {
+        let transport = StubTransport([APIStub.draft(id: draftID)])
+        let service = DraftService(client: makeClient(transport))
+
+        _ = try await service.create(localDraft())
+
+        let body = try APIStub.jsonObject(try XCTUnwrap(transport.requests.first).body)
+        XCTAssertNil(body["attachments"], "a draft without photos sends no manifest")
+    }
+
+    func testUploadAttachmentPutsJPEGWithCompanyHeader() async throws {
+        let attachmentID = UUID()
+        let fileURL = try writeTemporaryJPEG(Data([0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02, 0xFF, 0xD9]))
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let transport = StubTransport([APIStub.attachment(id: attachmentID, state: "stored", bytes: 8)])
+        let service = DraftService(client: makeClient(transport))
+
+        let attachment = try await service.uploadAttachment(
+            draftID: draftID, attachmentID: attachmentID, companyID: 7, fileURL: fileURL
+        )
+
+        XCTAssertEqual(attachment.id.lowercased(), attachmentID.uuidString.lowercased())
+        XCTAssertEqual(attachment.state, .stored)
+        let recorded = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(recorded.request.method, .put)
+        XCTAssertEqual(
+            recorded.request.path,
+            "/drafts/\(draftID.uuidString.lowercased())/attachments/\(attachmentID.uuidString.lowercased())"
+        )
+        XCTAssertEqual(recorded.request.headerFields[.contentType], "image/jpeg")
+        XCTAssertEqual(recorded.request.headerFields[companyHeader], "7")
+        XCTAssertEqual(recorded.body, [0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02, 0xFF, 0xD9])
+    }
+
+    func testUploadAttachment404ThrowsNotFound() async throws {
+        let fileURL = try writeTemporaryJPEG(Data([0xFF, 0xD8, 0xFF, 0xD9]))
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let transport = StubTransport([
+            APIStub.error(.notFound, code: "not_found", message: "attachment is not on this draft"),
+        ])
+        let service = DraftService(client: makeClient(transport))
+
+        do {
+            _ = try await service.uploadAttachment(draftID: draftID, attachmentID: UUID(), companyID: 7, fileURL: fileURL)
+            XCTFail("expected a failure")
+        } catch {
+            XCTAssertEqual(error as? APIFailure, .notFound("attachment is not on this draft"))
+            XCTAssertEqual((error as? APIFailure)?.userMessage, "attachment is not on this draft")
+        }
+    }
+
+    func testUploadAttachment400ThrowsValidationWithServerMessage() async throws {
+        let fileURL = try writeTemporaryJPEG(Data([0xFF, 0xD8, 0xFF, 0xD9]))
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let transport = StubTransport([
+            APIStub.error(.badRequest, code: "bad_request", message: "photo must be a JPEG under 20 MiB"),
+        ])
+        let service = DraftService(client: makeClient(transport))
+
+        do {
+            _ = try await service.uploadAttachment(draftID: draftID, attachmentID: UUID(), companyID: 7, fileURL: fileURL)
+            XCTFail("expected a failure")
+        } catch {
+            XCTAssertEqual(error as? APIFailure, .validation("photo must be a JPEG under 20 MiB"))
+        }
+    }
+
+    func testDeleteAttachmentSendsDELETEAnd204Returns() async throws {
+        let attachmentID = UUID()
+        let transport = StubTransport(statuses: [.noContent])
+        let service = DraftService(client: makeClient(transport))
+
+        try await service.deleteAttachment(draftID: draftID, attachmentID: attachmentID, companyID: 7)
+
+        let recorded = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(recorded.request.method, .delete)
+        XCTAssertEqual(
+            recorded.request.path,
+            "/drafts/\(draftID.uuidString.lowercased())/attachments/\(attachmentID.uuidString.lowercased())"
+        )
+        XCTAssertEqual(recorded.request.headerFields[companyHeader], "7")
+    }
+
+    /// Writes `data` to a fresh file in the temporary directory and returns its URL.
+    private func writeTemporaryJPEG(_ data: Data) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).jpg")
+        try data.write(to: url)
+        return url
+    }
+
     func testClientDecodesFractionalAndWholeSecondDates() async throws {
         let transport = StubTransport([
             APIStub.draft(id: draftID, createdAt: "2026-10-24T17:45:12.123456Z", updatedAt: "2026-10-24T17:45:12Z"),

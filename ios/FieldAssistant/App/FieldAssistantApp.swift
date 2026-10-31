@@ -15,12 +15,16 @@ struct FieldAssistantApp: App {
             fatalError("Could not open the on-device store: \(error)")
         }
         self.container = container
-        _appState = State(initialValue: AppState(
+        let appState = AppState(
             store: KeychainSessionStore(),
             presenter: ASWebAuthenticationSessionPresenter(),
             baseURL: AppConfig.apiBaseURL,
-            modelContext: container.mainContext
-        ))
+            modelContext: container.mainContext,
+            backgroundGrace: SystemBackgroundGrace()
+        )
+        // BackgroundTasks needs its handlers registered before the app finishes launching.
+        appState.background.register()
+        _appState = State(initialValue: appState)
     }
 
     var body: some Scene {
@@ -31,6 +35,8 @@ struct FieldAssistantApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     // Coming back to the app is a chance to reconnect, send waiting drafts and settle submitting ones.
                     if phase == .active { Task { await appState.becameActive() } }
+                    // Going away with a draft waiting or queued asks iOS for a background run.
+                    if phase == .background { appState.enteredBackground() }
                 }
         }
         .modelContainer(container)
