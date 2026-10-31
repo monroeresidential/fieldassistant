@@ -1,11 +1,14 @@
 import FieldAssistantAPI
 import Foundation
+import Observation
 
 /// The work a tapped Submit owes the server for one draft, in a fixed order: save the reviewed
 /// payload, delete the photos the user removed, upload the pending photos one at a time in capture
 /// order, post the submit, then poll its job. Review runs it inline and `DraftSync` runs it for
 /// every queued draft (`submitPending`), so a Submit tapped with no signal goes out on its own.
 /// Every step is idempotent on the server, so a run cut short anywhere is safe to repeat.
+/// Observable so the Drafts rows and Review see a run start and end (`isRunning`).
+@Observable
 @MainActor
 final class SubmitRunner {
     enum Outcome: Equatable {
@@ -40,8 +43,8 @@ final class SubmitRunner {
     /// A photo the server refused earlier without saying why.
     static let photoRefusedMessage = "Couldn't send this photo."
 
-    private let store: DraftStore
-    private let service: @MainActor () -> DraftService
+    @ObservationIgnored private let store: DraftStore
+    @ObservationIgnored private let service: @MainActor () -> DraftService
     /// The work of each draft with a run in progress, so `cancelAll` can stop it.
     private var running: [UUID: Task<Void, Never>] = [:]
 

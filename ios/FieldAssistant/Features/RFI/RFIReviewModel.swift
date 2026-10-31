@@ -22,6 +22,16 @@ final class RFIReviewModel {
         case failed(APIFailure)
     }
 
+    /// What "Stop sending" did to a queued draft.
+    enum StopOutcome: Equatable {
+        /// The flag is cleared and the draft is a plain draft again, open for editing.
+        case stopped
+        /// The server already has the submit; its state is applied and nothing is stopped.
+        case alreadySent
+        /// A run for the draft is in progress and owns it; nothing changed.
+        case sending
+    }
+
     private(set) var payload: RFIDraftPayload
     /// Flags tied to a field. A `_form` flag is kept out of this list and shown as `formMessage`.
     private(set) var unresolved: [UnresolvedField]
@@ -36,6 +46,9 @@ final class RFIReviewModel {
     var unresolvedCount: Int { unresolved.filter { $0.blocking && RFIField(serverField: $0.field) != nil }.count }
     /// Flags shown on their rows that do not stop submit.
     var advisoryCount: Int { unresolved.filter { !$0.blocking }.count }
+    /// Submit was tapped and the phone has not yet handed the draft to the server; Review is
+    /// read-only and offers "Stop sending". `LocalDraft` is observable, so views track it.
+    var isQueued: Bool { draft.submitPending }
 
     @ObservationIgnored private let draft: LocalDraft
     @ObservationIgnored private let lookups: LookupStore
@@ -43,6 +56,8 @@ final class RFIReviewModel {
     @ObservationIgnored private let store: DraftStore
     @ObservationIgnored private let runner: SubmitRunner
     @ObservationIgnored private let submitAsDraftOverride: Bool?
+    /// Whether the phone has a network path, read when "Stop sending" decides to ask the server.
+    @ObservationIgnored private let isReachable: @MainActor () -> Bool
     /// Labels of every candidate the server offered, by lookup kind, so a chosen row keeps its
     /// label after its flag is cleared even when the cached list does not have it.
     @ObservationIgnored private var candidateLabels: [LookupKind: [Int64: String]] = [:]
@@ -62,9 +77,11 @@ final class RFIReviewModel {
         service: DraftService,
         store: DraftStore,
         runner: SubmitRunner,
-        submitAsDraftOverride: Bool?
+        submitAsDraftOverride: Bool?,
+        isReachable: @escaping @MainActor () -> Bool = { true }
     ) {
         self.draft = draft
+        self.isReachable = isReachable
         self.lookups = lookups
         self.service = service
         self.store = store
@@ -226,6 +243,55 @@ final class RFIReviewModel {
             // The failed photo's tile says what to fix.
             return .needsFixes
         }
+    }
+
+    // MARK: - Queued drafts
+
+    /// Takes back a queued submit. Refused while a run for the draft is in progress. With signal
+    /// the server is asked first: if it already has the draft `submitting` or `submitted` (a POST
+    /// whose answer was lost), its state is applied and nothing is stopped. Otherwise, or with no
+    /// signal, the flag is cleared and the draft becomes a plain draft again; the reviewed payload
+    /// stays on the phone for the next save. With no signal, a POST that did land shows up later
+    /// as a locked save, which takes the server's state, so no path sends the RFI twice.
+    func stopSending() async -> StopOutcome {
+        guard !runner.isRunning(draft.id) else { return .sending }
+        if isReachable(), let response = try? await service.get(id: draft.id, companyID: draft.companyID) {
+            switch response.status {
+            case .submitting, .submitted:
+                // The server no longer takes edits, so nothing is left to save.
+                draft.pendingPayloadData = nil
+                draft.submitPending = false
+                take(response)
+                if response.status == .submitted { DraftFiles.removeAll(for: draft.id) }
+                return .alreadySent
+            case .extracted, .reviewed, .failed:
+                break
+            }
+        }
+        // A pass may have started while the server was asked.
+        guard !runner.isRunning(draft.id) else { return .sending }
+        guard draft.submitPending else { return .stopped }
+        draft.submitPending = false
+        draft.status = .draft
+        try? store.save()
+        return .stopped
+    }
+
+    /// Takes a photo off the draft: marked `removed` and its file deleted now; the runner sends
+    /// the DELETE before the next submit and then drops the row. When that photo's failure was
+    /// all that stopped the draft, the draft is a plain draft again and Submit is open.
+    func removePhoto(_ photo: LocalPhoto) {
+        guard !isQueued, !isSubmitting, photo.uploadState != .removed else { return }
+        let message = photo.failureMessage
+        try? FileManager.default.removeItem(at: DraftFiles.photoURL(draftID: draft.id, fileName: photo.fileName))
+        photo.uploadState = .removed
+        photo.failureMessage = nil
+        let otherFailed = draft.photos.contains { $0.uploadState == .failed }
+        if draft.status == .failed, !otherFailed, message != nil, draft.errorMessage == message {
+            draft.status = .draft
+            draft.errorMessage = nil
+        }
+        try? store.save()
     }
 
     /// Takes the server's answer to an accepted submit and says what it means for the screen.

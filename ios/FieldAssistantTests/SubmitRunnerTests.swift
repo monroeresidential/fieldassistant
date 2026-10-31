@@ -306,6 +306,29 @@ final class SubmitRunnerTests: XCTestCase {
         XCTAssertNil(draft.errorMessage)
     }
 
+    func testRemovedPhotoDeletedBeforeSubmit() async throws {
+        let transport = ScriptedTransport([
+            .response((HTTPResponse(status: .noContent), nil)),
+            .response(APIStub.draft(id: draftID, status: "reviewed")),
+            .response(APIStub.submit(.ok, draftID: draftID)),
+            .response(APIStub.draft(id: draftID, status: "submitted")),
+        ])
+        let (runner, store, draft) = try makeRunner(transport, photos: [(photoA, "a.jpg", 1), (photoB, "b.jpg", 2)])
+        photo(photoA, in: draft).uploadState = .removed
+        photo(photoB, in: draft).uploadState = .stored
+        try store.save()
+
+        let outcome = await runner.run(draft)
+
+        guard case .accepted = outcome else { return XCTFail("expected accepted, got \(outcome)") }
+        XCTAssertEqual(transport.requests.map(\.method), [.delete, .get, .post, .get], "DELETE, read back, then submit")
+        XCTAssertEqual(transport.requests.first?.path, photoPath(photoA))
+        XCTAssertEqual(draft.photos.map(\.id), [photoB], "the removed photo leaves the draft")
+        let removed = photoA
+        let rows = try XCTUnwrap(container).mainContext.fetch(FetchDescriptor<LocalPhoto>(predicate: #Predicate { $0.id == removed }))
+        XCTAssertTrue(rows.isEmpty, "the removed photo's row is deleted")
+    }
+
     // MARK: - Helpers
 
     /// A runner over an in-memory store holding one queued draft (`submitting`, `submitPending`)

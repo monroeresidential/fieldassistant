@@ -42,6 +42,31 @@ final class RecentDraftsViewTests: XCTestCase {
         }
     }
 
+    /// A queued draft's meta line says whether it waits for signal, is sending, or is queued.
+    func testRowMetaQueuedStates() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = TimeZone(identifier: "America/Chicago")!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 26, hour: 16, minute: 30))!
+        let yesterday = calendar.date(from: DateComponents(year: 2026, month: 10, day: 25, hour: 9, minute: 5))!
+        func line(_ queued: QueuedState?) -> String {
+            DraftRowMeta.line(feature: "rfi", capturedAt: yesterday, photos: 2, queued: queued, now: now, calendar: calendar)
+        }
+
+        XCTAssertEqual(line(.waitingForSignal), "RFI · Yesterday · 2 photos · Queued · waiting for signal")
+        XCTAssertEqual(line(.sending), "RFI · Yesterday · 2 photos · Queued · sending")
+        XCTAssertEqual(line(.queued), "RFI · Yesterday · 2 photos · Queued")
+        XCTAssertEqual(line(nil), "RFI · Yesterday · 2 photos")
+    }
+
+    /// Which queued state a row shows: no signal wins, then a run in progress, else plain Queued.
+    func testQueuedStateForRow() {
+        XCTAssertNil(QueuedState(submitPending: false, reachable: false, running: true))
+        XCTAssertEqual(QueuedState(submitPending: true, reachable: false, running: true), .waitingForSignal)
+        XCTAssertEqual(QueuedState(submitPending: true, reachable: true, running: true), .sending)
+        XCTAssertEqual(QueuedState(submitPending: true, reachable: true, running: false), .queued)
+    }
+
     @MainActor
     func testApplyRecordsTheProcoreID() throws {
         let draft = LocalDraft(companyID: 1, projectID: 7, ownerProcoreUserID: 42, transcript: "Header size")

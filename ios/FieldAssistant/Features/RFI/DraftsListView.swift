@@ -94,6 +94,7 @@ struct DraftsListView: View {
     waiting.subject = "Spalling at loading dock column"
     let queued = LocalDraft(companyID: 1, projectID: 7, ownerProcoreUserID: 42, status: .submitting, transcript: "Window")
     queued.subject = "Window rough opening, unit 1204"
+    queued.submitPending = true
     let failed = LocalDraft(companyID: 1, projectID: 7, ownerProcoreUserID: 42, status: .failed, transcript: "Fire caulk",
                             capturedAt: .now.addingTimeInterval(-86_400))
     failed.subject = "Fire caulk at level 2 shaft"
