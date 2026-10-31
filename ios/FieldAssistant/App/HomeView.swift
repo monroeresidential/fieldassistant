@@ -370,8 +370,10 @@ struct HomeView: View {
 }
 
 /// A feature card: the shipped feature selected (2 pt orange border, accent kicker), or not
-/// available on the project (dashed hairline, muted text, Procore's reason beneath the title); the
-/// rest coming (dashed hairline, tertiary text). None is tappable.
+/// available on the project (dashed hairline, muted text, Procore's reason beneath the kicker, at
+/// most three lines so the row stays short; VoiceOver reads all of it); the rest coming (dashed
+/// hairline, tertiary text). The title sits at the bottom of every card so a row's titles line up.
+/// None is tappable.
 private struct FeatureCard: View {
     enum State {
         case selected
@@ -419,18 +421,19 @@ private struct FeatureCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Kicker(kicker, style: .card, color: isSelected ? nil : ink)
+            if let reason {
+                Text(reason)
+                    .textStyle(Theme.Text.meta12)
+                    .foregroundStyle(Theme.Color.muted)
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 0)
             Text(title)
                 .textStyle(Theme.Text.cardTitle)
                 .foregroundStyle(ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-            if let reason {
-                Text(reason)
-                    .textStyle(Theme.Text.meta12)
-                    .foregroundStyle(Theme.Color.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
@@ -467,6 +470,26 @@ private struct WaitingDraftsGate<Content: View>: View {
     var body: some View {
         if !waiting.isEmpty { content() }
     }
+}
+
+#Preview("RFI not available") {
+    VStack(spacing: 22) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
+            FeatureCard(
+                title: "RFI",
+                state: .unavailable(reason: "You have Read Only access to the RFI tool on this project. Ask a Procore admin for Standard access.")
+            )
+            FeatureCard(title: "Observation", state: .coming)
+            FeatureCard(title: "Punch item", state: .coming)
+            FeatureCard(title: "Daily log", state: .coming)
+        }
+        RecordButton(glyph: .mic, size: 116, halo: 10, isEnabled: false) {}
+        Text(HomeView.recordHint(FeatureAvailability(available: false, reason: nil)))
+            .textStyle(Theme.Text.meta13)
+            .foregroundStyle(Theme.Color.muted)
+    }
+    .padding(20)
+    .background(Theme.Color.ground)
 }
 
 #Preview {
