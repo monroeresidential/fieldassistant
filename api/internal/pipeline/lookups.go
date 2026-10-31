@@ -34,10 +34,13 @@ const (
 	KindCostCodes    LookupKind = "cost_codes"
 	KindVendors      LookupKind = "vendors"
 	KindDrawings     LookupKind = "drawings"
+	// KindRFIManagers is Procore's potential RFI managers list: the people
+	// who may manage an RFI on the project.
+	KindRFIManagers LookupKind = "rfi_managers"
 )
 
 // AllKinds lists every lookup kind in a stable order.
-var AllKinds = []LookupKind{KindUsers, KindLocations, KindSpecSections, KindCostCodes, KindVendors, KindDrawings}
+var AllKinds = []LookupKind{KindUsers, KindLocations, KindSpecSections, KindCostCodes, KindVendors, KindDrawings, KindRFIManagers}
 
 // ParseKind returns the kind named s.
 func ParseKind(s string) (LookupKind, bool) {
@@ -459,6 +462,8 @@ func (l *Lookups) fetch(ctx context.Context, userID uuid.UUID, companyID, projec
 		items, err = l.pc.ListVendors(ctx, token, companyID, projectID)
 	case KindDrawings:
 		items, err = l.pc.ListDrawings(ctx, token, companyID, projectID)
+	case KindRFIManagers:
+		items, err = l.pc.ListPotentialRFIManagers(ctx, token, companyID, projectID)
 	default:
 		return nil, fmt.Errorf("pipeline: unknown lookup kind %q", kind)
 	}

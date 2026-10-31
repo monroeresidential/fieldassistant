@@ -115,7 +115,10 @@ type Drafts struct {
 	tokens    AccessTokenSource
 	blobs     blob.Store
 	features  map[string]Feature
-	model     string
+	// featureStates, when set, is told the outcome of each RFI create (see
+	// Features.RecordCreateOutcome). Nil is allowed.
+	featureStates *Features
+	model         string
 	// llmTimeout is the extractor's per-request timeout; zero means none.
 	llmTimeout time.Duration
 	now        func() time.Time
@@ -137,6 +140,12 @@ func NewDrafts(st *store.Store, lookups *Lookups, extractor llm.Extractor, pc Pr
 		logger = slog.Default()
 	}
 	return &Drafts{st: st, lookups: lookups, extractor: extractor, procore: pc, tokens: tokens, blobs: blobs, features: features, model: model, llmTimeout: llmTimeout, now: now, log: logger}
+}
+
+// SetFeatureStates gives d the Features to tell each RFI create's outcome,
+// for the create_outcome probe. Call it before d is used.
+func (d *Drafts) SetFeatureStates(f *Features) {
+	d.featureStates = f
 }
 
 // createSlack is the time a detached extraction gets beyond the
@@ -593,6 +602,7 @@ var toolDescriptions = map[LookupKind]string{
 	KindCostCodes:    "Search the project's cost codes by code or name.",
 	KindVendors:      "Search the project's vendors (companies) by name, trade or abbreviation.",
 	KindDrawings:     "Search the project's drawings by sheet number, title or discipline.",
+	KindRFIManagers:  "Search the people who may manage an RFI on this project by name or login.",
 }
 
 // tools offers a list_<kind> tool for every lookup the user can read, then

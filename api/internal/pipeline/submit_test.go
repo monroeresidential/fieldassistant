@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -758,5 +760,84 @@ func TestSaveEdits_LockedWhileSubmitting_OpenAfterFailure(t *testing.T) {
 	}
 	if got.Status != StatusReviewed || got.Error != nil {
 		t.Errorf("draft = status %q error %+v", got.Status, got.Error)
+	}
+}
+
+// procoreCreateError returns the error the real Procore client gives for a
+// POST /rfis answered with status and body.
+func procoreCreateError(t *testing.T, status int, body string) error {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	pc := procore.NewClient(srv.URL, srv.Client(), func(time.Duration) {}, nil)
+	_, err := pc.CreateRFI(context.Background(), "tok", testCompany, testProject, procore.RFICreate{Subject: "S"})
+	if err == nil {
+		t.Fatalf("CreateRFI against a %d succeeded", status)
+	}
+	return err
+}
+
+// Procore answers some field problems with a 400 and an errors map: the
+// field is flagged, not _form.
+func TestRunSubmit_400_WithFieldErrors_FlagsField(t *testing.T) {
+	e := newDraftsEnv(t)
+	e.fp.Err["CreateRFI"] = procoreCreateError(t, 400, `{"errors":{"rfi_manager_id":["invalid"]}}`)
+	d := e.submittable(t, twistedFinal)
+	e.submit(t, d)
+
+	if err := e.drafts.RunSubmit(context.Background(), d.ID); err != nil {
+		t.Fatalf("RunSubmit = %v, want nil so River does not retry", err)
+	}
+	got := e.mustGet(t, d.ID)
+	if got.Status != StatusFailed || got.Error == nil || got.Error.Code != CodeProcoreValidation {
+		t.Fatalf("draft = status %q error %+v", got.Status, got.Error)
+	}
+	if u := got.Unresolved; len(u) != 1 || u[0].Field != "rfi_manager_id" || u[0].Reason != ReasonProcoreValidation || u[0].Message != "invalid" {
+		t.Errorf("unresolved = %+v, want rfi_manager_id flagged %q", got.Unresolved, "invalid")
+	}
+	if n := e.fp.CallCount("ListRFIs"); n != 0 {
+		t.Errorf("ListRFIs called %d times after a 400", n)
+	}
+}
+
+// The submit path tells Features what Procore said about the user's create,
+// for the create_outcome probe.
+func TestRunSubmit_RecordsCreateOutcomeForFeatures(t *testing.T) {
+	e := newDraftsEnv(t)
+	features := NewFeatures(e.drafts.lookups, e.fp, e.tokens, ProbeCreateOutcome, testTTL, e.clock.Now, nil)
+	e.drafts.SetFeatureStates(features)
+	ctx := context.Background()
+	rfi := func() FeatureState {
+		t.Helper()
+		states, _, err := features.Get(ctx, e.user, testCompany, testProject, false)
+		if err != nil {
+			t.Fatalf("features Get: %v", err)
+		}
+		return rfiState(t, states)
+	}
+
+	e.fp.Err["CreateRFI"] = forbidden(`{"errors":["You do not have permission to create RFIs"]}`)
+	d := e.submittable(t, twistedFinal)
+	e.submit(t, d)
+	if err := e.drafts.RunSubmit(ctx, d.ID); err != nil {
+		t.Fatalf("RunSubmit: %v", err)
+	}
+	if got := rfi(); got.Available || got.Reason != "You do not have permission to create RFIs" {
+		t.Fatalf("after a 403 create: rfi = %+v, want unavailable with Procore's reason", got)
+	}
+
+	delete(e.fp.Err, "CreateRFI")
+	e.fp.Created = procore.RFICreated{ID: 555, Number: "7"}
+	d2 := e.submittable(t, twistedFinal)
+	e.submit(t, d2)
+	if err := e.drafts.RunSubmit(ctx, d2.ID); err != nil {
+		t.Fatalf("RunSubmit: %v", err)
+	}
+	if got := rfi(); !got.Available {
+		t.Fatalf("after a created RFI: rfi = %+v, want available", got)
 	}
 }

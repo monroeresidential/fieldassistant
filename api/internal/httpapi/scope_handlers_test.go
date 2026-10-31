@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
@@ -209,5 +210,14 @@ func TestProjects_PermissionDenied_NoBody_GenericMessage(t *testing.T) {
 	wantError(t, res, b, http.StatusForbidden, "procore_permission_denied")
 	if e := decode[Error](t, b); e.Message != "Procore permission denied" {
 		t.Fatalf("message %q, want the generic text", e.Message)
+	}
+}
+
+// A read answered with a 400 or 422 field-error body is a Procore failure
+// (502), as an *APIError of that status was, not an internal error.
+func TestMapProcoreErr_ValidationError_IsProcoreUnavailable(t *testing.T) {
+	got := mapProcoreErr(fmt.Errorf("list: %w", &procore.ValidationError{Fields: map[string][]string{"filters": {"invalid"}}}))
+	if got == nil || got.Status != http.StatusBadGateway || got.Code != "procore_unavailable" {
+		t.Fatalf("mapProcoreErr = %+v, want 502 procore_unavailable", got)
 	}
 }

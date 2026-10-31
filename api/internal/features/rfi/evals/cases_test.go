@@ -347,6 +347,9 @@ func TestCases_Parse(t *testing.T) {
 			if !fixtureHas(c.Fixture[pipeline.KindUsers], c.User.ProcoreID) {
 				t.Errorf("speaker %d is not in the users fixture", c.User.ProcoreID)
 			}
+			if !fixtureHas(c.Fixture[pipeline.KindRFIManagers], c.User.ProcoreID) {
+				t.Errorf("speaker %d is not in the rfi_managers fixture, so rfi_manager_id would be flagged", c.User.ProcoreID)
+			}
 			checkField := func(name string) {
 				if !fields[name] {
 					t.Errorf("expect names unknown field %q", name)

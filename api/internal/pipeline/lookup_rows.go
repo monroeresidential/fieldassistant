@@ -50,6 +50,13 @@ func rowsFor(kind LookupKind, items any) []LookupRow {
 		for _, x := range list {
 			rows = append(rows, LookupRow{ID: x.ID, Label: x.Number + " " + x.Title, Extra: extra("number", x.Number, "discipline", x.Discipline)})
 		}
+	case []procore.RFIManager:
+		if kind != KindRFIManagers {
+			return rows
+		}
+		for _, x := range list {
+			rows = append(rows, LookupRow{ID: x.ID, Label: x.Name, Extra: extra("login", x.Login)})
+		}
 	}
 	return rows
 }

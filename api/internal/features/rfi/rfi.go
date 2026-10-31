@@ -21,6 +21,9 @@ const (
 	// draftUntil is how many RFIs a user submits as Procore drafts before
 	// new ones default to open.
 	draftUntil = 5
+	// notManagerMessage flags rfi_manager_id when the speaker is not among
+	// Procore's potential RFI managers.
+	notManagerMessage = "You are not an RFI manager on this project"
 )
 
 // Feature implements pipeline.Feature for RFIs.
@@ -46,13 +49,14 @@ func (*Feature) LookupKinds() []pipeline.LookupKind {
 	return []pipeline.LookupKind{
 		pipeline.KindUsers, pipeline.KindLocations, pipeline.KindSpecSections,
 		pipeline.KindCostCodes, pipeline.KindVendors, pipeline.KindDrawings,
+		pipeline.KindRFIManagers,
 	}
 }
 
 func (*Feature) IDFields() []pipeline.IDField {
 	return []pipeline.IDField{
 		{Field: "assignee_ids", Kind: pipeline.KindUsers, Multi: true},
-		{Field: "rfi_manager_id", Kind: pipeline.KindUsers},
+		{Field: "rfi_manager_id", Kind: pipeline.KindRFIManagers},
 		{Field: "distribution_ids", Kind: pipeline.KindUsers, Multi: true},
 		{Field: "responsible_contractor_id", Kind: pipeline.KindVendors},
 		{Field: "location_id", Kind: pipeline.KindLocations},
@@ -163,16 +167,19 @@ func (*Feature) ApplyDefaults(ctx pipeline.ExtractContext, payload map[string]an
 	}
 	var un []pipeline.Unresolved
 
+	// The RFI manager defaults to the speaker when Procore lists them as a
+	// potential RFI manager; otherwise the reviewer picks one of those.
 	if out["rfi_manager_id"] == nil && !open["rfi_manager_id"] {
 		delete(out, "rfi_manager_id")
-		if lookups[pipeline.KindUsers].Has(ctx.UserProcoreID) {
+		managers := lookups[pipeline.KindRFIManagers]
+		if managers.Has(ctx.UserProcoreID) {
 			out["rfi_manager_id"] = ctx.UserProcoreID
 		} else {
 			un = append(un, pipeline.Unresolved{
 				Field:      "rfi_manager_id",
 				Reason:     pipeline.ReasonNotFound,
-				Message:    "You are not in this project's directory",
-				Candidates: []pipeline.LookupRow{},
+				Message:    notManagerMessage,
+				Candidates: append([]pipeline.LookupRow{}, managers.Rows...),
 			})
 		}
 	}

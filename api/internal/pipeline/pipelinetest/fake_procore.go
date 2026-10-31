@@ -147,6 +147,7 @@ var listMethods = map[string]string{
 	"cost_codes":    "ListCostCodes",
 	"vendors":       "ListVendors",
 	"drawings":      "ListDrawings",
+	"rfi_managers":  "ListPotentialRFIManagers",
 }
 
 // ProbeKind records a "ProbeKind" call. Its error is the one scripted for

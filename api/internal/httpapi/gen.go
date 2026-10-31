@@ -182,6 +182,7 @@ const (
 	LookupResponseKindCostCodes    LookupResponseKind = "cost_codes"
 	LookupResponseKindDrawings     LookupResponseKind = "drawings"
 	LookupResponseKindLocations    LookupResponseKind = "locations"
+	LookupResponseKindRfiManagers  LookupResponseKind = "rfi_managers"
 	LookupResponseKindSpecSections LookupResponseKind = "spec_sections"
 	LookupResponseKindUsers        LookupResponseKind = "users"
 	LookupResponseKindVendors      LookupResponseKind = "vendors"
@@ -195,6 +196,8 @@ func (e LookupResponseKind) Valid() bool {
 	case LookupResponseKindDrawings:
 		return true
 	case LookupResponseKindLocations:
+		return true
+	case LookupResponseKindRfiManagers:
 		return true
 	case LookupResponseKindSpecSections:
 		return true
@@ -296,6 +299,7 @@ const (
 	GetLookupParamsKindCostCodes    GetLookupParamsKind = "cost_codes"
 	GetLookupParamsKindDrawings     GetLookupParamsKind = "drawings"
 	GetLookupParamsKindLocations    GetLookupParamsKind = "locations"
+	GetLookupParamsKindRfiManagers  GetLookupParamsKind = "rfi_managers"
 	GetLookupParamsKindSpecSections GetLookupParamsKind = "spec_sections"
 	GetLookupParamsKindUsers        GetLookupParamsKind = "users"
 	GetLookupParamsKindVendors      GetLookupParamsKind = "vendors"
@@ -309,6 +313,8 @@ func (e GetLookupParamsKind) Valid() bool {
 	case GetLookupParamsKindDrawings:
 		return true
 	case GetLookupParamsKindLocations:
+		return true
+	case GetLookupParamsKindRfiManagers:
 		return true
 	case GetLookupParamsKindSpecSections:
 		return true

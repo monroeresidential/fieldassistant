@@ -215,7 +215,9 @@ paths:
         Send the last `ETag` in `If-None-Match` to get a 304 when nothing
         changed, and `Cache-Control: no-cache` to force a refresh from
         Procore. A kind the user may not read in Procore answers 200 with
-        `unavailable: true`, no rows and the reason.
+        `unavailable: true`, no rows and the reason. `rfi_managers` is
+        Procore's potential RFI managers list, the candidates for an RFI's
+        `rfi_manager_id`; its rows carry the person's `login` in `extra`.
       parameters:
         - name: projectId
           in: path
@@ -228,7 +230,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [users, locations, spec_sections, cost_codes, vendors, drawings]
+            enum: [users, locations, spec_sections, cost_codes, vendors, drawings, rfi_managers]
         - name: X-Company-Id
           in: header
           required: true
@@ -944,7 +946,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [users, locations, spec_sections, cost_codes, vendors, drawings]
+          enum: [users, locations, spec_sections, cost_codes, vendors, drawings, rfi_managers]
         rows:
           type: array
           items:

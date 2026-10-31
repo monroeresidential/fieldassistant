@@ -28,12 +28,13 @@ var errForbiddenScope = &APIError{
 // error, which the caller passes on unchanged to become a 500.
 func mapProcoreErr(err error) *APIError {
 	var pcErr *procore.APIError
+	var ve *procore.ValidationError
 	switch {
 	case errors.Is(err, auth.ErrReauthRequired), errors.Is(err, procore.ErrUnauthorized):
 		return &APIError{Status: http.StatusUnauthorized, Code: "reauth_required", Message: "sign in to Procore again"}
 	case errors.Is(err, procore.ErrPermissionDenied):
 		return &APIError{Status: http.StatusForbidden, Code: "procore_permission_denied", Message: pipeline.ProcoreReason(err)}
-	case errors.Is(err, procore.ErrUnavailable), errors.As(err, &pcErr):
+	case errors.Is(err, procore.ErrUnavailable), errors.As(err, &pcErr), errors.As(err, &ve):
 		return &APIError{Status: http.StatusBadGateway, Code: "procore_unavailable", Message: "Procore request failed"}
 	}
 	return nil

@@ -479,6 +479,7 @@ func startTestServer(t *testing.T, scheme string) testServer {
 	features := map[string]pipeline.Feature{"rfi": rfi.New()}
 	blobs := blob.NewMemory()
 	drafts := pipeline.NewDrafts(st, lookups, scripted, pc, tokens, blobs, features, "claude-configured", 20*time.Second, clock.now, logger)
+	drafts.SetFeatureStates(featureSet)
 	// The River client works submit jobs for the whole test; it stops
 	// before the database lock is released.
 	mirror := records.NewMirror(st, map[records.Kind]records.Fetcher{

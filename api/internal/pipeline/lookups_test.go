@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -328,6 +329,10 @@ func TestLookupKinds_MatchProcoreKinds(t *testing.T) {
 	want := map[LookupKind]string{
 		KindUsers: procore.KindUsers, KindLocations: procore.KindLocations, KindSpecSections: procore.KindSpecSections,
 		KindCostCodes: procore.KindCostCodes, KindVendors: procore.KindVendors, KindDrawings: procore.KindDrawings,
+		KindRFIManagers: procore.KindRFIManagers,
+	}
+	if len(AllKinds) != len(want) {
+		t.Errorf("AllKinds = %v, want the %d kinds above", AllKinds, len(want))
 	}
 	for _, k := range AllKinds {
 		if string(k) != want[k] {
@@ -641,6 +646,62 @@ func TestRowsFor_Users_LabelAndExtra(t *testing.T) {
 		if r.Extra[k] != v {
 			t.Errorf("extra[%s] = %q, want %q", k, r.Extra[k], v)
 		}
+	}
+}
+
+func TestRowsFor_RFIManagers(t *testing.T) {
+	rows := rowsFor(KindRFIManagers, []procore.RFIManager{{ID: 3, Name: "Pat Manager", Login: "pat@x.com"}, {ID: 4, Name: "Sam"}})
+	want := []LookupRow{{ID: 3, Label: "Pat Manager", Extra: map[string]string{"login": "pat@x.com"}}, {ID: 4, Label: "Sam"}}
+	if !reflect.DeepEqual(rows, want) {
+		t.Errorf("rows = %+v, want %+v", rows, want)
+	}
+	if rows := rowsFor(KindUsers, []procore.RFIManager{{ID: 3}}); len(rows) != 0 {
+		t.Errorf("managers under the users kind = %+v, want none", rows)
+	}
+}
+
+// The rfi_managers kind is Procore's potential RFI managers list, cached
+// and probed like any other kind.
+func TestLookups_RFIManagers_FromPotentialManagers(t *testing.T) {
+	l, fp, _, _ := newLookups(t)
+	fp.RFIManagers = []procore.RFIManager{{ID: 42, Name: "Pat Field", Login: "pat@x.com"}}
+	ctx := context.Background()
+
+	set, err := l.Get(ctx, uuid.New(), testCompany, testProject, KindRFIManagers, false)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if set.Unavailable || len(set.Rows) != 1 || set.Rows[0].ID != 42 || set.Rows[0].Label != "Pat Field" {
+		t.Fatalf("set = %+v", set)
+	}
+	if n := fp.CallCount("ListPotentialRFIManagers"); n != 1 {
+		t.Errorf("ListPotentialRFIManagers called %d times, want 1", n)
+	}
+
+	// A second user reading the cached row is probed for the kind.
+	if _, err := l.Get(ctx, uuid.New(), testCompany, testProject, KindRFIManagers, false); err != nil {
+		t.Fatalf("second Get: %v", err)
+	}
+	var probed bool
+	for _, c := range fp.Calls() {
+		probed = probed || (c.Method == "ProbeKind" && c.Kind == string(KindRFIManagers))
+	}
+	if !probed {
+		t.Error("second user was not probed for rfi_managers")
+	}
+}
+
+// A user who may not see the managers list (a 403, or the RFI tool off) gets
+// an unavailable set, like any other kind.
+func TestLookups_RFIManagers_Denied_Unavailable(t *testing.T) {
+	l, fp, _, _ := newLookups(t)
+	fp.Err["ListPotentialRFIManagers"] = &procore.APIError{Status: 404}
+	set, err := l.Get(context.Background(), uuid.New(), testCompany, testProject, KindRFIManagers, false)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !set.Unavailable || len(set.Rows) != 0 {
+		t.Fatalf("set = %+v, want unavailable", set)
 	}
 }
 

@@ -25,8 +25,8 @@ const (
 )
 
 // newDraftServer starts a test server where company 7 is visible and project
-// 9 has Ben West (11) and the signed-in user (42) in its directory. The
-// extractor answers with draftFinal.
+// 9 has Ben West (11) and the signed-in user (42) in its directory, with 42
+// its one potential RFI manager. The extractor answers with draftFinal.
 func newDraftServer(t *testing.T) (testServer, string) {
 	t.Helper()
 	ts := newDraftTestServer(t)
@@ -37,6 +37,7 @@ func newDraftServer(t *testing.T) (testServer, string) {
 			{ID: 11, Name: "Ben West", JobTitle: "Architect"},
 			{ID: 42, Name: "Pat Manager", JobTitle: "Superintendent"},
 		}
+		f.RFIManagers[draftProject] = []procore.RFIManager{{ID: 42, Name: "Pat Manager", Login: "pat@example.com"}}
 	})
 	ts.LLM.Steps = []llmtest.Step{{Final: draftFinal}}
 	return ts, signIn(t, ts.Server, "device-1").AccessToken
