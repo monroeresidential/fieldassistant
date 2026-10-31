@@ -610,7 +610,7 @@ final class AppState {
     }
 }
 
-#if DEBUG
+/// Not `#if DEBUG`: the `#Preview` blocks are compiled into Release (Prod) builds too.
 extension AppState {
     /// A signed-out app state for SwiftUI previews: no server, preview-only defaults.
     static func preview(container: ModelContainer) -> AppState {
@@ -623,4 +623,3 @@ extension AppState {
         )
     }
 }
-#endif

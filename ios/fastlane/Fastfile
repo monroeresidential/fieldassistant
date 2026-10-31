@@ -39,13 +39,21 @@ platform :ios do
       is_key_content_base64: true
     )
 
+    # Date-stamped build number (UTC, yyyyMMddHHmm): it only grows, so TestFlight never sees a repeat.
+    # Passed through xcargs because the project was just regenerated from project.yml.
+    build_number = Time.now.utc.strftime("%Y%m%d%H%M")
+
     build_app(
       scheme: "FieldAssistant",
       configuration: configuration,
       export_method: "app-store",
-      xcargs: SPM_FLAGS
+      xcargs: "#{SPM_FLAGS} CURRENT_PROJECT_VERSION=#{build_number}"
     )
 
-    upload_to_testflight(app_identifier: app_identifier, skip_waiting_for_build_processing: true)
+    upload_to_testflight(
+      app_identifier: app_identifier,
+      changelog: sh("git", "log", "-1", "--pretty=%s").strip,
+      skip_waiting_for_build_processing: true
+    )
   end
 end

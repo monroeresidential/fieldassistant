@@ -168,7 +168,11 @@ struct SettingsView: View {
         return "\(number) px"
     }
 
-    /// "Field Assistant 1.0 (12) · local · localhost:8080"
+    /// "Field Assistant 1.0 (202610311200) · local · localhost:8080"
+    static func buildLine(version: String, build: String, environment: String, host: String) -> String {
+        "Field Assistant \(version) (\(build)) · \(environment) · \(host)"
+    }
+
     private static var buildLine: String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"
@@ -176,7 +180,7 @@ struct SettingsView: View {
         let host = AppConfig.apiBaseURL.host(percentEncoded: false).map { host in
             AppConfig.apiBaseURL.port.map { "\(host):\($0)" } ?? host
         } ?? ""
-        return "Field Assistant \(version) (\(build)) · \(AppConfig.environment) · \(host)"
+        return buildLine(version: version, build: build, environment: AppConfig.environment, host: host)
     }
 }
 

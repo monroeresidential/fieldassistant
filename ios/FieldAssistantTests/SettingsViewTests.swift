@@ -51,4 +51,11 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertEqual(SettingsView.photoSizeValue(PhotoLimits.longEdge, locale: locale), "2,500 px")
         XCTAssertEqual(SettingsView.photoSizeValue(800, locale: locale), "800 px")
     }
+
+    @MainActor
+    func testSettingsFooterReadsVersionAndBuild() {
+        XCTAssertEqual(
+            SettingsView.buildLine(version: "1.0", build: "202610311200", environment: "prod", host: "api.fieldassistant.tools"),
+            "Field Assistant 1.0 (202610311200) · prod · api.fieldassistant.tools")
+    }
 }

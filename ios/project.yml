@@ -31,12 +31,16 @@ targets:
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         DEVELOPMENT_TEAM: PR6KG6PZJN # Field Assistant Apple team
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1" # Fastlane stamps yyyyMMddHHmm UTC for TestFlight builds
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     info:
       path: FieldAssistant/Resources/Info.plist
       properties:
         CFBundleDisplayName: $(APP_DISPLAY_NAME)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleURLTypes:
           - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
             CFBundleURLSchemes:
