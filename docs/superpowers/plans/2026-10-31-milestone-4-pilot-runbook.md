@@ -30,8 +30,8 @@ A checklist, not an SDD plan: these steps happen in portals, on the droplet and 
 
 ## D. Device check for this milestone (Prod build on the four phones; Dev build where a sandbox login is needed)
 
-- [ ] **D1** The Read-only sandbox login (B3) on the Dev build: Home shows the RFI card "Not available" with Procore's reason before recording; the record button is disabled with the hint.
-- [ ] **D2** A required field configured on the real project (Drew configures one on the test project if 118 W Illinois has none): submitting without it flags the row on Review, or shows "Procore requires <field>" for a field without a row.
+- [ ] **D1** The Read-only sandbox login (B3) on the Dev build: Home shows the RFI card "Not available" with Procore's reason before recording; the record button is disabled with the hint. A project the user cannot see shows Procore's reason on the RFI list and Home.
+- [ ] **D2** A required field configured on the real project (Drew configures one on the test project if 118 W Illinois has none): submitting without it flags the row on Review, or shows "Procore requires <field>" for a field without a row. A dotted key (for example `question.attachments`) appears as a "Procore requires Attachments" note.
 - [ ] **D3** Revoke the app's access for one tester in Procore (or change that tester's password): the phone shows one sign-in prompt with the note, and a draft queued before the revocation sends after signing back in.
 - [ ] **D4** Airplane mode on during a token refresh (lock the phone for 15 minutes, then open the app offline, then restore signal): no sign-out.
 - [ ] **D5** Switch projects three times quickly: Home and the picker do not refetch per switch (watch the dev API log on the droplet for `/companies/{id}/projects`).
