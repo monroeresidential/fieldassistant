@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -91,6 +92,32 @@ func createDraft(t *testing.T, srv *httptest.Server, token string, id uuid.UUID)
 		t.Fatalf("create draft: status %d; body %s", res.StatusCode, b)
 	}
 	return decode[DraftResponse](t, b)
+}
+
+// The RFI managers list is warmed for the manager default but is not offered
+// to the extractor: its tools are exactly the six list_ tools and the final
+// tool, as the eval set was run with.
+func TestRFIFeature_ExtractorToolsExcludeRFIManagers(t *testing.T) {
+	ts, token := newDraftServer(t)
+	d := createDraft(t, ts.Server, token, uuid.New())
+
+	if len(ts.LLM.Requests) != 1 {
+		t.Fatalf("extractions = %d, want 1", len(ts.LLM.Requests))
+	}
+	var names []string
+	for _, tool := range ts.LLM.Requests[0].Tools {
+		names = append(names, tool.Name)
+	}
+	want := []string{"list_users", "list_locations", "list_spec_sections", "list_cost_codes", "list_vendors", "list_drawings", "submit_draft"}
+	if !slices.Equal(names, want) {
+		t.Errorf("tools = %v, want %v", names, want)
+	}
+	if n := ts.Procore.requestsTo("/rest/v1.0/projects/" + strconv.FormatInt(draftProject, 10) + "/rfis/potential_rfi_managers"); n == 0 {
+		t.Error("rfi_managers was not warmed")
+	}
+	if d.Payload.RfiManagerId == nil || *d.Payload.RfiManagerId != 42 {
+		t.Errorf("rfi_manager_id = %v, want 42 from the warmed managers list", d.Payload.RfiManagerId)
+	}
 }
 
 func TestCreateDraft_ReturnsDraftResponse(t *testing.T) {

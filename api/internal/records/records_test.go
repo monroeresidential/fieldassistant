@@ -454,6 +454,9 @@ func TestSync_ErrorCodes(t *testing.T) {
 		{"bare 403", &procore.APIError{Status: 403}, "procore_permission_denied"},
 		{"unavailable", fmt.Errorf("%w: dial tcp", procore.ErrUnavailable), "procore_unavailable"},
 		{"timeout", context.DeadlineExceeded, "procore_unavailable"},
+		// A 400 or 422 with an errors map decodes as a ValidationError, not
+		// an APIError; on a read it is still Procore failing the pull.
+		{"400 with errors", fmt.Errorf("list rfis: %w", &procore.ValidationError{Fields: map[string][]string{"filters.updated_at": {"is invalid"}}}), "procore_unavailable"},
 		{"other", fmt.Errorf("boom"), "internal"},
 	}
 	for _, tc := range cases {

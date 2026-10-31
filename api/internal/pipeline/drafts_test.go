@@ -755,3 +755,34 @@ func TestCreate_ConcurrentSameID_OneExtraction(t *testing.T) {
 		t.Errorf("extractor calls = %d, want 1", len(e.llm.Requests))
 	}
 }
+
+// narrowFeature warms users and locations but offers the extractor only
+// users, as the RFI feature does with rfi_managers.
+type narrowFeature struct{ draftsFeature }
+
+func (narrowFeature) LookupKinds() []LookupKind    { return []LookupKind{KindUsers, KindLocations} }
+func (narrowFeature) ExtractorKinds() []LookupKind { return []LookupKind{KindUsers} }
+
+func TestTools_HonorExtractorKinds(t *testing.T) {
+	sets := map[LookupKind]LookupSet{
+		KindUsers:     {Kind: KindUsers, Rows: []LookupRow{{ID: 1, Label: "Ann"}}},
+		KindLocations: {Kind: KindLocations, Rows: []LookupRow{{ID: 2, Label: "Roof"}}},
+	}
+	var names []string
+	for _, tool := range tools(narrowFeature{}, sets) {
+		names = append(names, tool.Name)
+	}
+	if want := []string{"list_users", FinalTool}; !reflect.DeepEqual(names, want) {
+		t.Errorf("tools = %v, want %v", names, want)
+	}
+	h := toolHandler(toolSets(narrowFeature{}, sets))
+	if _, err := h(context.Background(), llm.ToolCall{Name: "list_users", Input: json.RawMessage(`{}`)}); err != nil {
+		t.Errorf("list_users: %v", err)
+	}
+	if _, err := h(context.Background(), llm.ToolCall{Name: "list_locations", Input: json.RawMessage(`{}`)}); err == nil {
+		t.Error("list_locations answered, want unknown tool: it is warmed but not offered")
+	}
+	if got := ToolKinds(draftsFeature{}); !reflect.DeepEqual(got, draftsFeature{}.LookupKinds()) {
+		t.Errorf("ToolKinds without ExtractorKinds = %v, want LookupKinds", got)
+	}
+}

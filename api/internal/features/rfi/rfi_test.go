@@ -224,11 +224,29 @@ func TestApplyDefaults_UserNotManager_Unresolved(t *testing.T) {
 		t.Errorf("assignee default changed: %s", b)
 	}
 
-	// With no managers list (the user may not read it), the candidates are
-	// empty, not null.
-	_, un = New().ApplyDefaults(ctxFor(42, 0), map[string]any{}, nil, usersWith(42))
-	if len(un) != 1 || un[0].Field != "rfi_manager_id" || un[0].Candidates == nil || len(un[0].Candidates) != 0 {
-		t.Errorf("no managers list: unresolved = %+v", un)
+}
+
+// When Procore did not give us the managers list (a 403, the RFI tool off, a
+// failed fetch), we do not know whether the speaker is a manager: the field
+// is flagged with a message that says only that, and no candidates.
+func TestApplyDefaults_ManagersUnavailable_Unresolved(t *testing.T) {
+	unavailable := usersWith(42)
+	unavailable[pipeline.KindRFIManagers] = pipeline.LookupSet{Kind: pipeline.KindRFIManagers, Rows: []pipeline.LookupRow{}, Unavailable: true, Reason: "RFI tool not enabled on this project"}
+	for name, sets := range map[string]map[pipeline.LookupKind]pipeline.LookupSet{
+		"unavailable": unavailable,
+		"not loaded":  usersWith(42),
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, un := New().ApplyDefaults(ctxFor(42, 0), map[string]any{}, nil, sets)
+			if _, ok := out["rfi_manager_id"]; ok {
+				t.Errorf("rfi_manager_id = %v, want unset", out["rfi_manager_id"])
+			}
+			if len(un) != 1 || un[0].Field != "rfi_manager_id" || un[0].Reason != pipeline.ReasonNotFound ||
+				un[0].Message != "Procore did not list RFI managers for this project" ||
+				un[0].Candidates == nil || len(un[0].Candidates) != 0 {
+				t.Errorf("unresolved = %+v", un)
+			}
+		})
 	}
 }
 
@@ -245,6 +263,13 @@ func TestRFI_RFIManagerKind(t *testing.T) {
 	}
 	if !slices.Contains(f.LookupKinds(), pipeline.KindRFIManagers) {
 		t.Errorf("LookupKinds = %v, want rfi_managers warmed", f.LookupKinds())
+	}
+	want := []pipeline.LookupKind{
+		pipeline.KindUsers, pipeline.KindLocations, pipeline.KindSpecSections,
+		pipeline.KindCostCodes, pipeline.KindVendors, pipeline.KindDrawings,
+	}
+	if got := pipeline.ToolKinds(f); !slices.Equal(got, want) {
+		t.Errorf("ToolKinds = %v, want the six kinds the extractor had before (no rfi_managers)", got)
 	}
 }
 

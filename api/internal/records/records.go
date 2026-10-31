@@ -356,7 +356,9 @@ func saveState(ctx context.Context, q *db.Queries, s db.UserSyncState) error {
 // classify maps a token-source or fetch error to a PullStatus code and
 // message, as httpapi maps Procore errors: 401 or a rejected refresh is
 // reauth_required, 403 is procore_permission_denied, and any other Procore
-// API status, an unreachable Procore or a timeout is procore_unavailable.
+// API status (including a 400 or 422 whose field errors decode as a
+// *procore.ValidationError), an unreachable Procore or a timeout is
+// procore_unavailable.
 // A 404 is procore_permission_denied too: classify only sees list pulls,
 // and a 404 on a project's list means the project or the tool is not
 // visible to this user, as pipeline's lookups treat it. The pull is the
@@ -365,12 +367,13 @@ func classify(err error) (code, message string) {
 	var apiErr *procore.APIError
 	isAPI := errors.As(err, &apiErr)
 	var netErr net.Error
+	var ve *procore.ValidationError
 	switch {
 	case errors.Is(err, auth.ErrReauthRequired), errors.Is(err, procore.ErrUnauthorized), isAPI && apiErr.Status == 401:
 		return CodeReauthRequired, "Sign in to Procore again to sync."
 	case errors.Is(err, procore.ErrPermissionDenied), isAPI && (apiErr.Status == 403 || apiErr.Status == 404):
 		return CodePermissionDenied, "Procore did not allow access to these records."
-	case errors.Is(err, procore.ErrUnavailable), isAPI, errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr):
+	case errors.Is(err, procore.ErrUnavailable), isAPI, errors.As(err, &ve), errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr):
 		return CodeUnavailable, "Procore could not be reached. Try again shortly."
 	}
 	return CodeInternal, "Sync failed. Try again shortly."

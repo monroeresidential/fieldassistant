@@ -24,6 +24,10 @@ const (
 	// notManagerMessage flags rfi_manager_id when the speaker is not among
 	// Procore's potential RFI managers.
 	notManagerMessage = "You are not an RFI manager on this project"
+	// noManagersMessage flags rfi_manager_id when the potential RFI managers
+	// list could not be read (a 403, the RFI tool off, a failed fetch), so
+	// whether the speaker is a manager is unknown.
+	noManagersMessage = "Procore did not list RFI managers for this project"
 )
 
 // Feature implements pipeline.Feature for RFIs.
@@ -52,6 +56,21 @@ func (*Feature) LookupKinds() []pipeline.LookupKind {
 		pipeline.KindRFIManagers,
 	}
 }
+
+// ExtractorKinds are the kinds the model may search: every lookup kind but
+// rfi_managers, which only ApplyDefaults and Validate use (the prompt tells
+// the model to leave rfi_manager_id to the server).
+func (f *Feature) ExtractorKinds() []pipeline.LookupKind {
+	var out []pipeline.LookupKind
+	for _, k := range f.LookupKinds() {
+		if k != pipeline.KindRFIManagers {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+var _ pipeline.ExtractorKinder = (*Feature)(nil)
 
 func (*Feature) IDFields() []pipeline.IDField {
 	return []pipeline.IDField{
@@ -168,13 +187,23 @@ func (*Feature) ApplyDefaults(ctx pipeline.ExtractContext, payload map[string]an
 	var un []pipeline.Unresolved
 
 	// The RFI manager defaults to the speaker when Procore lists them as a
-	// potential RFI manager; otherwise the reviewer picks one of those.
+	// potential RFI manager; otherwise the reviewer picks one of those. When
+	// the list could not be read, the field is flagged without claiming the
+	// speaker is not a manager.
 	if out["rfi_manager_id"] == nil && !open["rfi_manager_id"] {
 		delete(out, "rfi_manager_id")
-		managers := lookups[pipeline.KindRFIManagers]
-		if managers.Has(ctx.UserProcoreID) {
+		managers, loaded := lookups[pipeline.KindRFIManagers]
+		switch {
+		case !loaded || managers.Unavailable:
+			un = append(un, pipeline.Unresolved{
+				Field:      "rfi_manager_id",
+				Reason:     pipeline.ReasonNotFound,
+				Message:    noManagersMessage,
+				Candidates: []pipeline.LookupRow{},
+			})
+		case managers.Has(ctx.UserProcoreID):
 			out["rfi_manager_id"] = ctx.UserProcoreID
-		} else {
+		default:
 			un = append(un, pipeline.Unresolved{
 				Field:      "rfi_manager_id",
 				Reason:     pipeline.ReasonNotFound,

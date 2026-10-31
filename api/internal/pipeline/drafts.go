@@ -242,7 +242,7 @@ func (d *Drafts) create(ctx context.Context, in CreateInput) (Draft, error) {
 		MaxToolCalls: maxToolCalls,
 	}
 	start := time.Now()
-	res, err := d.extractor.Extract(ctx, req, toolHandler(sets))
+	res, err := d.extractor.Extract(ctx, req, toolHandler(toolSets(f, sets)))
 	elapsed := time.Since(start)
 	if err != nil {
 		d.log.Warn("extraction failed", "draft_id", in.ID, "feature", f.Name(), "turns", len(res.Turns), "error", err)
@@ -602,14 +602,25 @@ var toolDescriptions = map[LookupKind]string{
 	KindCostCodes:    "Search the project's cost codes by code or name.",
 	KindVendors:      "Search the project's vendors (companies) by name, trade or abbreviation.",
 	KindDrawings:     "Search the project's drawings by sheet number, title or discipline.",
-	KindRFIManagers:  "Search the people who may manage an RFI on this project by name or login.",
 }
 
-// tools offers a list_<kind> tool for every lookup the user can read, then
-// the final tool.
+// toolSets is the part of the warmed sets the extractor may search: the
+// kinds in ToolKinds(f).
+func toolSets(f Feature, sets map[LookupKind]LookupSet) map[LookupKind]LookupSet {
+	out := map[LookupKind]LookupSet{}
+	for _, k := range ToolKinds(f) {
+		if set, ok := sets[k]; ok {
+			out[k] = set
+		}
+	}
+	return out
+}
+
+// tools offers a list_<kind> tool for every lookup in ToolKinds(f) the user
+// can read, then the final tool.
 func tools(f Feature, sets map[LookupKind]LookupSet) []llm.Tool {
 	var out []llm.Tool
-	for _, k := range f.LookupKinds() {
+	for _, k := range ToolKinds(f) {
 		set, ok := sets[k]
 		if !ok || set.Unavailable {
 			continue
