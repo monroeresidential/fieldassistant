@@ -576,6 +576,45 @@ final class AppStateTests: XCTestCase {
     }
 
     @MainActor
+    func testBackgroundPassBootstrapsWhenNotStarted() async throws {
+        // A cold background launch: the scene never connected, so nothing has bootstrapped yet.
+        let draft = LocalDraft(companyID: 7, projectID: 99, ownerProcoreUserID: 42, status: .submitting, transcript: "t",
+                               capturedAt: .now.addingTimeInterval(-600))
+        draft.updatedAt = .now.addingTimeInterval(-600)
+        let transport = ScriptedTransport([.response(APIStub.me(procoreUserID: 42))])
+        let state = makeState(
+            store: InMemorySessionStore(validSession()), transport: transport,
+            reachability: FakeReachability(isReachable: true)
+        )
+        try state.drafts.insert(draft)
+        XCTAssertNil(state.draftSync)
+
+        await state.runBackgroundPass()
+
+        XCTAssertNotNil(state.draftSync)
+        guard case .signedIn = state.phase else { return XCTFail("expected signedIn, got \(state.phase)") }
+        let paths = transport.requests.map(\.path)
+        XCTAssertEqual(paths.first, "/me")
+        XCTAssertTrue(paths.contains("/drafts/\(draft.id.uuidString.lowercased())"), "one pass ran: \(paths)")
+        cancelBackgroundWork(state)
+    }
+
+    @MainActor
+    func testBackgroundPassWithoutSessionDoesNothing() async throws {
+        let transport = ScriptedTransport([])
+        let state = makeState(
+            store: InMemorySessionStore(), transport: transport,
+            reachability: FakeReachability(isReachable: true)
+        )
+
+        await state.runBackgroundPass()
+
+        XCTAssertNil(state.draftSync)
+        XCTAssertEqual(state.phase, .signedOut)
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    @MainActor
     func testSuccessfulBootstrapReplacesOfflineDriver() async throws {
         let first = makeState(store: InMemorySessionStore(), transport: StubTransport([]))
         first.selectedCompanyID = 7

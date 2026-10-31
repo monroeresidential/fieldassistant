@@ -17,4 +17,14 @@ final class BackgroundSyncTests: XCTestCase {
         XCTAssertTrue(BackgroundSync.processingID.hasSuffix(".draftsync.processing"))
         XCTAssertNotEqual(BackgroundSync.refreshID, BackgroundSync.processingID)
     }
+
+    func testPermittedIdentifiersMatchInfoPlist() throws {
+        let info = try XCTUnwrap(Bundle(for: AppState.self).infoDictionary)
+        let permitted = try XCTUnwrap(info["BGTaskSchedulerPermittedIdentifiers"] as? [String])
+        XCTAssertTrue(permitted.contains(BackgroundSync.refreshID))
+        XCTAssertTrue(permitted.contains(BackgroundSync.processingID))
+        let modes = try XCTUnwrap(info["UIBackgroundModes"] as? [String])
+        XCTAssertTrue(modes.contains("fetch"))
+        XCTAssertTrue(modes.contains("processing"))
+    }
 }

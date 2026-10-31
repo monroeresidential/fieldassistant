@@ -106,6 +106,8 @@ final class AppState {
     /// sync (not running until asked) while the session is offline; `nil` otherwise.
     /// Observed, so a screen that read `nil` updates when the driver is created or replaced.
     private(set) var recordSync: RecordSync?
+    /// Whether a `bootstrap` is running, so a background task does not start a second one.
+    @ObservationIgnored private var isBootstrapping = false
     /// While the session is `offline`, retries `/me` each time the network path comes back.
     @ObservationIgnored private var offlineRetry: Task<Void, Never>?
     /// Advances each time the session ends. A `/me` that was started before then (an offline retry,
@@ -173,6 +175,8 @@ final class AppState {
 
     /// Decides the first screen: signed out without a stored session, otherwise loads the user.
     func bootstrap() async {
+        isBootstrapping = true
+        defer { isBootstrapping = false }
         let session: Session?
         do {
             session = try store.load()
@@ -264,9 +268,15 @@ final class AppState {
         )
     }
 
-    /// One background task's worth of work: a single draft pass. A nil sync means nobody is signed
-    /// in, so there is nothing to do.
+    /// One background task's worth of work: a single draft pass. When iOS relaunches the app for a
+    /// background task the scene never connects, so `RootView` has not bootstrapped and there is no
+    /// `draftSync` yet: bootstrap first (a stored session loads `/me`, which starts the sync). A
+    /// bootstrap already running, from the foreground, is left to finish. If there is still no sync
+    /// (signed out, or offline), there is nothing to run.
     func runBackgroundPass() async {
+        if draftSync == nil, phase == .loading, !isBootstrapping {
+            await bootstrap()
+        }
         await draftSync?.runOnce()
     }
 
