@@ -284,6 +284,10 @@ struct RFIReviewView: View {
                     .padding(.top, 8)
                     .accessibilityLabel("Procore says: \(formMessage)")
             }
+            ForEach(Array(model.procoreNotes.enumerated()), id: \.offset) { _, note in
+                procoreNoteLabel(note, font: Theme.Text.meta13Medium)
+                    .padding(.top, model.formMessage == nil ? 8 : 4)
+            }
             if let pendingMessage, !model.isQueued {
                 HStack(spacing: 12) {
                     ProgressView()
@@ -349,6 +353,15 @@ struct RFIReviewView: View {
         }
     }
 
+    /// "Procore requires <field>: <message>" for a field the screen has no row for.
+    private func procoreNoteLabel(_ note: ProcoreNote, font: Theme.TextStyle) -> some View {
+        let text = "Procore requires \(RFIReviewModel.fieldLabel(note.field)): \(note.message)"
+        return Label(text, systemImage: "exclamationmark.triangle.fill")
+            .textStyle(font)
+            .foregroundStyle(Theme.Color.accent)
+            .accessibilityLabel(text)
+    }
+
     /// The Procore message (repeated here so it stays in view while the rows scroll) and the save note.
     @ViewBuilder
     private var footerNotes: some View {
@@ -359,6 +372,11 @@ struct RFIReviewView: View {
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel("Procore says: \(formMessage)")
+        }
+        ForEach(Array(model.procoreNotes.enumerated()), id: \.offset) { _, note in
+            procoreNoteLabel(note, font: Theme.Text.meta13)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         if let saveNote {
             Text(saveNote)
@@ -727,7 +745,7 @@ struct RFIReviewView: View {
             if let flagged, RFIField.more.contains(flagged) { model.moreExpanded = true }
             if let flagged {
                 scrollTarget = flagged
-            } else if model.formMessage != nil {
+            } else if model.formMessage != nil || !model.procoreNotes.isEmpty {
                 // Only a form-level message: show the header callout.
                 scrollToTopRequest += 1
             }

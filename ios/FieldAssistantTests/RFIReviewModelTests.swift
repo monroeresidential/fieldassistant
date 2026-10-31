@@ -149,6 +149,65 @@ final class RFIReviewModelTests: XCTestCase {
         XCTAssertEqual(outcome, .needsFixes)
         XCTAssertEqual(model.formMessage, message)
         XCTAssertTrue(model.unresolved.isEmpty)
+        XCTAssertTrue(model.procoreNotes.isEmpty, "the 400's own text has no field key, so it is not a note")
+    }
+
+    func testSubmitFailedWithPrefixedFormEntryShowsNoteNotFormMessage() async throws {
+        let transport = StubTransport([
+            draftJSON(status: "reviewed", unresolved: "[]"),
+            APIStub.submit(.ok, draftID: draftID),
+            draftJSON(
+                status: "failed",
+                unresolved: #"[{"field":"_form","reason":"procore_validation","message":"custom_field_123: can't be blank","candidates":[],"blocking":true}]"#
+            ),
+        ])
+        let (model, _, _) = try makeModel(transport)
+
+        let outcome = await model.submit()
+
+        XCTAssertEqual(outcome, .needsFixes)
+        XCTAssertEqual(model.procoreNotes, [ProcoreNote(field: "custom_field_123", message: "can't be blank")])
+        XCTAssertNil(model.formMessage, "a prefixed entry is a note, not the form message")
+        XCTAssertTrue(model.unresolved.isEmpty)
+    }
+
+    func testProcoreNotesFromPrefixedFormEntries() {
+        let entries = [
+            form("custom_field_123: can't be blank"),
+            form("rfi_manager_id: is invalid"),
+            row("due_date", "custom_field_9: ignored, not a _form entry"),
+        ]
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: entries), [
+            ProcoreNote(field: "custom_field_123", message: "can't be blank"),
+            ProcoreNote(field: "rfi_manager_id", message: "is invalid"),
+        ])
+    }
+
+    func testUnprefixedFormEntryStaysFormMessage() throws {
+        let plain = "Procore did not accept this RFI."
+        let spaced = "draft has unresolved fields: _form"
+        let (model, _, _) = try makeModel(
+            StubTransport(),
+            unresolved: #"[{"field":"_form","reason":"procore_validation","message":"\#(plain)","candidates":[],"blocking":true}]"#
+        )
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: [form(plain), form(spaced), form("Subject: x")]), [])
+        XCTAssertEqual(model.formMessage, plain)
+        XCTAssertTrue(model.procoreNotes.isEmpty)
+    }
+
+    func testFieldLabelForCustomAndKnownKeys() {
+        XCTAssertEqual(RFIReviewModel.fieldLabel("custom_field_123"), "Custom field 123")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("rfi_manager_id"), "RFI manager")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("due_date"), "Due")
+        XCTAssertEqual(RFIReviewModel.fieldLabel("mystery"), "Mystery")
+    }
+
+    private func form(_ message: String) -> UnresolvedField { row("_form", message) }
+
+    private func row(_ field: String, _ message: String) -> UnresolvedField {
+        UnresolvedField(field: field, reason: .procore_validation, message: message, candidates: [], blocking: true)
     }
 
     func testSubmitIgnoredWhileSubmitting() async throws {

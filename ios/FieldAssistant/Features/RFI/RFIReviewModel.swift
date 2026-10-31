@@ -2,6 +2,13 @@ import FieldAssistantAPI
 import Foundation
 import Observation
 
+/// A Procore error for a field the review screen has no row for (a custom field, or one the schema
+/// does not model), read from a `_form` entry whose message starts with the Procore key.
+struct ProcoreNote: Equatable {
+    let field: String
+    let message: String
+}
+
 /// The state behind the review screen: the editable payload, the flagged fields, saving, and the
 /// submit flow through the job poll. The server recomputes flags on every save, so its list
 /// replaces the local one after each response.
@@ -35,8 +42,10 @@ final class RFIReviewModel {
     private(set) var payload: RFIDraftPayload
     /// Flags tied to a field. A `_form` flag is kept out of this list and shown as `formMessage`.
     private(set) var unresolved: [UnresolvedField]
-    /// Procore's message for an error not tied to one field.
+    /// Procore's message for an error not tied to one field, when it names no field.
     private(set) var formMessage: String?
+    /// Procore's errors for fields with no review row, one per `_form` entry that names its field.
+    private(set) var procoreNotes: [ProcoreNote] = []
     var moreExpanded: Bool
     private(set) var isSaving = false
     private(set) var isSubmitting = false
@@ -102,10 +111,42 @@ final class RFIReviewModel {
         self.submitAsDraftOverride = submitAsDraftOverride
         payload = response.payload
         unresolved = response.unresolved.filter { $0.field != Self.formField }
-        formMessage = response.unresolved.first { $0.field == Self.formField }?.message
+        formMessage = Self.formMessage(from: response.unresolved)
+        procoreNotes = Self.procoreNotes(from: response.unresolved)
         moreExpanded = false
         rememberCandidates(response.unresolved)
         moreExpanded = RFIField.more.contains { isSet($0) || unresolved(for: $0) != nil }
+    }
+
+    /// The `_form` entries whose message starts with a Procore key ("custom_field_123: can't be
+    /// blank") become notes; a `_form` entry without that prefix stays the form message.
+    static func procoreNotes(from unresolved: [UnresolvedField]) -> [ProcoreNote] {
+        unresolved.filter { $0.field == formField }.compactMap { note(from: $0.message) }
+    }
+
+    /// The first `_form` message that names no field.
+    private static func formMessage(from unresolved: [UnresolvedField]) -> String? {
+        unresolved.first { $0.field == formField && note(from: $0.message) == nil }?.message
+    }
+
+    /// Splits "key: message" when `key` looks like a Procore field key (lowercase, digits,
+    /// underscores), so sentences such as "draft has unresolved fields: _form" are not notes.
+    private static func note(from message: String?) -> ProcoreNote? {
+        guard let message, let split = message.range(of: ": ") else { return nil }
+        let key = message[..<split.lowerBound]
+        let rest = message[split.upperBound...].trimmingCharacters(in: .whitespaces)
+        guard let first = key.first, first.isASCII, first.isLowercase, !rest.isEmpty,
+              key.allSatisfy({ $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "_") })
+        else { return nil }
+        return ProcoreNote(field: String(key), message: rest)
+    }
+
+    /// A reader's name for a Procore key: the review row's label when the phone has one, else the
+    /// key with spaces for underscores ("custom_field_123" is "Custom field 123").
+    static func fieldLabel(_ key: String) -> String {
+        if let field = RFIField(serverField: key) { return field.label }
+        let spaced = key.replacingOccurrences(of: "_", with: " ")
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
     }
 
     func unresolved(for field: RFIField) -> UnresolvedField? {
@@ -334,7 +375,7 @@ final class RFIReviewModel {
         case .submitted:
             DraftFiles.removeAll(for: draft.id)
             return .submitted(number: response.result?.number, url: response.result?.url)
-        case .failed where unresolvedCount > 0 || formMessage != nil:
+        case .failed where unresolvedCount > 0 || formMessage != nil || !procoreNotes.isEmpty:
             return .needsFixes
         case .failed:
             return .failed(.server(response.error?.message ?? "Procore did not accept this RFI."))
@@ -410,7 +451,8 @@ final class RFIReviewModel {
         }
         payload = merged
         unresolved = response.unresolved.filter { $0.field != Self.formField && !edited.contains($0.field) }
-        formMessage = response.unresolved.first { $0.field == Self.formField }?.message
+        formMessage = Self.formMessage(from: response.unresolved)
+        procoreNotes = Self.procoreNotes(from: response.unresolved)
         rememberCandidates(response.unresolved)
         draft.apply(response)
         if !edited.isEmpty { storeLocally() }
