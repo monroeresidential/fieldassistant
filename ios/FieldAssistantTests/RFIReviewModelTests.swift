@@ -184,6 +184,25 @@ final class RFIReviewModelTests: XCTestCase {
         ])
     }
 
+    func testOneFormEntryWithSeveralKeyedMessagesGivesOneNoteEach() {
+        let entries = [form("custom_field_1: can't be blank; custom_field_2: is invalid")]
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: entries), [
+            ProcoreNote(field: "custom_field_1", message: "can't be blank"),
+            ProcoreNote(field: "custom_field_2", message: "is invalid"),
+        ])
+        XCTAssertNil(RFIReviewModel.formMessage(from: entries))
+    }
+
+    func testUnkeyedSegmentBeforeKeyedOneStaysFormMessage() {
+        let entries = [form("Something else; custom_field_1: can't be blank; Another thing")]
+
+        XCTAssertEqual(RFIReviewModel.procoreNotes(from: entries), [
+            ProcoreNote(field: "custom_field_1", message: "can't be blank"),
+        ])
+        XCTAssertEqual(RFIReviewModel.formMessage(from: entries), "Something else; Another thing")
+    }
+
     func testUnprefixedFormEntryStaysFormMessage() throws {
         let plain = "Procore did not accept this RFI."
         let spaced = "draft has unresolved fields: _form"

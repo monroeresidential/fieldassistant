@@ -118,21 +118,32 @@ final class RFIReviewModel {
         moreExpanded = RFIField.more.contains { isSet($0) || unresolved(for: $0) != nil }
     }
 
-    /// The `_form` entries whose message starts with a Procore key ("custom_field_123: can't be
-    /// blank") become notes; a `_form` entry without that prefix stays the form message.
+    /// The backend joins every Procore error without a review row into one `_form` message,
+    /// "key: message; key: message". Each keyed segment ("custom_field_123: can't be blank")
+    /// becomes a note.
     static func procoreNotes(from unresolved: [UnresolvedField]) -> [ProcoreNote] {
-        unresolved.filter { $0.field == formField }.compactMap { note(from: $0.message) }
+        formSegments(unresolved).compactMap(note(from:))
     }
 
-    /// The first `_form` message that names no field.
-    private static func formMessage(from unresolved: [UnresolvedField]) -> String? {
-        unresolved.first { $0.field == formField && note(from: $0.message) == nil }?.message
+    /// The `_form` segments that name no field, rejoined with "; ", or `nil` when there are none.
+    static func formMessage(from unresolved: [UnresolvedField]) -> String? {
+        let plain = formSegments(unresolved).filter { note(from: $0) == nil }
+        return plain.isEmpty ? nil : plain.joined(separator: "; ")
+    }
+
+    /// Every "; "-separated segment of every `_form` message, trimmed, empties dropped.
+    private static func formSegments(_ unresolved: [UnresolvedField]) -> [String] {
+        unresolved.filter { $0.field == formField }
+            .compactMap(\.message)
+            .flatMap { $0.components(separatedBy: "; ") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     /// Splits "key: message" when `key` looks like a Procore field key (lowercase, digits,
     /// underscores), so sentences such as "draft has unresolved fields: _form" are not notes.
-    private static func note(from message: String?) -> ProcoreNote? {
-        guard let message, let split = message.range(of: ": ") else { return nil }
+    private static func note(from message: String) -> ProcoreNote? {
+        guard let split = message.range(of: ": ") else { return nil }
         let key = message[..<split.lowerBound]
         let rest = message[split.upperBound...].trimmingCharacters(in: .whitespaces)
         guard let first = key.first, first.isASCII, first.isLowercase, !rest.isEmpty,
