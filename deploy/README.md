@@ -267,6 +267,28 @@ First create its log file: `touch /var/log/fa-backup.log && chown deploy-prod /v
 0 3 * * * /opt/fieldassistant/deploy/backup.sh >> /var/log/fa-backup.log 2>&1
 ```
 
+## Weekly pilot summary
+
+The API image also holds `/pilotreport`, which prints one week of the pilot as
+Markdown from the prod database: drafts created, built, submitted and failed by
+error code; corrections per draft and how many drafts needed more than two;
+duplicates (more than one submitted event, attempts whose outcome is still
+unknown, mirror RFIs matching a submitted draft; expected: none); extraction
+p50 and p95; photos pushed and photo failures by code; a per-user table (names
+only, no emails); and the five drafts with the most corrections, each with its
+transcript, extracted payload and final payload, ready to turn into eval cases.
+
+From a laptop with the `fieldassistant-droplet` SSH alias:
+```
+make pilot-report ARGS='--from 2026-11-03T00:00:00Z --to 2026-11-10T00:00:00Z' > pilot-2026-11-03.md
+```
+Without `ARGS` it covers the last seven days. `--from` is inclusive and `--to`
+exclusive, both RFC 3339, on each draft's `created_at`. The command runs inside
+the `api-prod` container (`docker compose exec`) and takes `DATABASE_URL` from
+that container's environment (`.env.prod`). It is read-only: its connections
+run with `default_transaction_read_only` on, and it adds no tables or
+migrations.
+
 ## Connecting the app to a Procore company
 
 Procore returns `403 {"errors":["App is not connected to this company."]}` until a

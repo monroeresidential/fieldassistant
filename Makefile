@@ -1,4 +1,4 @@
-.PHONY: run test evals db-up db-down generate sync-contract check-contract ios-project
+.PHONY: run test evals db-up db-down generate sync-contract check-contract ios-project pilot-report
 
 run: ## loads api/.env if present
 	cd api && set -a && [ -f .env ] && . ./.env; set +a && go run ./cmd/api
@@ -10,6 +10,11 @@ test:
 # TEST_DATABASE_URL in the environment; skips when any is unset.
 evals:
 	cd api && go test -tags evals ./internal/features/rfi/evals/ -v -run TestEvals
+
+# The weekly pilot summary from the prod database, as Markdown on stdout.
+# ARGS passes flags, e.g. ARGS='--from 2026-11-03T00:00:00Z --to 2026-11-10T00:00:00Z'.
+pilot-report:
+	ssh fieldassistant-droplet 'cd /opt/fieldassistant/deploy && sudo docker compose exec -T api-prod /pilotreport $(ARGS)'
 
 db-up:
 	docker compose -f api/docker-compose.yml up -d postgres minio
